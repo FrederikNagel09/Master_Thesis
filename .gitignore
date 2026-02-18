@@ -1,0 +1,20 @@
+# .gitignore
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# virtual env
+.venv/
+
+# Data & secrets
+data/
+.env
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
