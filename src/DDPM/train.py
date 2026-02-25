@@ -81,7 +81,7 @@ def plot_loss(losses: list, save_path: str):
 
 def train(
     device: str = "cpu",
-    T: int = 500,  # noqa: N803
+    T: int = 1000,  # noqa: N803
     img_size: int = 32,
     channels: int = 32,
     time_dim: int = 256,
@@ -137,10 +137,10 @@ def train(
         avg = sum(epoch_losses) / len(epoch_losses)
         logging.info(f"Epoch {epoch} avg MSE: {avg:.4f}")
 
-        # Save weights
-        weight_path = os.path.join(weights_dir, f"{experiment_name}_epoch{epoch:03d}.pt")
-        torch.save(model.state_dict(), weight_path)
-        logging.info(f"Weights saved to {weight_path}")
+    # Save weights
+    weight_path = os.path.join(weights_dir, f"{experiment_name}_epoch{epoch:03d}.pt")
+    torch.save(model.state_dict(), weight_path)
+    logging.info(f"Weights saved to {weight_path}")
 
     # Save loss plot
     plot_loss(all_losses, save_path=os.path.join(graphs_dir, f"{experiment_name}_loss.png"))

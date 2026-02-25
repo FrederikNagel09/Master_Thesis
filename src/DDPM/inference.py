@@ -2,7 +2,7 @@
 inference.py  -  load a trained DDPM checkpoint and generate a 4x4 image grid.
 
 Example usage:
-    python src/DDPM/inference.py --weights src/DDPM/weights/ddpm_mnist_epoch001.pt
+    python src/DDPM/inference.py --Master_Thesis/src/DDPM/weights/ddpm_mnist_epoch030.pt
     python src/DDPM/inference.py --weights src/DDPM/weights/ddpm_mnist_epoch010.pt --out_path src/DDPM/results/sample_grid.png
 """
 

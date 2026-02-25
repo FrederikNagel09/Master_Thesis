@@ -32,7 +32,6 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=128, help="Training batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--num_epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--sample_every", type=int, default=1, help="Save sample images every N epochs")
 
     # Paths
     parser.add_argument("--experiment_name", type=str, default="ddpm_mnist", help="Run name (used in filenames)")
@@ -76,7 +75,6 @@ def main():
         graphs_dir=args.graphs_dir,
         results_dir=args.results_dir,
         data_root=args.data_root,
-        sample_every=args.sample_every,
     )
 
 
