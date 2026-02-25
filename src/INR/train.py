@@ -1,43 +1,11 @@
-import math
 import os
 
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-
-# Add this function:
-def _save_reconstruction(model, dataset, name, graph_dir, device):
-    name = name.split("_")[0]
-
-    height, width = dataset.image_shape
-    model.eval().to(device)
-    with torch.no_grad():
-        coords = dataset.coords.to(device)  # all (H*W, 2) coords
-        preds = model(coords).cpu().numpy().reshape(height, width)
-    original = dataset.image  # already (H, W) float32 in [0,1]
-
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-    axes[0].imshow(original, cmap="gray", vmin=0, vmax=1)
-    axes[0].set_title("Original")
-    axes[0].axis("off")
-    axes[1].imshow(preds, cmap="gray", vmin=0, vmax=1)
-    axes[1].set_title("Reconstruction")
-    axes[1].axis("off")
-    plt.tight_layout()
-    plt.savefig(os.path.join(graph_dir, f"{name}_reconstruction.png"), dpi=150)
-    plt.close(fig)
-    print(f"Reconstruction saved to {graph_dir}/{name}_reconstruction.png")
-
-
-# Add this function near the top of train.py:
-def mse_to_psnr(mse: float) -> float:
-    """Convert MSE (on [0,1] pixel values) to PSNR in dB."""
-    if mse == 0:
-        return float("inf")
-    return -10 * math.log10(mse)  # add: import math at top
+from src.INR.utils import _save_plot, _save_reconstruction
 
 
 def train(
@@ -123,50 +91,3 @@ def train(
     _save_reconstruction(model, dataset, name, graph_dir, device="cpu")
     print("Done.")
     return model
-
-
-# ------------------------------------------------------------------
-# Plotting helper
-# ------------------------------------------------------------------
-
-
-def _save_plot(history: dict, name: str, graph_dir: str, current_epoch: int, total_epochs: int):
-    epochs = range(1, current_epoch + 1)
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(epochs, history["train_mse"], label="Train MSE", linewidth=2)
-
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("MSE Loss")
-    ax.set_title(f"INR Training — {name}")
-    ax.legend()
-    ax.set_xlim(1, total_epochs)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(graph_dir, f"{name}.png"), dpi=150)
-    plt.close(fig)
-
-
-# ------------------------------------------------------------------
-# Example entry point
-# ------------------------------------------------------------------
-if __name__ == "__main__":
-    import sys
-
-    sys.path.append(".")  # make sure local modules are importable
-
-    from src.INR.dataloader import MNISTCoordDataset
-    from src.INR.model import INRMLP
-
-    dataset = MNISTCoordDataset(mnist_raw_dir="data/MNIST/raw", image_index=0)
-    model = INRMLP(h1=256, h2=256, h3=256)
-
-    train(
-        model=model,
-        dataset=dataset,
-        name="inr_mnist_run1",
-        num_epochs=200,
-        batch_size=64,
-        lr=1e-3,
-    )

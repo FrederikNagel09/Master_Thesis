@@ -53,27 +53,4 @@ class INRMLP(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (B, 2) normalized coordinates in [-1, 1]
-        Returns:
-            (B, 1) predicted pixel values in (0, 1)
-        """
         return self.net(x)
-
-
-# ----------------------------------------------------------------------
-# Quick sanity check
-# ----------------------------------------------------------------------
-if __name__ == "__main__":
-    model = INRMLP(h1=8, h2=16, h3=8)
-    print(model)
-
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"\nTotal parameters: {total_params:,}")
-
-    dummy = torch.rand(64, 2) * 2 - 1  # random coords in [-1, 1]
-    out = model(dummy)
-    print(f"Input shape : {dummy.shape}")
-    print(f"Output shape: {out.shape}")
-    print(f"Output range: [{out.min():.4f}, {out.max():.4f}]")

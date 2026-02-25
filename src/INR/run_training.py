@@ -1,5 +1,4 @@
 import argparse
-import math
 import os
 import sys
 
@@ -10,31 +9,19 @@ sys.path.append(".")
 from src.INR.dataloader import MNISTCoordDataset
 from src.INR.model import INRMLP
 from src.INR.train import train
+from src.INR.utils import compute_layer_sizes
 
 WEIGHTS_DIR = "src/INR/weights"
 
 
-def compute_layer_sizes(num_pixels: int) -> tuple[int, int, int]:
+def run_training():
     """
-    Compute three hidden layer sizes such that the total parameter count
-    of the MLP (2 -> h1 -> h2 -> h3 -> 1) approximately matches num_pixels.
+    Run training of an INR MLP on a single MNIST image, with layer sizes chosen to match the number of pixels.
 
-    Total params = (2*h1 + h1) + (h1*h2 + h2) + (h2*h3 + h3) + (h3*1 + 1)
-                 ≈ 3*h + h^2 + h^2 + h   (for h1=h2=h3=h)
-                 = 2*h^2 + 4*h
-
-    Solving 2h^2 + 4h = N  →  h = (-4 + sqrt(16 + 8N)) / 4
+    Usage:
+    python src/INR/run_training.py --index 0 --name trial_ --epochs 100 --batch_size 64 --lr 1e-3
     """
-    h = int((-4 + math.sqrt(16 + 8 * num_pixels)) / 4)
-    h = max(h, 8)  # minimum sanity floor
-    return h + 2, h + 2, h + 2
-
-
-def count_parameters(model: torch.nn.Module) -> int:
-    return sum(p.numel() for p in model.parameters())
-
-
-def main():
+    # Args parsing initialization
     parser = argparse.ArgumentParser(description="Train an INR MLP on a single MNIST image.")
     parser.add_argument("--index", type=int, default=0, help="Index of the MNIST image to fit (default: 0).")
     parser.add_argument(
@@ -61,17 +48,10 @@ def main():
     # ------------------------------------------------------------------
     h1, h2, h3 = compute_layer_sizes(num_pixels)
     model = INRMLP(h1=h1, h2=h2, h3=h3)
-    num_params = count_parameters(model)
-
-    print(f"Layer sizes : h1={h1}, h2={h2}, h3={h3}")
-    print(f"Parameters  : {num_params:,}  (target: {num_pixels:,})")
-
     # ------------------------------------------------------------------
     # 3. Build run name:  <base><index>_<h1>_<h2>_<h3>
     # ------------------------------------------------------------------
     run_name = f"{args.name}{args.index}_{h1}_{h2}_{h3}"
-    print(f"Run name    : {run_name}\n")
-
     # ------------------------------------------------------------------
     # 4. Train
     # ------------------------------------------------------------------
@@ -94,4 +74,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_training()
