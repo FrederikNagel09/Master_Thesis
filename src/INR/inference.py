@@ -19,11 +19,11 @@ def run_inference():
 
     Usage example:
     python src/INR/inference.py \
-        --weights src/INR/weights/trial_0_20_20_20.pth \
-        --height 56 \
-        --width 56 \
+        --weights src/INR/weights/image_5_20_20_20.pth \
+        --height 512 \
+        --width 512 \
         --mnist_dir data/MNIST/raw \
-        --out_dir src/INR/graphs
+        --out_dir src/INR/results
 
     """
     # Initialize argument parser
@@ -40,7 +40,7 @@ def run_inference():
         help="Path to MNIST raw directory for loading the original image (default: data/MNIST/raw).",
     )
     parser.add_argument(
-        "--out_dir", type=str, default="src/INR/graphs", help="Directory to save the output plot (default: src/INR/graphs)."
+        "--out_dir", type=str, default="src/INR/results", help="Directory to save the output plot (default: src/INR/graphs)."
     )
     args = parser.parse_args()
 

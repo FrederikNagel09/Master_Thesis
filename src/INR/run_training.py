@@ -19,13 +19,13 @@ def run_training():
     Run training of an INR MLP on a single MNIST image, with layer sizes chosen to match the number of pixels.
 
     Usage:
-    python src/INR/run_training.py --index 0 --name trial_ --epochs 100 --batch_size 64 --lr 1e-3
+    python src/INR/run_training.py --index 5 --name image_ --epochs 1500 --batch_size 32 --lr 1e-3
     """
     # Args parsing initialization
     parser = argparse.ArgumentParser(description="Train an INR MLP on a single MNIST image.")
     parser.add_argument("--index", type=int, default=0, help="Index of the MNIST image to fit (default: 0).")
     parser.add_argument(
-        "--name", type=str, default="trial_", help="Base name for the run. The image index is appended automatically (default: 'trial_')."
+        "--name", type=str, default="img_", help="Base name for the run. The image index is appended automatically (default: 'trial_')."
     )
     parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs (default: 100).")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size (default: 64).")
@@ -40,9 +40,6 @@ def run_training():
 
     height, width = dataset.image_shape
     num_pixels = height * width
-    print(f"Image index : {args.index}")
-    print(f"Image shape : {height} x {width}  ({num_pixels} pixels)")
-
     # ------------------------------------------------------------------
     # 2. Compute layer sizes so #params ≈ #pixels
     # ------------------------------------------------------------------

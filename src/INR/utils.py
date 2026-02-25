@@ -53,7 +53,7 @@ def compute_layer_sizes(num_pixels: int) -> tuple[int, int, int]:
 
 # Add this function:
 def _save_reconstruction(model, dataset, name, graph_dir, device):
-    name = name.split("_")[0]
+    name = name.split("_")[0] + "_" + name.split("_")[1]
 
     height, width = dataset.image_shape
     model.eval().to(device)
