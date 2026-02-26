@@ -20,14 +20,14 @@ data/
 Thumbs.db
 
 # graphs, weights and results
-src/INR/graphs/
-src/INR/weights/
-src/INR/results/
+src/implicit_neural_representation/graphs/ 
+src/implicit_neural_representation/weights/ 
+src/implicit_neural_representation/results/
 
-src/DDPM/graphs/
-src/DDPM/weights/
-src/DDPM/results/
+src/denoising_diffusion/graphs 
+src/denoising_diffusion/weights/ 
+src/denoising_diffusion/results/
 
-src/NDM/graphs/
-src/NDM/weights/
-src/NDM/results/
+src/neural_latent_diffusion/graphs/
+src/neural_latent_diffusion/weights/
+src/neural_latent_diffusion/results/
