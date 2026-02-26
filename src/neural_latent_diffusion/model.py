@@ -1,29 +1,3 @@
-"""
-NDM Latent Diffusion Model
-==========================
-Architecture overview
----------------------
-1. **VAE** - encodes 1x32x32 MNIST images into a latent of shape
-   (latent_channels x latent_size x latent_size).  Default: 4x4x4.
-   The encoder/decoder are trained jointly with the diffusion loss via
-   a weighted KL + reconstruction term, or you can pre-train the VAE
-   separately and freeze it.
-
-2. **NDM Transform F_φ** - a small time-conditioned MLP that maps a
-   flattened latent + sinusoidal time embedding → transformed latent.
-   This is the F_φ(x, t) from the NDM paper (Bartosh et al., 2024).
-   The forward noising process operates on F_φ(z, t) instead of z,
-   so the UNet learns to predict F_φ(ẑ, t) rather than ẑ directly.
-
-3. **UNet** - same architecture as before but now operates on the
-   (latent_channels x latent_size x latent_size) space.
-
-4. **LatentNDMDiffusion** - handles
-   - q_sample  : z → noised latent using F_φ
-   - p_sample  : one reverse step
-   - p_sample_loop : full generation loop (in latent space → decode → pixel)
-"""
-
 import logging
 import math
 
@@ -62,11 +36,9 @@ class VAEEncoder(nn.Module):
 
     def __init__(self, in_channels: int = 1, latent_channels: int = 4, latent_size: int = 4):  # noqa: ARG002
         super().__init__()
-        # Encoder: progressively downsample
-        # 32 → 16 → 8 → latent_size
         layers = []
         ch = in_channels
-        out_channels_list = [32, 64, 128]
+        out_channels_list = [32, 64]
         for out_ch in out_channels_list:
             layers += [
                 nn.Conv2d(ch, out_ch, 3, stride=2, padding=1),
@@ -74,8 +46,6 @@ class VAEEncoder(nn.Module):
                 nn.SiLU(),
             ]
             ch = out_ch
-        # Final spatial reduction to latent_size
-        # After 3 stride-2 convs: 32 → 4  (matches latent_size=4)
         self.encoder = nn.Sequential(*layers)
         self.mu_head = nn.Conv2d(ch, latent_channels, 1)
         self.logvar_head = nn.Conv2d(ch, latent_channels, 1)
@@ -88,10 +58,10 @@ class VAEEncoder(nn.Module):
 class VAEDecoder(nn.Module):
     """(latent_channels, latent_size, latent_size)  →  1x32x32"""
 
-    def __init__(self, out_channels: int = 1, latent_channels: int = 4, latent_size: int = 4):  # noqa: ARG002
+    def __init__(self, out_channels: int = 1, latent_channels: int = 8, latent_size: int = 8):  # noqa: ARG002
         super().__init__()
         layers = []
-        channel_list = [128, 64, 32]
+        channel_list = [64, 32]
         ch = latent_channels
         for out_ch in channel_list:
             layers += [
@@ -108,7 +78,7 @@ class VAEDecoder(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self, img_channels: int = 1, latent_channels: int = 4, latent_size: int = 4):
+    def __init__(self, img_channels: int = 1, latent_channels: int = 8, latent_size: int = 8):
         super().__init__()
         self.latent_channels = latent_channels
         self.latent_size = latent_size
@@ -150,15 +120,11 @@ class NDMTransform(nn.Module):
 
     F_φ : R^(CxHxW) x [0,T]  →  R^(CxHxW)
 
-    We flatten the spatial dims, apply a residual MLP with time conditioning,
-    then reshape back.  The identity initialisation ensures F_φ ≈ identity
-    at the start of training (important for stable warm-up).
+    Residual MLP with time conditioning. Zero-initialised output projection
+    ensures F_φ ≈ identity at the start of training.
     """
 
     def __init__(self, latent_dim: int, time_dim: int = 128, hidden_dim: int = 256, num_layers: int = 3):
-        """
-        latent_dim : C x H x W  (total flattened latent size)
-        """
         super().__init__()
         self.latent_dim = latent_dim
         self.time_dim = time_dim
@@ -169,10 +135,11 @@ class NDMTransform(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
         )
 
-        # Input projection
+        print(
+            f"Initializing NDMTransform with latent_dim={latent_dim}, time_dim={time_dim}, hidden_dim={hidden_dim}, num_layers={num_layers}"
+        )
         self.input_proj = nn.Linear(latent_dim, hidden_dim)
 
-        # Residual blocks
         self.layers = nn.ModuleList(
             [
                 nn.Sequential(
@@ -185,7 +152,7 @@ class NDMTransform(nn.Module):
             ]
         )
 
-        # Output projection - initialise near zero so F_φ ≈ identity early
+        # Zero-init so F_φ ≈ identity at start of training
         self.output_proj = nn.Linear(hidden_dim, latent_dim)
         nn.init.zeros_(self.output_proj.weight)
         nn.init.zeros_(self.output_proj.bias)
@@ -196,24 +163,22 @@ class NDMTransform(nn.Module):
         t : (B,) integer timesteps
         returns: (B, C, H, W) transformed latent
         """
-        beta = z.shape[0]
-        z_flat = z.view(beta, -1)  # (B, latent_dim)
+        B = z.shape[0]  # noqa: N806
+        z_flat = z.view(B, -1)  # (B, latent_dim)
 
         t_emb = sinusoidal_embedding(t, self.time_dim)  # (B, time_dim)
         t_emb = self.time_embed(t_emb)  # (B, hidden_dim)
-
         h = self.input_proj(z_flat) + t_emb  # (B, hidden_dim)
         for layer in self.layers:
             h = h + layer(h)  # residual
 
         delta = self.output_proj(h)  # (B, latent_dim)
-        # Residual connection: F_φ(z, t) = z + delta
-        out = z_flat + delta
-        return out.view(beta, *z.shape[1:])
+        out = z_flat + delta  # residual: F_φ(z, t) = z + delta
+        return out.view(B, *z.shape[1:])
 
 
 # ---------------------------------------------------------------------------
-# UNet building blocks  (same as before, now operating on latent space)
+# UNet building blocks
 # ---------------------------------------------------------------------------
 
 
@@ -295,16 +260,11 @@ class Up(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# UNet  (now operates on latent_channels x latent_size x latent_size)
+# UNet  (operates on latent_channels x latent_size x latent_size)
 # ---------------------------------------------------------------------------
 
 
 class UNet(nn.Module):
-    """
-    UNet for latent NDM.
-    Default: img_size=4 (latent), c_in=c_out=latent_channels=4
-    """
-
     def __init__(self, img_size: int = 4, c_in: int = 4, c_out: int = 4, time_dim: int = 256, device: str = "cpu", channels: int = 64):
         super().__init__()
         self.device = device
@@ -316,12 +276,11 @@ class UNet(nn.Module):
         self.down2 = Down(channels * 2, channels * 4, emb_dim=time_dim)
         self.sa2 = SelfAttention(channels * 4, img_size // 4)
 
-        self.bot1 = DoubleConv(channels * 4, channels * 8)
-        self.bot2 = DoubleConv(channels * 8, channels * 4)
+        self.bot1 = DoubleConv(channels * 4, channels * 4)
 
-        self.up1 = Up(channels * 8, channels * 2, emb_dim=time_dim)
+        self.up1 = Up(channels * 6, channels * 2, emb_dim=time_dim)
         self.sa3 = SelfAttention(channels * 2, img_size // 2)
-        self.up2 = Up(channels * 4, channels, emb_dim=time_dim)
+        self.up2 = Up(channels * 3, channels, emb_dim=time_dim)
         self.sa4 = SelfAttention(channels, img_size)
 
         self.outc = nn.Conv2d(channels, c_out, kernel_size=1)
@@ -343,7 +302,6 @@ class UNet(nn.Module):
         x3 = self.sa2(x3)
 
         x3 = self.bot1(x3)
-        x3 = self.bot2(x3)
 
         x = self.up1(x3, x2, t)
         x = self.sa3(x)
@@ -362,29 +320,15 @@ class LatentNDMDiffusion:
     """
     Neural Diffusion Model operating in VAE latent space.
 
-    Key difference from standard DDPM
-    -----------------------------------
-    The forward process noises F_φ(z, t) rather than z itself:
+    Forward process noises F_φ(z, t) rather than z itself:
+        q_φ(z_t | z) = N(z_t ; sqrt(alpha_bar_t) · F_φ(z, t), (1 - alpha_bar_t) · I)
 
-        q_φ(z_t | z) = N(z_t ; alpha_t · F_φ(z, t),  sigma_t² · I)
-
-    The UNet therefore predicts  F_φ(ẑ, t)  (the transformed latent),
-    and the training target is also F_φ(z, t).
-
-    Per the NDM paper (eq. 9), the MSE loss is:
-
+    The UNet predicts F_φ(z, t) directly (x0-prediction style).
+    Training loss (NDM eq. 9):
         L = || F_φ(z, t) - UNet(z_t, t) ||²
 
-    which collapses to the standard DDPM noise-prediction loss when
-    F_φ is the identity.
-
-    Parameters
-    ----------
-    T            : total diffusion steps
-    beta_start   : starting β value
-    beta_end     : ending β value
-    latent_shape : (C, H, W) of the latent space
-    device       : torch device string
+    The reverse step uses the x0-prediction DDPM formula, consistent with
+    the UNet predicting F_φ(z,t) as the "clean" target (not noise).
     """
 
     def __init__(
@@ -402,32 +346,34 @@ class LatentNDMDiffusion:
         self.betas = torch.linspace(beta_start, beta_end, T, device=device)
         self.alphas = 1.0 - self.betas
         self.alphas_bar = torch.cumprod(self.alphas, dim=0)
+        # alpha_bar shifted by one step for the reverse posterior
+        self.alphas_bar_prev = torch.cat([torch.ones(1, device=device), self.alphas_bar[:-1]], dim=0)
 
     # ------------------------------------------------------------------
-    # Forward process  (NDM eq. 6)
+    # Forward process
     # ------------------------------------------------------------------
 
     def q_sample(self, z: torch.Tensor, t: torch.Tensor, transform: NDMTransform):
         """
-        Sample z_t ~ q_φ(z_t | z) = N(alpha_t·F_φ(z,t), sigma_t²·I)
+        Sample z_t ~ q_φ(z_t | z) = N(sqrt(alpha_bar_t)·F_φ(z,t), (1-alpha_bar_t)·I)
 
         Returns
         -------
-        z_t       : noised latent
-        Fz        : F_φ(z, t)   — the training target for the UNet
-        noise     : ε sampled
+        z_t        : noised latent
+        Fz_target  : F_φ(z, t)  — the UNet training target
+        noise      : ε sampled (kept for potential noise-pred debugging)
         """
-        Fz = transform(z, t)  # (B, C, H, W) — transformed latent  # noqa: N806
+        Fz = transform(z, t)  # (B, C, H, W)  # noqa: N806
 
         sqrt_alpha_bar = torch.sqrt(self.alphas_bar[t]).view(-1, 1, 1, 1)
-        sqrt_one_minus = torch.sqrt(1 - self.alphas_bar[t]).view(-1, 1, 1, 1)
+        sqrt_one_minus = torch.sqrt(1.0 - self.alphas_bar[t]).view(-1, 1, 1, 1)
 
         noise = torch.randn_like(Fz)
         z_t = sqrt_alpha_bar * Fz + sqrt_one_minus * noise
         return z_t, Fz, noise
 
     # ------------------------------------------------------------------
-    # Reverse process  (predict F_φ(ẑ,t), recover ẑ, then step)
+    # Reverse process  — x0-prediction formula
     # ------------------------------------------------------------------
 
     def p_sample(
@@ -438,21 +384,37 @@ class LatentNDMDiffusion:
         t: torch.Tensor,
     ) -> torch.Tensor:
         """
-        One reverse step: estimate z_{t-1} from z_t.
+        One reverse step using the x0-prediction DDPM posterior mean.
 
-        The UNet predicts F_φ(ẑ, t).  We use this as a proxy for the
-        de-noised transformed latent, then reconstruct the DDPM-style mean.
+        The UNet predicts F_φ(z, t)  (the "clean" transformed latent, x0).
+        We plug this into the DDPM posterior:
+
+            mu_q(z_t, x0_pred) = sqrt(alpha_bar_{t-1}) * beta_t / (1 - alpha_bar_t) * x0_pred
+                                + sqrt(alpha_t) * (1 - alpha_bar_{t-1}) / (1 - alpha_bar_t) * z_t
+
+        This is mathematically consistent with training the UNet to predict
+        F_φ(z, t) rather than the noise ε.
         """
-        alpha = self.alphas[t].view(-1, 1, 1, 1)
         alpha_bar = self.alphas_bar[t].view(-1, 1, 1, 1)
+        alpha_bar_prev = self.alphas_bar_prev[t].view(-1, 1, 1, 1)
         beta = self.betas[t].view(-1, 1, 1, 1)
+        alpha = self.alphas[t].view(-1, 1, 1, 1)
 
-        # UNet predicts F_φ(ẑ, t)  [same role as predicted noise in DDPM]
-        pred_Fz = unet(z_t, t)  # noqa: N806
+        # UNet predicts the clean transformed latent (x0 equivalent)
+        pred_x0 = unet(z_t, t)
 
-        # DDPM mean formula using the transformed target
-        mean = (1.0 / torch.sqrt(alpha)) * (z_t - (beta / torch.sqrt(1 - alpha_bar)) * pred_Fz)
-        std = torch.sqrt(beta)
+        # Clamp for numerical stability (optional but helpful)
+        pred_x0 = pred_x0.clamp(-10, 10)
+
+        # DDPM posterior mean (x0-prediction form)
+        coef_x0 = torch.sqrt(alpha_bar_prev) * beta / (1.0 - alpha_bar)
+        coef_zt = torch.sqrt(alpha) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
+        mean = coef_x0 * pred_x0 + coef_zt * z_t
+
+        # Posterior variance (fixed to beta_tilde)
+        beta_tilde = beta * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
+        std = torch.sqrt(beta_tilde.clamp(min=1e-20))
+
         noise = torch.randn_like(z_t) if t[0] > 1 else torch.zeros_like(z_t)
         return mean + std * noise
 
@@ -471,7 +433,6 @@ class LatentNDMDiffusion:
     ):
         """
         Full reverse chain: pure noise → latent → decode → pixel images.
-
         Returns uint8 images of shape (B, 1, H, W).
         """
         logging.info(f"Sampling {batch_size} new images (latent NDM)…")
@@ -490,7 +451,6 @@ class LatentNDMDiffusion:
                 imgs = self._decode_to_uint8(vae, z)
                 intermediates.append(imgs)
 
-        # Final decode
         imgs = self._decode_to_uint8(vae, z)
 
         unet.train()
