@@ -94,7 +94,7 @@ def main():
         f"T={args.T}  β_kl={args.beta_kl}  λ_vae={args.lambda_vae}"
     )
 
-    unet, transform, vae, _ = train(
+    _ = train(
         device=device,
         T=args.T,
         beta_start=args.beta_start,

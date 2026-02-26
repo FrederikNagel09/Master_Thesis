@@ -362,4 +362,4 @@ def train(
     )
 
     logging.info("Training complete.")
-    return unet, transform, vae, {"ndm": ndm_losses, "vae": joint_vae_losses, "total": total_losses}
+    return {"ndm": ndm_losses, "vae": joint_vae_losses, "total": total_losses}
