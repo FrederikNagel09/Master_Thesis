@@ -18,3 +18,16 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# graphs, weights and results
+src/INR/graphs/
+src/INR/weights/
+src/INR/results/
+
+src/DDPM/graphs/
+src/DDPM/weights/
+src/DDPM/results/
+
+src/NDM/graphs/
+src/NDM/weights/
+src/NDM/results/
