@@ -13,7 +13,7 @@
 source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # Run training
-python /zhome/66/4/156534/Master_Thesis/src/neural_latent_diffusion/train.py \
+python /zhome/66/4/156534/Master_Thesis/src/neural_latent_diffusion/run_training.py \
     --T 1000 \
     --beta_start 1e-4 \
     --beta_end 0.02 \

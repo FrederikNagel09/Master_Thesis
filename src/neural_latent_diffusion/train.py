@@ -100,7 +100,7 @@ def train(
     batch_size: int = 128,
     lr: float = 1e-3,
     num_epochs_vae: int = 5,
-    num_epochs_unet_warmup: int = 1,  # FIX: warm up UNet before joint training
+    num_epochs_unet_warmup: int = 20,  # FIX: warm up UNet before joint training
     num_epochs_ndm: int = 10,
     beta_kl: float = 1e-3,
     lambda_vae: float = 0.1,
@@ -294,7 +294,9 @@ def train(
 
             # UNet predicts F_φ(z, t) — target is F_φ(z, t)
             pred_Fz = unet(z_t, t)  # noqa: N806
-
+            if len(ep_ndm) % 50 == 0:
+                print(f"Fz_target mean abs: {Fz_target.abs().mean().item():.4f}")
+                print(f"pred_Fz  mean abs: {pred_Fz.abs().mean().item():.4f}")
             # FIX: do NOT detach Fz_target.
             # Detaching would block gradients to the transform, preventing it
             # from learning. The transform and UNet must co-train.
