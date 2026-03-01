@@ -32,6 +32,6 @@ src/neural_latent_diffusion/graphs/
 src/neural_latent_diffusion/weights/
 src/neural_latent_diffusion/results/
 
-src/inr_hypernetwork/graphs/
-src/inr_hypernetwork/weights/
-src/inr_hypernetwork/results/
+src/inr_mlp_hypernetwork/graphs/
+src/inr_mlp_hypernetwork/weights/
+src/inr_mlp_hypernetwork/results/

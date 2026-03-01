@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.inr_hypernetwork.utils import _save_plot, _save_reconstruction_hyper
+from src.inr_mlp_hypernetwork.utils import _save_plot, _save_reconstruction_hyper
 
 
 def train(

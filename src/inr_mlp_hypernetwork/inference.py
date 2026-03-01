@@ -8,9 +8,9 @@ import torch
 
 sys.path.append(".")
 
-from src.inr_hypernetwork.dataloader import MNISTCoordDataset
-from src.inr_hypernetwork.model import HyperINR
-from src.inr_hypernetwork.utils import make_coord_grid
+from src.inr_mlp_hypernetwork.dataloader import MNISTCoordDataset
+from src.inr_mlp_hypernetwork.model import HyperINR
+from src.inr_mlp_hypernetwork.utils import make_coord_grid
 
 
 def run_inference():

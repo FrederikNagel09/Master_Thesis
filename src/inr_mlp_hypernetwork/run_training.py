@@ -6,9 +6,9 @@ import torch
 
 sys.path.append(".")
 
-from src.inr_hypernetwork.dataloader import MNISTHyperDataset
-from src.inr_hypernetwork.model import HyperINR
-from src.inr_hypernetwork.train import train
+from src.inr_mlp_hypernetwork.dataloader import MNISTHyperDataset
+from src.inr_mlp_hypernetwork.model import HyperINR
+from src.inr_mlp_hypernetwork.train import train
 
 WEIGHTS_DIR = "src/inr_hypernetwork/weights"
 
