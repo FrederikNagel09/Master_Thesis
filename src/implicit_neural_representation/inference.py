@@ -19,7 +19,7 @@ def run_inference():
 
     Usage example:
     python src/implicit_neural_representation/inference.py \
-        --weights src/implicit_neural_representation/weights/image_5_20_20_20.pth \
+        --weights src/implicit_neural_representation/weights/image_2_20_20_20.pth \
         --height 512 \
         --width 512 \
         --mnist_dir data/MNIST/raw \

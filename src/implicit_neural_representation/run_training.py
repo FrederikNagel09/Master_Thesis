@@ -19,7 +19,7 @@ def run_training():
     Run training of an INR MLP on a single MNIST image, with layer sizes chosen to match the number of pixels.
 
     Usage:
-    python src/implicit_neural_representation/run_training.py --index 5 --name image_ --epochs 1500 --batch_size 32 --lr 1e-3
+    python src/implicit_neural_representation/run_training.py --index 2 --name image_ --epochs 150 --batch_size 32 --lr 1e-4
     """
     # Args parsing initialization
     parser = argparse.ArgumentParser(description="Train an INR MLP on a single MNIST image.")
