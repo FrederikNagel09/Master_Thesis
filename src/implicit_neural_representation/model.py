@@ -5,20 +5,6 @@ import torch.nn as nn
 class INRMLP(nn.Module):
     """
     Three-layer MLP for implicit neural representation (INR).
-
-    Architecture:
-        Linear(2 -> h1) -> activation
-        Linear(h1 -> h2) -> activation
-        Linear(h2 -> h3) -> activation
-        Linear(h3 -> 1)  -> Sigmoid
-
-    Output is in (0, 1), matching pixel values normalized to [0, 1].
-
-    Args:
-        h1, h2, h3:  Hidden layer widths.
-        activation:  Any nn.Module activation. Defaults to GELU, which tends
-                     to work well for INRs. Sine activations (SIREN-style) are
-                     another popular choice for this task.
     """
 
     def __init__(

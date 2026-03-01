@@ -20,21 +20,6 @@ def train(
 ):
     """
     Train an INR MLP on a coordinate → pixel value dataset.
-
-    Args:
-        model:       The neural network to train.
-        dataset:     A MNISTCoordDataset (or any Dataset yielding (coords, pixels)).
-        name:        Run name — used for the saved plot filename.
-        num_epochs:  Number of training epochs.
-        batch_size:  Batch size for the DataLoader.
-        lr:          Learning rate for Adam.
-        val_split:   Fraction of data to use as validation (e.g. 0.1 = 10%).
-        device:      'cuda', 'mps', or 'cpu'. Auto-detected if None.
-        graph_dir:   Directory where the training plot is saved.
-
-    Returns:
-        model: The trained model (on CPU).
-        history: dict with keys 'train_loss' and 'val_loss' (lists, one value per epoch).
     """
 
     # ------------------------------------------------------------------
