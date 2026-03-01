@@ -4,48 +4,50 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch.utils.data import Dataset
 
 
 class MNISTHyperDataset(Dataset):
     """
-    Dataset for hypernetwork training.
+    Dataset for DiffusionHyperINR training.
 
-    Each sample represents ONE full MNIST image and contains:
-        image:  (784,)  — flattened pixel values in [0, 1], input to the hypernetwork
-        coords: (784, 2) — all pixel coordinates normalized to [-1, 1], input to the INR
-        pixels: (784, 1) — all pixel values in [0, 1], regression target
+    Each sample contains:
+        image_32:  (1, 32, 32)  — zero-padded MNIST image, input to the UNet
+        image_28:  (1, 28, 28)  — original MNIST image (for target pixel matching)
+        coords:    (784, 2)     — 28x28 pixel coords normalized to [-1, 1], input to INR
+        pixels:    (784, 1)     — 28x28 pixel values in [0, 1], INR regression target
 
-    The hypernetwork sees the full image to produce INR weights.
-    The INR then maps coordinates -> pixel values.
+    The UNet operates on 32x32 images (clean power-of-2 spatial dims).
+    The INR reconstructs at 28x28 to match the original MNIST resolution.
+    The denoising target is also 32x32.
     """
 
+    # Padding: 28 -> 32 means 2px on each side
+    PAD = 2
+
     def __init__(self, mnist_raw_dir: str = "data/MNIST/raw", split: str = "train"):
-        """
-        Args:
-            mnist_raw_dir: Path to the MNIST raw directory.
-            split:         'train' or 'test'
-        """
         self.mnist_raw_dir = Path(mnist_raw_dir)
-        self.images = self._load_all_images(split)  # (N, H, W) float32 in [0, 1]
+        images_28 = self._load_all_images(split)  # (N, 28, 28) float32 in [0,1]
 
-        _, h, w = self.images.shape  # n=60000 for train, 10000 for test; h=w=28
+        _, h, w = images_28.shape  # h=w=28
 
-        # Build coordinate grid, normalized to [-1, 1] — same for every image
+        # Pad 28x28 -> 32x32
+        images_tensor = torch.from_numpy(images_28).unsqueeze(1)  # (N, 1, 28, 28)
+        self.images_32 = F.pad(images_tensor, [self.PAD] * 4, mode="constant", value=0.0)  # (N, 1, 32, 32)
+        self.images_28 = images_tensor  # (N, 1, 28, 28)
+
+        # 28x28 coordinate grid for INR target
         rows = torch.linspace(-1, 1, h)
         cols = torch.linspace(-1, 1, w)
-        grid_r, grid_c = torch.meshgrid(rows, cols, indexing="ij")  # (H, W)
-        self.coords = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=-1)  # (H*W, 2)
-
-        # Convert images to tensors
-        self.images_tensor = torch.from_numpy(self.images)  # (N, H, W)
+        grid_r, grid_c = torch.meshgrid(rows, cols, indexing="ij")
+        self.coords = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=-1)  # (784, 2)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _load_all_images(self, split: str) -> np.ndarray:
-        """Load all images from the MNIST idx file."""
         if split == "train":
             candidates = [
                 self.mnist_raw_dir / "train-images-idx3-ubyte",
@@ -57,12 +59,7 @@ class MNISTHyperDataset(Dataset):
                 self.mnist_raw_dir / "t10k-images-idx3-ubyte.gz",
             ]
 
-        path = None
-        for c in candidates:
-            if c.exists():
-                path = c
-                break
-
+        path = next((c for c in candidates if c.exists()), None)
         if path is None:
             raise FileNotFoundError(f"No MNIST image file found in {self.mnist_raw_dir} for split='{split}'.")
 
@@ -72,31 +69,31 @@ class MNISTHyperDataset(Dataset):
             assert magic == 2051, f"Not an MNIST image file (magic={magic})"
             buf = f.read(n_images * rows * cols)
 
-        images = np.frombuffer(buf, dtype=np.uint8).reshape(n_images, rows, cols).astype(np.float32) / 255.0
-        return images
+        return np.frombuffer(buf, dtype=np.uint8).reshape(n_images, rows, cols).astype(np.float32) / 255.0
 
     # ------------------------------------------------------------------
     # Dataset interface
     # ------------------------------------------------------------------
 
     def __len__(self) -> int:
-        return len(self.images_tensor)
+        return len(self.images_32)
 
     def __getitem__(self, idx: int):
         """
         Returns:
-            image:  FloatTensor (784,)   — flattened image, input to hypernetwork
-            coords: FloatTensor (784, 2) — pixel coordinates, input to INR
-            pixels: FloatTensor (784, 1) — pixel values, reconstruction target
+            image_32: FloatTensor (1, 32, 32) — padded image for UNet input/target
+            coords:   FloatTensor (784, 2)    — 28x28 coords for INR
+            pixels:   FloatTensor (784, 1)    — 28x28 pixel values for INR target
         """
-        img = self.images_tensor[idx]  # (H, W)
-        image_flat = img.flatten()  # (784,)
-        pixels = image_flat.unsqueeze(-1)  # (784, 1)
-        return image_flat, self.coords, pixels
+        image_32 = self.images_32[idx]  # (1, 32, 32)
+        image_28 = self.images_28[idx]  # (1, 28, 28)
+        pixels = image_28.flatten().unsqueeze(-1)  # (784, 1)
+        return image_32, self.coords, pixels
 
     @property
     def image_shape(self):
-        return self.images.shape[1:]  # (H, W)
+        """Original 28x28 shape."""
+        return (28, 28)
 
 
 # ---------------------------------------------------------------------------
@@ -106,21 +103,25 @@ class MNISTHyperDataset(Dataset):
 
 class MNISTCoordDataset(Dataset):
     """
-    Dataset that represents a single MNIST image as (coordinate, pixel) pairs.
-    Used for inference and per-image visualisation.
+    Single-image dataset for inference and per-image visualisation.
     """
+
+    PAD = 2  # 28 -> 32
 
     def __init__(self, mnist_raw_dir: str = "data/MNIST/raw", image_index: int = 0):
         self.mnist_raw_dir = Path(mnist_raw_dir)
-        self.image = self._load_image(image_index)  # (H, W) float32
+        self.image_28 = self._load_image(image_index)  # (28, 28) float32
 
-        height, width = self.image.shape
+        height, width = self.image_28.shape
         rows = torch.linspace(-1, 1, height)
         cols = torch.linspace(-1, 1, width)
         grid_r, grid_c = torch.meshgrid(rows, cols, indexing="ij")
-        self.coords = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=-1)  # (N, 2)
-        self.pixels = torch.from_numpy(self.image).flatten().unsqueeze(-1)  # (N, 1)
-        self.image_flat = torch.from_numpy(self.image).flatten()  # (784,)
+        self.coords = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=-1)  # (784, 2)
+        self.pixels = torch.from_numpy(self.image_28).flatten().unsqueeze(-1)  # (784, 1)
+
+        img_tensor = torch.from_numpy(self.image_28).unsqueeze(0).unsqueeze(0)  # (1, 1, 28, 28)
+        self.image_32 = F.pad(img_tensor, [self.PAD] * 4).squeeze(0)  # (1, 32, 32)
+        self.image_flat_28 = torch.from_numpy(self.image_28).flatten()  # (784,)
 
     def _load_image(self, index: int) -> np.ndarray:
         candidates = [
@@ -152,4 +153,4 @@ class MNISTCoordDataset(Dataset):
 
     @property
     def image_shape(self):
-        return self.image.shape
+        return self.image_28.shape
