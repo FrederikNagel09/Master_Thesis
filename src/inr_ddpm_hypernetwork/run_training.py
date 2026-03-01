@@ -3,6 +3,7 @@ import os
 import sys
 
 import torch
+from torch.utils.data import Subset
 
 sys.path.append(".")
 
@@ -65,6 +66,12 @@ def run_training():
     # 1. Dataset
     # ------------------------------------------------------------------
     dataset = MNISTHyperDataset(mnist_raw_dir="data/MNIST/raw", split=args.split)
+
+    # Subset: use first N images (or random sample)
+    subset_frac = 0.01
+    n = int(len(dataset) * subset_frac)
+    dataset = Subset(dataset, range(n))
+
     print(f"Dataset size: {len(dataset)} images")
 
     # ------------------------------------------------------------------
