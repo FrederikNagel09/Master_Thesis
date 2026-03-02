@@ -161,7 +161,7 @@ def train_inr_mlp_hypernet(
     batch_size: int = 32,
     lr: float = 1e-4,
     device: str | None = None,
-    graph_dir: str = "src/inr_hypernetwork/graphs",
+    graph_dir: str = "src/results/hypernet_inr/training_graphs",
 ):
     """
     Train the HyperINR model.

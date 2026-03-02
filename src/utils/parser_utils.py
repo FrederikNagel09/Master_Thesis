@@ -29,20 +29,7 @@ def parse_config_vars(config_path: str) -> tuple[int, int, int, int]:
 
 
 def save_config(args, save_dir, weights_path=None):
-    config = {
-        "model": args.model,
-        "index": args.index,
-        "name": args.name,
-        "epochs": args.epochs,
-        "batch_size": args.batch_size,
-        "lr": args.lr,
-        "h1": args.h1,
-        "h2": args.h2,
-        "h3": args.h3,
-        "dataset": args.dataset,
-        "omega_0": args.omega_0,
-        "weights_path": weights_path,
-    }
+    config = {**vars(args), "weights_path": weights_path}
 
     with open(save_dir, "w") as f:
         json.dump(config, f, indent=2)
@@ -56,7 +43,7 @@ def parse_args_training():
         type=str,
         default="basic_inr",
         help="Model to train (default: 'basic_inr').",
-        choices=["basic_inr", "ddpm", "inr_mlp_hypernet"],
+        choices=["basic_inr", "ddpm", "hypernet_inr"],
     )
 
     parser.add_argument("--index", type=int, default=0, help="Index of the MNIST image to fit (default: 0).")
@@ -71,6 +58,8 @@ def parse_args_training():
     parser.add_argument("--h3", type=int, default=20, help="Size of third hidden layer (default: 20).")
     parser.add_argument("--dataset", type=str, default="mnist", help="Dataset to use (default: 'mnist').")
     parser.add_argument("--omega_0", type=float, default=20.0, help="Omega_0 parameter for SIREN layers (default: 20.0).")
+    parser.add_argument("--hyper_h", type=int, default=256, help="Size of hidden layer in hypernetwork (default: 256).")
+    parser.add_argument("--subset_frac", type=float, default=1.0, help="Fraction of the dataset to use (default: 1.0, i.e. 100%).")
     args = parser.parse_args()
 
     return args

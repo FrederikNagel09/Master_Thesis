@@ -1,6 +1,6 @@
 """
 python src/sample.py \
-        --config_path src/results/basic_inr/experiments/test_02-03-20:26.json \
+        --config_path src/results/basic_inr/experiments/test_02-03-21:49.json \
         --height 512 \
         --width 512 
 """
@@ -10,7 +10,7 @@ import sys
 sys.path.append(".")
 
 from src.utils.parser_utils import parse_args_sample, parse_config_vars
-from src.utils.run_inference_utils import run_inference_siren_inr
+from src.utils.run_inference_utils import run_inference_inr_mlp_hypernet, run_inference_siren_inr
 
 if __name__ == "__main__":
     args = parse_args_sample()
@@ -19,6 +19,10 @@ if __name__ == "__main__":
 
     if config["model"] == "basic_inr":
         run_inference_siren_inr(args, config)
+    elif config["model"] == "hypernet_inr":
+        run_inference_inr_mlp_hypernet(args, config)
+    else:
+        raise ValueError(f"Unknown model type: {config['model']}")
 
     """
     if args.model == "ddpm":

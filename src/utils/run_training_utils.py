@@ -2,6 +2,7 @@ import os
 import sys
 
 import torch
+from torch.utils.data import Subset
 
 sys.path.append(".")
 
@@ -50,7 +51,7 @@ def run_training_siren_inr(args):
     torch.save(model.state_dict(), weights_path)
     print(f"Weights saved to: {weights_path}")
 
-    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{args.name}_{get_current_datetime()}.json")
+    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
     save_config(args, save_dir, weights_path)
 
 
@@ -93,15 +94,6 @@ def run_training_inr_mlp_hypernet(args):
 
     The hypernetwork learns to map a full MNIST image to a set of INR weights.
     The INR then maps pixel coordinates to pixel values using those weights.
-
-    Usage:
-    python src/inr_hypernetwork/run_training.py \
-        --name hyper_run \
-        --epochs 5 \
-        --batch_size 32 \
-        --lr 1e-3 \
-        --inr_h 32 \
-        --hyper_h 256
     """
     # Imports
     from src.dataloaders.MNISTHyper import MNISTHyperDataset
@@ -111,21 +103,23 @@ def run_training_inr_mlp_hypernet(args):
     # ------------------------------------------------------------------
     # 1. Dataset
     # ------------------------------------------------------------------
-    dataset = MNISTHyperDataset(mnist_raw_dir="data/MNIST/raw", split=args.split)
-    print(f"Dataset size: {len(dataset)} images")
+    dataset = MNISTHyperDataset(mnist_raw_dir="data/MNIST/raw")
+    # Subset: use first N images (or random sample)
+    n = int(len(dataset) * args.subset_frac)
+    dataset = Subset(dataset, range(n))
 
     # ------------------------------------------------------------------
     # 2. Model
     # ------------------------------------------------------------------
     model = HyperINR(
-        h1=args.inr_h,
-        h2=args.inr_h,
-        h3=args.inr_h,
+        h1=args.h1,
+        h2=args.h2,
+        h3=args.h3,
         omega_0=args.omega_0,
         hyper_h=args.hyper_h,
     )
 
-    run_name = f"{args.name}_inr{args.inr_h}_hyper{args.hyper_h}"
+    run_name = f"{args.name}_{get_current_datetime()}"
 
     # ------------------------------------------------------------------
     # 3. Train
@@ -139,11 +133,10 @@ def run_training_inr_mlp_hypernet(args):
         lr=args.lr,
     )
 
-    # ------------------------------------------------------------------
-    # 4. Save weights (hypernetwork only — the INR has no weights to save)
-    # ------------------------------------------------------------------
     # Save weights
-    os.makedirs(os.path.join(RES_DIR, "weights"), exist_ok=True)
-    weights_path = os.path.join(RES_DIR, "weights", f"{args.model}/{run_name}.pth")
+    weights_path = os.path.join(RES_DIR, f"{args.model}/weights", f"{run_name}.pth")
     torch.save(model.state_dict(), weights_path)
     print(f"Weights saved to: {weights_path}")
+
+    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
+    save_config(args, save_dir, weights_path)

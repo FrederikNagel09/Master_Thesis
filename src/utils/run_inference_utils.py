@@ -70,29 +70,26 @@ def run_inference_siren_inr(args, config):
     print(f"Saved to: {out_path}")
 
 
-def run_inference_inr_mlp_hypernet(args):
+def run_inference_inr_mlp_hypernet(args, config):
     """
     Run inference with a trained HyperINR model.
     Picks 5 random MNIST images, shows originals on top and upscaled reconstructions below.
-
-    Usage:
-    python src/inr_hypernetwork/inference.py \
-        --weights src/inr_hypernetwork/weights/hyper_run_inr32_hyper256.pth \
-        --height 512 \
-        --width 512 \
-        --inr_h 32 \
-        --hyper_h 256
     """
     # Imports:
     import random
 
     from src.models.inr_mlp_hypernet import HyperINR
 
+    h1 = config["h1"]
+    h2 = config["h2"]
+    h3 = config["h3"]
+    omega_0 = config["omega_0"]
+    hyper_h = config["hyper_h"]
     # ------------------------------------------------------------------
     # 1. Load model
     # ------------------------------------------------------------------
-    model = HyperINR(h1=args.inr_h, h2=args.inr_h, h3=args.inr_h, omega_0=args.omega_0, hyper_h=args.hyper_h)
-    model.hypernet.load_state_dict(torch.load(args.weights, map_location="cpu"))
+    model = HyperINR(h1=h1, h2=h2, h3=h3, omega_0=omega_0, hyper_h=hyper_h)
+    model.hypernet.load_state_dict(torch.load(config["weights_path"], map_location="cpu"))
     model.eval()
 
     # ------------------------------------------------------------------
@@ -104,7 +101,7 @@ def run_inference_inr_mlp_hypernet(args):
     originals = []
     images_flat = []
     for idx in indices:
-        ds = MNISTCoordDataset(mnist_raw_dir=args.mnist_dir, image_index=idx)
+        ds = MNISTCoordDataset(mnist_raw_dir="data/MNIST/raw", image_index=idx)
         originals.append(ds.image)
         images_flat.append(ds.image_flat)
 
@@ -144,8 +141,8 @@ def run_inference_inr_mlp_hypernet(args):
     plt.suptitle("HyperINR — Original vs Upscaled Reconstruction", fontsize=14)
     plt.tight_layout()
 
-    os.makedirs(args.out_dir, exist_ok=True)
-    out_path = os.path.join(args.out_dir, f"hyper_5samples_{args.height}x{args.width}.png")
+    out_dir = "src/results/hypernet_inr/samples"
+    out_path = os.path.join(out_dir, f"hypernetINR_5_samples_{args.height}x{args.width}.png")
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved to: {out_path}")
