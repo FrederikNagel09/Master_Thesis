@@ -1,0 +1,18 @@
+{
+  "T": 10,
+  "beta_start": 0.0001,
+  "beta_end": 0.02,
+  "latent_channels": 8,
+  "latent_size": 8,
+  "ndm_hidden_dim": 16,
+  "ndm_num_layers": 2,
+  "ndm_time_dim": 4,
+  "img_size": 32,
+  "unet_channels": 8,
+  "time_dim": 8,
+  "vae_weights": "src/neural_latent_diffusion/weights/latent_ndm_mnist_vae_final.pt",
+  "unet_weights": "src/neural_latent_diffusion/weights/latent_ndm_mnist_unet_epoch001.pt",
+  "transform_weights": "src/neural_latent_diffusion/weights/latent_ndm_mnist_transform_epoch001.pt",
+  "experiment_name": "latent_ndm_mnist",
+  "results_dir": "src/neural_latent_diffusion/results"
+}
