@@ -36,8 +36,8 @@ def run_training():
         --inr_h 32 \
         --hyper_h 256 \
         --unet_channels 32 \
-        --T 500 \
-        --lambda_denoise 5.0
+        --T 1000 \
+        --lambda_denoise 0.5
     """
     parser = argparse.ArgumentParser(description="Train DiffusionHyperINR on MNIST.")
     parser.add_argument("--name", type=str, default="diffusion_hyper", help="Base name for the run.")
@@ -48,7 +48,7 @@ def run_training():
     parser.add_argument("--hyper_h", type=int, default=256, help="Hidden dim of the hypernetwork.")
     parser.add_argument("--unet_channels", type=int, default=32, help="Base channel count for the UNet.")
     parser.add_argument("--omega_0", type=float, default=15.0, help="SIREN omega_0.")
-    parser.add_argument("--T", type=int, default=500, help="Number of diffusion timesteps.")
+    parser.add_argument("--T", type=int, default=1000, help="Number of diffusion timesteps.")
     parser.add_argument("--beta_start", type=float, default=1e-4, help="Diffusion beta start.")
     parser.add_argument("--beta_end", type=float, default=0.02, help="Diffusion beta end.")
     parser.add_argument(
