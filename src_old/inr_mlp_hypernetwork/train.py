@@ -8,7 +8,7 @@ from tqdm import tqdm
 from src_old.inr_mlp_hypernetwork.utils import _save_plot, _save_reconstruction_hyper
 
 
-def train(
+def train_inr_mlp_hypernet(
     model: nn.Module,
     dataset,
     name: str,

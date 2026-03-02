@@ -41,9 +41,24 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
+def run_inference_ddpm():
+    parser = argparse.ArgumentParser(description="DDPM MNIST inference - generate a 4x4 grid")
 
+    parser.add_argument("--weights", type=str, required=True, help="Path to the saved model weights (.pt file)")
+    parser.add_argument(
+        "--out_path",
+        type=str,
+        default="src/denoising_diffusion/results/inference_grid.png",
+        help="Output path for the generated image grid",
+    )
+
+    # Must match the values used during training
+    parser.add_argument("--img_size", type=int, default=32, help="Spatial size used during training")
+    parser.add_argument("--channels", type=int, default=32, help="Base channel count used during training")
+    parser.add_argument("--time_dim", type=int, default=256, help="Time embedding dim used during training")
+    parser.add_argument("--T", type=int, default=500, help="Diffusion timesteps used during training")
+    parser.add_argument("--device", type=str, default=None, help="Device override (cpu / cuda / mps)")
+    args = parser.parse_args()
     # Device
     if args.device is None:
         if torch.cuda.is_available():
@@ -86,7 +101,3 @@ def main():
     plt.close()
 
     print(f"4x4 grid saved to: {args.out_path}")
-
-
-if __name__ == "__main__":
-    main()

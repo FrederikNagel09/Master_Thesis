@@ -79,7 +79,7 @@ def plot_loss(losses: list, save_path: str):
 # ---------------------------------------------------------------------------
 
 
-def train(
+def train_ddpm(
     device: str = "cpu",
     T: int = 1000,  # noqa: N803
     img_size: int = 32,

@@ -1,5 +1,4 @@
 import os
-import re
 import sys
 
 import matplotlib.pyplot as plt
@@ -10,20 +9,6 @@ import math
 import sys
 
 sys.path.append(".")
-
-
-def parse_weights_name(weights_path: str) -> tuple[int, int, int, int]:
-    """
-    Extract image index and layer sizes from a filename like:
-        src/INR/weights/trial_0_20_20_20.pth
-    Returns: (img_index, h1, h2, h3)
-    """
-    stem = os.path.basename(weights_path).replace(".pth", "")
-    match = re.search(r"_(\d+)_(\d+)_(\d+)_(\d+)$", stem)
-    if not match:
-        raise ValueError(f"Could not parse index and layer sizes from filename: {stem}\nExpected format: <name>_<index>_<h1>_<h2>_<h3>.pth")
-    idx, h1, h2, h3 = (int(x) for x in match.groups())
-    return idx, h1, h2, h3
 
 
 def make_coord_grid(height: int, width: int) -> torch.Tensor:

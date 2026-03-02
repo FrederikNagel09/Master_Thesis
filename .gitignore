@@ -39,3 +39,5 @@ src/inr_mlp_hypernetwork/results/
 src/inr_ddpm_hypernetwork/graphs/
 src/inr_ddpm_hypernetwork/weights/
 src/inr_ddpm_hypernetwork/results/
+
+src/results/
