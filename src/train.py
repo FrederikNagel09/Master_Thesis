@@ -1,8 +1,4 @@
 """
-
-
-usage:
-
 python src/train.py \
     --model basic_inr \
     --index 5 \

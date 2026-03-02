@@ -2,6 +2,16 @@ import argparse
 import json
 
 
+def parse_args_sample():
+    parser = argparse.ArgumentParser(description="INR inference — reconstruct an image at any resolution.")
+    parser.add_argument("--config_path", type=str, required=True, help="Path to the experiment directory.")
+    parser.add_argument("--height", type=int, required=True, help="Output image height in pixels.")
+    parser.add_argument("--width", type=int, required=True, help="Output image width in pixels.")
+    args = parser.parse_args()
+
+    return args
+
+
 def parse_config_vars(config_path: str) -> tuple[int, int, int, int]:
     """
     Extract image index and layer sizes from a JSON metadata file.
@@ -39,7 +49,7 @@ def save_config(args, save_dir, weights_path=None):
     print(f"Experiment config saved to: {save_dir}")
 
 
-def parse_args_basic_inr():
+def parse_args_training():
     parser = argparse.ArgumentParser(description="Train an INR MLP on a single MNIST image.")
     parser.add_argument(
         "--model",
