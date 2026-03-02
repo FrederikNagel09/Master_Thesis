@@ -69,7 +69,12 @@ def train(
     n_batches = len(train_loader)
 
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(
+        [
+            {"params": model.unet.parameters(), "lr": lr},
+            {"params": model.hypernet.parameters(), "lr": 1e-3},  # hypernet needs faster updates
+        ]
+    )
 
     history: dict = {
         "total_loss": [],
@@ -94,12 +99,11 @@ def train(
             image_32 = image_32.to(device)
             coords = coords.to(device)
             pixels = pixels.to(device)
-
             optimizer.zero_grad()
 
             # Forward pass: returns (x0_hat, pixel_preds, t)
             x0_hat, pixel_preds, _t = model(image_32, coords)
-
+            # print(f"[SANITY] pixel_preds range : {pixel_preds.min():.4f} - {pixel_preds.max():.4f}")
             # Reconstruction loss: INR pixel predictions vs ground truth
             recon_loss = criterion(pixel_preds, pixels)
 

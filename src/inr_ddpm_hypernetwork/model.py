@@ -124,13 +124,17 @@ class HyperNetwork(nn.Module):
             nn.Linear(hyper_h, inr_param_count),
         )
         self._init_weights()
+        self.output_scale = nn.Parameter(torch.ones(1) * 0.1)  # learnable scale
 
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
                 nn.init.zeros_(m.bias)
-        nn.init.uniform_(self.net[-1].weight, -0.01, 0.01)
+        # Final layer: output scaled to reasonable SIREN weight range
+        # SIREN hidden layers expect weights ~ uniform(-sqrt(6/fan_in), sqrt(6/fan_in))
+        # For fan_in=32: sqrt(6/32) ≈ 0.43 — use that as the output scale
+        nn.init.uniform_(self.net[-1].weight, -0.1, 0.1)  # was -0.01, 0.01
         nn.init.zeros_(self.net[-1].bias)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
@@ -140,7 +144,7 @@ class HyperNetwork(nn.Module):
         Returns:
             (B, P) flat INR weight vectors
         """
-        return self.net(image)
+        return self.net(image) * self.output_scale
 
 
 # ---------------------------------------------------------------------------

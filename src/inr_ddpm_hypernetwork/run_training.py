@@ -28,16 +28,16 @@ def run_training():
         -> query INR at any (x,y) resolution
 
     Usage:
-    python src/inr_ddpm_hypernetwork/run_training.py \\
-        --name diffusion_hyper_run \\
-        --epochs 50 \\
-        --batch_size 32 \\
-        --lr 1e-4 \\
-        --inr_h 32 \\
-        --hyper_h 256 \\
-        --unet_channels 32 \\
-        --T 500 \\
-        --lambda_denoise 1.0
+    python src/inr_ddpm_hypernetwork/run_training.py \
+        --name diffusion_hyper_run \
+        --epochs 10 \
+        --batch_size 32 \
+        --lr 1e-4 \
+        --inr_h 32 \
+        --hyper_h 256 \
+        --unet_channels 32 \
+        --T 500 \
+        --lambda_denoise 5.0
     """
     parser = argparse.ArgumentParser(description="Train DiffusionHyperINR on MNIST.")
     parser.add_argument("--name", type=str, default="diffusion_hyper", help="Base name for the run.")
@@ -47,7 +47,7 @@ def run_training():
     parser.add_argument("--inr_h", type=int, default=32, help="Hidden dim of each INR layer.")
     parser.add_argument("--hyper_h", type=int, default=256, help="Hidden dim of the hypernetwork.")
     parser.add_argument("--unet_channels", type=int, default=32, help="Base channel count for the UNet.")
-    parser.add_argument("--omega_0", type=float, default=1.0, help="SIREN omega_0.")
+    parser.add_argument("--omega_0", type=float, default=15.0, help="SIREN omega_0.")
     parser.add_argument("--T", type=int, default=500, help="Number of diffusion timesteps.")
     parser.add_argument("--beta_start", type=float, default=1e-4, help="Diffusion beta start.")
     parser.add_argument("--beta_end", type=float, default=0.02, help="Diffusion beta end.")

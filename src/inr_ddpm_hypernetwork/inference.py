@@ -20,11 +20,11 @@ def run_inference():
         reconstruct:  Load real MNIST images, pass through UNet (single denoise step), reconstruct.
 
     Example usage — generate new digits at 512x512:
-    python src/inr_ddpm_hypernetwork/inference.py \\
-        --unet_weights  src/inr_ddpm_hypernetwork/weights/run_unet.pth \\
-        --hyper_weights src/inr_ddpm_hypernetwork/weights/run_hypernet.pth \\
-        --height 512 --width 512 \\
-        --inr_h 32 --hyper_h 256 --unet_channels 32 \\
+    python src/inr_ddpm_hypernetwork/inference.py \
+        --unet_weights  src/inr_ddpm_hypernetwork/weights/run_unet.pth \
+        --hyper_weights src/inr_ddpm_hypernetwork/weights/run_hypernet.pth \
+        --height 512 --width 512 \
+        --inr_h 32 --hyper_h 256 --unet_channels 32 \
         --mode generate
     """
     parser = argparse.ArgumentParser(description="DiffusionHyperINR inference.")
