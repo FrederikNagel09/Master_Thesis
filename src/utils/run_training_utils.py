@@ -110,7 +110,7 @@ def run_training_inr_mlp_hypernet(args):
 
     # ------------------------------------------------------------------
     # 2. Model
-    # ------------------------------------------------------------------
+    # -----------------------------------------------------------------
     model = HyperINR(
         h1=args.h1,
         h2=args.h2,
@@ -135,6 +135,79 @@ def run_training_inr_mlp_hypernet(args):
 
     # Save weights
     weights_path = os.path.join(RES_DIR, f"{args.model}/weights", f"{run_name}.pth")
+    torch.save(model.state_dict(), weights_path)
+    print(f"Weights saved to: {weights_path}")
+
+    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
+    save_config(args, save_dir, weights_path)
+
+
+def run_training_ndm(args):
+    """
+    Sets up data, model, and calls train_ndm().
+    Saves final checkpoint and config after training.
+    """
+    from torch.utils.data import DataLoader
+    from torchvision import datasets, transforms
+
+    from src.models.ndm import NDM
+    from src.utils.training_utils import train_ndm
+
+    # ---- Dataloader ----
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,)),  # [0,1] -> [-1,1]
+        ]
+    )
+    dataset = datasets.MNIST("data/MNIST/raw", train=True, download=True, transform=transform)
+    if args.subset_frac < 1.0:
+        n = int(len(dataset) * args.subset_frac)
+        dataset = torch.utils.data.Subset(dataset, range(n))
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=True,
+    )
+
+    # ---- Model ----
+    model = NDM(
+        in_channels=1,
+        T=args.T,
+        fphi_base_ch=args.fphi_ch,
+        denoiser_base_ch=args.denoiser_ch,
+        time_emb_dim=args.time_emb_dim,
+    )
+
+    n_fphi = sum(p.numel() for p in model.fphi.parameters() if p.requires_grad)
+    n_denoiser = sum(p.numel() for p in model.denoiser.parameters() if p.requires_grad)
+    print("Trainable parameters:")
+    print(f"  F_phi    : {n_fphi:,}")
+    print(f"  Denoiser : {n_denoiser:,}")
+    print(f"  Total    : {n_fphi + n_denoiser:,}")
+
+    # ---- Run name ----
+    run_name = f"{args.name}_{get_current_datetime()}"
+
+    # ---- Train ----
+    model = train_ndm(
+        model=model,
+        dataloader=dataloader,
+        name=run_name,
+        num_epochs=args.epochs,
+        lr=args.lr,
+        grad_clip=args.grad_clip,
+        sample_every=args.sample_every,
+        sample_steps=args.sample_steps,
+    )
+
+    # ---- Save final weights ----
+    weights_dir = os.path.join(RES_DIR, "ndm/weights")
+    os.makedirs(weights_dir, exist_ok=True)
+    weights_path = os.path.join(weights_dir, f"{run_name}.pth")
     torch.save(model.state_dict(), weights_path)
     print(f"Weights saved to: {weights_path}")
 

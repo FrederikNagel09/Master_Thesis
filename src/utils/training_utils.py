@@ -7,7 +7,8 @@ from torch import optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.utils.plot_utils import plot_training_and_reconstruction
+from src.models.ndm import NDM
+from src.utils.plot_utils import plot_ndm_training, plot_training_and_reconstruction
 
 
 def train_inr_siren(
@@ -250,4 +251,115 @@ def train_inr_mlp_hypernet(
     print("Saving final reconstruction...")
     _save_reconstruction_hyper(model, dataset, name, graph_dir, device="cpu")
     print("Done.")
+    return model
+
+
+def train_ndm(
+    model: NDM,
+    dataloader: DataLoader,
+    name: str,
+    num_epochs: int = 100,
+    lr: float = 2e-4,
+    grad_clip: float = 1.0,
+    sample_every: int = 5,
+    sample_steps: int | None = None,
+    device: str | None = None,
+    sample_dir: str = "src/results/ndm/samples",
+    graph_dir: str = "src/results/ndm/training_graph",
+) -> NDM:
+    """
+    Train an NDM on a dataloader that yields (image, label) batches.
+    Images should be shape (B, 1, 28, 28) in range [-1, 1].
+
+    Returns the trained model (on CPU).
+    """
+
+    # ---- Device ----
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    print(f"Training on: {device}")
+
+    os.makedirs(sample_dir, exist_ok=True)
+
+    model = model.to(device)
+
+    # ---- Optimiser — lower lr for F_phi, it only needs to learn a smooth warp ----
+    optimizer = optim.Adam(
+        [
+            {"params": model.denoiser.parameters(), "lr": lr},
+            {"params": model.fphi.parameters(), "lr": lr * 0.5},
+        ],
+        betas=(0.9, 0.999),
+    )
+
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+
+    # ---- History dict ----
+    history: dict = {"loss": [], "ldiff": [], "lprior": [], "lrec": []}
+
+    # ---- Training loop ----
+    epoch_bar = tqdm(range(1, num_epochs + 1), desc="Training", unit="epoch")
+
+    for epoch in epoch_bar:
+        model.train()
+        running = {"loss": 0.0, "ldiff": 0.0, "lprior": 0.0, "lrec": 0.0}
+
+        batch_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{num_epochs}", unit="batch", leave=False)
+        for x, _ in batch_bar:
+            x = x.to(device)
+
+            losses = model.loss(x)
+
+            optimizer.zero_grad()
+            losses["loss"].backward()
+            if grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
+
+            for k in running:
+                running[k] += losses[k].item() * x.size(0)
+
+        scheduler.step()
+
+        # ---- Epoch averages ----
+        n = len(dataloader.dataset)
+        avg = {k: v / n for k, v in running.items()}
+        for k, v in avg.items():
+            history[k].append(v)
+
+        epoch_bar.set_postfix(
+            {
+                "loss": f"{avg['loss']:.4f}",
+                "ldiff": f"{avg['ldiff']:.4f}",
+                "lprior": f"{avg['lprior']:.4f}",
+                "lrec": f"{avg['lrec']:.4f}",
+            }
+        )
+
+        # Periodically sample to visualize training progress.
+        # Use EMA weights for sampling, but restore original weights immediately after.
+        if epoch % sample_every == 0:
+            model.eval()
+            with torch.no_grad():
+                samples = model.sample(4, device=torch.device(device), steps=sample_steps)
+
+            import matplotlib.pyplot as plt
+            import numpy as np
+
+            imgs = ((samples * 0.5 + 0.5).clamp(0, 1) * 255).byte().cpu().numpy()
+            rows = [np.concatenate([imgs[r * 2 + c, 0] for c in range(2)], axis=1) for r in range(2)]
+            grid = np.concatenate(rows, axis=0)
+
+            fig, ax = plt.subplots()
+            ax.imshow(grid, cmap="gray", vmin=0, vmax=255)
+            ax.axis("off")
+            ax.set_title(f"Epoch {epoch} / {num_epochs}", fontsize=12)
+            fig.savefig(os.path.join(sample_dir, f"{name}.png"), bbox_inches="tight", dpi=150)
+            plt.close(fig)
+
+    model.cpu()
+    print("Saving training plot...")
+    plot_ndm_training(history, name, graph_dir)
+    print("Done.")
+    return model
     return model

@@ -48,3 +48,33 @@ def plot_training_and_reconstruction(
     plt.tight_layout()
     plt.savefig(os.path.join(graph_dir, f"{name}.png"), dpi=150)
     plt.close(fig)
+
+
+def plot_ndm_training(history: dict, name: str, graph_dir: str):
+    import matplotlib.pyplot as plt
+
+    epochs = range(1, len(history["loss"]) + 1)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+    # Left: total loss
+    axes[0].plot(epochs, history["loss"], label="Total loss")
+    axes[0].set_title("Total ELBO Loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Loss")
+    axes[0].legend()
+
+    # Right: the three components
+    axes[1].plot(epochs, history["ldiff"], label="L_diff")
+    axes[1].plot(epochs, history["lprior"], label="L_prior")
+    axes[1].plot(epochs, history["lrec"], label="L_rec")
+    axes[1].set_title("Loss Components")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Loss")
+    axes[1].legend()
+
+    fig.suptitle(f"NDM Training — {name}", fontsize=13)
+    plt.tight_layout()
+    out_path = os.path.join(graph_dir, f"{name}.png")
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Training plot saved to: {out_path}")

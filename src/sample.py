@@ -1,8 +1,13 @@
 """
 python src/sample.py \
-        --config_path src/results/basic_inr/experiments/test_02-03-21:49.json \
-        --height 512 \
-        --width 512 
+        --config_path src/results/hypernet_inr/experiments/full_train_40E_03-03-09:32.json \
+        --height 1024 \
+        --width 1024 
+
+        
+python src/sample.py \
+    --config_path src/results/ndm/experiments/quick_test_03-03-11:27.json \
+    --grid_size 4 
 """
 
 import sys
@@ -10,7 +15,7 @@ import sys
 sys.path.append(".")
 
 from src.utils.parser_utils import parse_args_sample, parse_config_vars
-from src.utils.run_inference_utils import run_inference_inr_mlp_hypernet, run_inference_siren_inr
+from src.utils.run_inference_utils import run_inference_inr_mlp_hypernet, run_inference_ndm, run_inference_siren_inr
 
 if __name__ == "__main__":
     args = parse_args_sample()
@@ -21,16 +26,7 @@ if __name__ == "__main__":
         run_inference_siren_inr(args, config)
     elif config["model"] == "hypernet_inr":
         run_inference_inr_mlp_hypernet(args, config)
+    elif config["model"] == "ndm":
+        run_inference_ndm(args, config)
     else:
         raise ValueError(f"Unknown model type: {config['model']}")
-
-    """
-    if args.model == "ddpm":
-        run_training_ddpm(args)
-    elif args.model == "siren_inr":
-        run_training_siren_inr(args)
-    elif args.model == "inr_mlp_hypernet":
-        run_training_inr_mlp_hypernet(args)
-    else:
-        raise ValueError(f"Unknown model type: {args.model}")
-    """

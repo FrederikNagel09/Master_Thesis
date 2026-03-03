@@ -5,8 +5,10 @@ import json
 def parse_args_sample():
     parser = argparse.ArgumentParser(description="INR inference — reconstruct an image at any resolution.")
     parser.add_argument("--config_path", type=str, required=True, help="Path to the experiment directory.")
-    parser.add_argument("--height", type=int, required=True, help="Output image height in pixels.")
-    parser.add_argument("--width", type=int, required=True, help="Output image width in pixels.")
+    parser.add_argument("--height", type=int, help="Output image height in pixels.")
+    parser.add_argument("--width", type=int, help="Output image width in pixels.")
+    parser.add_argument("--grid_size", type=int, default=4, help="Grid is grid_size x grid_size images")
+    parser.add_argument("--sample_steps", type=int, default=None, help="Sampling steps (None = full T)")
     args = parser.parse_args()
 
     return args
@@ -43,7 +45,7 @@ def parse_args_training():
         type=str,
         default="basic_inr",
         help="Model to train (default: 'basic_inr').",
-        choices=["basic_inr", "ddpm", "hypernet_inr"],
+        choices=["basic_inr", "ddpm", "hypernet_inr", "ndm"],
     )
 
     parser.add_argument("--index", type=int, default=0, help="Index of the MNIST image to fit (default: 0).")
@@ -60,6 +62,46 @@ def parse_args_training():
     parser.add_argument("--omega_0", type=float, default=20.0, help="Omega_0 parameter for SIREN layers (default: 20.0).")
     parser.add_argument("--hyper_h", type=int, default=256, help="Size of hidden layer in hypernetwork (default: 256).")
     parser.add_argument("--subset_frac", type=float, default=1.0, help="Fraction of the dataset to use (default: 1.0, i.e. 100%).")
+
+    # ---- NDM architecture ----
+    parser.add_argument("--T", type=int, default=1000, help="Diffusion timesteps")
+    parser.add_argument("--fphi_ch", type=int, default=32, help="F_phi base channels")
+    parser.add_argument("--denoiser_ch", type=int, default=64, help="Denoiser base channels")
+    parser.add_argument("--time_emb_dim", type=int, default=256)
+
+    # ---- NDM training ----
+    parser.add_argument("--grad_clip", type=float, default=1.0)
+    parser.add_argument("--ema_decay", type=float, default=0.9999)
+    parser.add_argument("--sample_every", type=int, default=5, help="Save sample grid every N epochs")
+    parser.add_argument("--sample_steps", type=int, default=None, help="Steps for sampling (None = full T)")
     args = parser.parse_args()
 
     return args
+
+
+def parse_args_training_2() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="NDM Training")
+
+    # ---- Shared ----
+    p.add_argument("--model", type=str, required=True, help="Model type: ndm")
+    p.add_argument("--name", type=str, required=True, help="Run name (used in file names)")
+    p.add_argument("--epochs", type=int, default=100)
+    p.add_argument("--batch_size", type=int, default=128)
+    p.add_argument("--lr", type=float, default=2e-4)
+    p.add_argument("--dataset", type=str, default="mnist")
+
+    # ---- NDM architecture ----
+    p.add_argument("--T", type=int, default=1000, help="Diffusion timesteps")
+    p.add_argument("--fphi_ch", type=int, default=32, help="F_phi base channels")
+    p.add_argument("--denoiser_ch", type=int, default=64, help="Denoiser base channels")
+    p.add_argument("--time_emb_dim", type=int, default=256)
+
+    # ---- NDM training ----
+    p.add_argument("--grad_clip", type=float, default=1.0)
+    p.add_argument("--ema_decay", type=float, default=0.9999)
+    p.add_argument("--sample_every", type=int, default=5, help="Save sample grid every N epochs")
+    p.add_argument("--save_every", type=int, default=10, help="Save checkpoint every N epochs")
+    p.add_argument("--sample_steps", type=int, default=None, help="Steps for sampling (None = full T)")
+    p.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
+
+    return p.parse_args()

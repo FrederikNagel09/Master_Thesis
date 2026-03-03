@@ -89,7 +89,7 @@ def run_inference_inr_mlp_hypernet(args, config):
     # 1. Load model
     # ------------------------------------------------------------------
     model = HyperINR(h1=h1, h2=h2, h3=h3, omega_0=omega_0, hyper_h=hyper_h)
-    model.hypernet.load_state_dict(torch.load(config["weights_path"], map_location="cpu"))
+    model.load_state_dict(torch.load(config["weights_path"], map_location="cpu"))
     model.eval()
 
     # ------------------------------------------------------------------
@@ -199,5 +199,46 @@ def run_inference_ddpm(args):
     print(f"4x4 grid saved to: {args.out_path}")
 
 
-if __name__ == "__main__":
-    run_inference_siren_inr()
+def run_inference_ndm(args, config):
+    import numpy as np
+
+    from src.models.ndm import NDM
+
+    # ---- Load model ----
+    model = NDM(
+        in_channels=1,
+        T=config["T"],
+        fphi_base_ch=config["fphi_ch"],
+        denoiser_base_ch=config["denoiser_ch"],
+        time_emb_dim=config["time_emb_dim"],
+    )
+    model.load_state_dict(torch.load(config["weights_path"], map_location="cpu"))
+    model.eval()
+
+    # ---- Sample ----
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    model = model.to(device)
+
+    n = args.grid_size**2
+    with torch.no_grad():
+        samples = model.sample(n, device=torch.device(device), steps=args.sample_steps)
+
+    # ---- Build grid and save ----
+    import matplotlib.pyplot as plt
+
+    n = args.grid_size**2
+    imgs = ((samples * 0.5 + 0.5).clamp(0, 1) * 255).byte().cpu().numpy()
+    rows = [np.concatenate([imgs[r * args.grid_size + c, 0] for c in range(args.grid_size)], axis=1) for r in range(args.grid_size)]
+    grid = np.concatenate(rows, axis=0)
+
+    fig, ax = plt.subplots()
+    ax.imshow(grid, cmap="gray", vmin=0, vmax=255)
+    ax.axis("off")
+    ax.set_title(f"NDM Samples — {args.grid_size**2} images", fontsize=12)
+
+    out_dir = "src/results/ndm/samples"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{args.grid_size}x{args.grid_size}_{config['name']}.png")
+    fig.savefig(out_path, bbox_inches="tight", dpi=150)
+    plt.close(fig)
+    print(f"Saved to: {out_path}")

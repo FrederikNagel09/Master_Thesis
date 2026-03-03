@@ -37,8 +37,9 @@ class MNISTCoordDataset(Dataset):
         # Flatten everything: N = H * W samples
         self.coords = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=-1)  # (N, 2)
         self.pixels = torch.from_numpy(self.image).flatten().unsqueeze(-1)  # (N, 1)
+        self.image_flat = torch.from_numpy(self.image).flatten()  # (784,)
 
-    # ------------------------------------------------------------------
+    # --------  ----------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
