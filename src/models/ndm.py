@@ -411,7 +411,7 @@ class NDM(nn.Module):
 
         Returns dict with keys: 'loss', 'ldiff', 'lprior', 'lrec'
         """
-        B, C, H, W = x.shape  # noqa: N806
+        B, c, _, _ = x.shape  # noqa: N806
         device = x.device
 
         # Sample timestep t uniformly from [1, T]
@@ -420,8 +420,7 @@ class NDM(nn.Module):
 
         # ---- Sample z_t from forward process ----
         eps = torch.randn_like(x)
-        z_t, F_x_t = self.q_sample(x, t_idx, eps)  # noqa: N806
-
+        z_t, _ = self.q_sample(x, t_idx, eps)
         # ---- Denoiser predicts x from z_t ----
         t_cont = t_idx.float() / self.T
         x_hat = self.denoiser(z_t, t_cont)  # x_hat_theta(z_t, t)
