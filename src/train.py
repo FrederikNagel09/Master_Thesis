@@ -58,6 +58,23 @@ python src/train.py \
     --device cpu \
     --hidden_dims 512 512 \
     --subset_frac 1
+
+python src/train.py \
+    --model vae_inr_hypernet \
+    --name inr_vae_mog \
+    --epochs 5 \
+    --prior gaussian \
+    --batch_size 64 \
+    --lr 1e-3 \
+    --latent_dim 128\
+    --inr_hidden_dim 64 \
+    --inr_layers 3 \
+    --inr_out_dim 1 \
+    --vae_enc_dim 512 \
+    --vae_dec_dim 512 \
+    --device mps \
+    --subset_frac 0.1 
+
 """
 
 import sys
@@ -66,6 +83,7 @@ sys.path.append(".")
 
 from src.utils.parser_utils import parse_args_training
 from src.utils.run_training_utils import (
+    run_inr_vae_training,
     run_training_inr_mlp_hypernet,
     run_training_ndm,
     run_training_siren_inr,
@@ -83,5 +101,7 @@ if __name__ == "__main__":
         run_training_ndm(args)
     elif args.model == "vae":
         run_vae_training(args)
+    elif args.model == "vae_inr_hypernet":
+        run_inr_vae_training(args)
     else:
         raise ValueError(f"Unknown model type: {args.model}")

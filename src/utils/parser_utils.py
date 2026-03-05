@@ -30,8 +30,41 @@ def parse_config_vars(config_path: str) -> tuple[int, int, int, int]:
         raise ValueError(f"Missing expected field {e} in metadata file: {config_path}")  # noqa: B904
 
 
+# Define which args to save per model type
+MODEL_SAVE_KEYS = {
+    "basic_inr": ["model", "epochs", "batch_size", "lr", "name", "h1", "h2", "h3", "omega_0"],
+    "hypernet_inr": ["model", "epochs", "batch_size", "lr", "name", "subset_frac", "hyper_h", "h1", "h2", "h3", "omega_0"],
+    "vae_inr_hypernet": [
+        "model",
+        "epochs",
+        "batch_size",
+        "lr",
+        "latent_dim",
+        "prior",
+        "device",
+        "name",
+        "subset_frac",
+        "inr_hidden_dim",
+        "inr_layers",
+        "inr_out_dim",
+        "vae_enc_dim",
+        "vae_dec_dim",
+    ],
+    # add more model types here as needed
+}
+
+
 def save_config(args, save_dir, weights_path=None):
-    config = {**vars(args), "weights_path": weights_path}
+    full_config = {**vars(args), "weights_path": weights_path}
+
+    # Filter to only the keys defined for this model, otherwise save everything
+    allowed_keys = MODEL_SAVE_KEYS.get(args.model)
+    if allowed_keys is not None:
+        config = {k: full_config[k] for k in allowed_keys if k in full_config}
+        config["weights_path"] = weights_path  # always include this
+        config["model_type"] = args.model  # always include this
+    else:
+        config = full_config
 
     with open(save_dir, "w") as f:
         json.dump(config, f, indent=2)
@@ -45,7 +78,7 @@ def parse_args_training():
         type=str,
         default="basic_inr",
         help="Model to train (default: 'basic_inr').",
-        choices=["basic_inr", "ddpm", "hypernet_inr", "ndm", "vae"],
+        choices=["basic_inr", "ddpm", "hypernet_inr", "ndm", "vae", "vae_inr_hypernet"],
     )
 
     parser.add_argument("--index", type=int, default=0, help="Index of the MNIST image to fit (default: 0).")
@@ -82,6 +115,14 @@ def parse_args_training():
     )
     parser.add_argument("--device", type=str, default="cpu", help="Device to train on (default: 'cpu'). Use 'cuda' for GPU training.")
     parser.add_argument("--hidden_dims", type=int, nargs="+", default=[512, 512, 512])
+
+    parser.add_argument("--beta", type=float, default=1.0, help="KL weight (beta-VAE style). Default 1.0.")
+
+    parser.add_argument("--inr_hidden_dim", type=int, default=32)
+    parser.add_argument("--inr_layers", type=int, default=3)
+    parser.add_argument("--inr_out_dim", type=int, default=1)
+    parser.add_argument("--vae_enc_dim", type=int, default=512)
+    parser.add_argument("--vae_dec_dim", type=int, default=512)
 
     args = parser.parse_args()
     return args

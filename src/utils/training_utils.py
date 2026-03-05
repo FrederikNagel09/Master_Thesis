@@ -411,3 +411,58 @@ def train_vae(
     print("Last Loss: ", loss)
     plot_vae_training(history, name, graph_dir)
     return model
+
+
+def train_inr_vae(
+    model,
+    mnist_train_loader,
+    epochs,
+    name: str,
+    lr: float = 1e-4,
+    device: str | None = None,
+    graph_dir: str = "src/results/vae_inr_hypernet/training_graphs",
+):
+    # --- Training ---
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    total_steps = len(mnist_train_loader) * epochs
+    progress_bar = tqdm(range(total_steps), desc="Training")
+
+    history: dict = {"train_elbo": [], "steps": []}
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        total_loss = 0.0
+
+        # beta = max(0.0, min(beta_max, beta_max * (epoch - warmup_start) / warmup_epochs))
+        model.beta = 0.001
+
+        for image_flat, coords, pixels in mnist_train_loader:
+            image_flat = image_flat.to(device)  # (B, 784)
+            coords = coords.to(device)  # (B, 784, 2)
+            pixels = pixels.to(device)  # (B, 784, 1)
+
+            optimizer.zero_grad()
+            loss, recon_loss, kl = model(image_flat, coords, pixels)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+
+            # Update progress bar
+            progress_bar.set_postfix(
+                epoch=f"{epoch + 1}/{epochs}",
+                loss=f"{loss.item():.4f}",
+                recon=f"{recon_loss.item():.4f}",
+                kl=f"{kl.item():.2f}",
+                beta=f"{model.beta:.4f}",
+            )
+            progress_bar.update()
+
+        # Record average loss once per epoch, after all batches
+        avg_loss = total_loss / len(mnist_train_loader)
+        history["train_elbo"].append(avg_loss)
+        history["steps"].append(epoch)
+
+    print("Last Loss: ", loss)
+    plot_vae_training(history, name, graph_dir)
+    return model

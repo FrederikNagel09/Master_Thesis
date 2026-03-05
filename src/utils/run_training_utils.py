@@ -279,3 +279,105 @@ def run_vae_training(args):
 
     save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
     save_config(args, save_dir, weights_path)
+
+
+def run_inr_vae_training(args):
+    """
+    Train an INRVAE model on MNIST.
+
+    The encoder maps images -> q(z|x) in a small latent space.
+    A linear projection lifts z -> flat INR weights.
+    The INR reconstructs pixels from coordinates using those weights.
+    """
+    import torch.nn as nn
+    from torch.utils.data import Subset
+
+    from src.dataloaders.BinaryMNISTHyper import BinaryMNISTHyperDataset
+    from src.models.inr_vae_hypernet import INR, VAEINR
+    from src.models.prior import GaussianPrior, MoGPrior
+    from src.utils.training_utils import train_inr_vae
+
+    # ------------------------------------------------------------------
+    # 1. Dataset
+    # ------------------------------------------------------------------
+    # Load data using your INR-aware dataset instead of raw torchvision MNIST
+    train_dataset = BinaryMNISTHyperDataset(mnist_raw_dir="data/MNIST/raw", split="train")
+    n = int(len(train_dataset) * args.subset_frac)
+    train_dataset = Subset(train_dataset, range(n))
+
+    mnist_train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+
+    # --- INR ---
+    # Small MLP: (x,y) coords -> pixel value. Has NO nn.Parameters — weights come from decoder.
+    inr = INR(coord_dim=2, hidden_dim=args.inr_hidden_dim, n_hidden=args.inr_layers, out_dim=args.inr_out_dim)
+
+    # --- Encoder ---
+    # Takes flattened binary image (784,) -> outputs mean+logvar for q(z|x)
+    encoder_net = nn.Sequential(
+        nn.Linear(784, args.vae_enc_dim),
+        nn.ReLU(),
+        nn.Linear(args.vae_enc_dim, args.vae_enc_dim),
+        nn.ReLU(),
+        nn.Linear(args.vae_enc_dim, args.vae_enc_dim),
+        nn.ReLU(),
+        nn.Linear(args.vae_enc_dim, args.latent_dim * 2),  # outputs [mean | log-var], split inside GaussianEncoder
+    )
+    encoder = GaussianEncoder(encoder_net)
+
+    # --- Decoder (hypernetwork) ---
+    # Takes z (M,) -> flat INR weight vector
+    decoder_net = nn.Sequential(
+        nn.Linear(args.latent_dim, args.vae_dec_dim),
+        nn.ReLU(),
+        nn.Linear(args.vae_dec_dim, args.vae_dec_dim),
+        nn.ReLU(),
+        nn.Linear(args.vae_dec_dim, args.vae_dec_dim),
+        nn.ReLU(),
+        nn.Linear(args.vae_dec_dim, inr.num_weights),  # output dim must match INR parameter count exactly
+    )
+    # After defining decoder_net:
+    nn.init.zeros_(decoder_net[-1].bias)
+    nn.init.normal_(decoder_net[-1].weight, std=0.01)  # tiny weights → INR starts near 0.5
+
+    # ------------------------------------------------------------------
+    # 2. Prior
+    # ------------------------------------------------------------------
+    if args.prior == "gaussian":
+        prior = GaussianPrior(latent_dim=args.latent_dim)
+    elif args.prior == "mog":
+        prior = MoGPrior(latent_dim=args.latent_dim)
+    else:
+        raise ValueError(f"Unsupported prior for INRVAE: {args.prior}")
+
+    # ------------------------------------------------------------------
+    # 3. Model
+    # ------------------------------------------------------------------
+    # --- Full model ---
+    model = VAEINR(prior, encoder, decoder_net, inr, beta=1.0, prior_type=args.prior).to(args.device)
+
+    print(f"\n# INR has {inr.num_weights} weights  (decoder output dim = {inr.num_weights})")
+    print(f"# Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    run_name = f"{args.name}_{get_current_datetime()}"
+
+    # ------------------------------------------------------------------
+    # 4. Train
+    # ------------------------------------------------------------------
+    model = train_inr_vae(
+        model=model,
+        mnist_train_loader=mnist_train_loader,
+        name=run_name,
+        epochs=args.epochs,
+        lr=args.lr,
+        device=args.device,
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Save
+    # ------------------------------------------------------------------
+    weights_path = os.path.join(RES_DIR, f"{args.model}/weights", f"{run_name}.pth")
+    torch.save(model.state_dict(), weights_path)
+    print(f"Weights saved to: {weights_path}")
+
+    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
+    save_config(args, save_dir, weights_path)

@@ -53,24 +53,6 @@ def mse_to_psnr(mse: float) -> float:
     return -10 * math.log10(mse)  # add: import math at top
 
 
-def _save_plot(history: dict, name: str, graph_dir: str, current_epoch: int, total_epochs: int):
-    epochs = range(1, current_epoch + 1)
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(epochs, history["train_mse"], label="Train MSE", linewidth=2)
-
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("MSE Loss")
-    ax.set_title(f"INR Training — {name}")
-    ax.legend()
-    ax.set_xlim(1, total_epochs)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(graph_dir, f"{name}.png"), dpi=150)
-    plt.close(fig)
-
-
 # ---------------------------------------------------------------------------
 # Helpers to compute INR parameter count and shapes
 # ---------------------------------------------------------------------------

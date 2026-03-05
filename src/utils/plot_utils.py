@@ -93,3 +93,39 @@ def plot_vae_training(history: dict, name: str, graph_dir: str):
     fig.savefig(save_path)
     plt.close(fig)
     print(f"Training graph saved to: {save_path}")
+
+
+def _save_plot_vae_hypernet(history: dict, name: str, graph_dir: str, epoch: int, num_epochs: int):  # noqa: ARG001
+    """
+    Plot train_loss, bce_loss, and kl_loss across epochs.
+    Saves to graph_dir/<name>.png. Called every epoch; overwrites previous.
+
+    Args:
+        history:    dict with keys 'train_loss', 'bce_loss', 'kl_loss'
+        name:       run name, used as plot title and filename
+        graph_dir:  directory to save the plot
+        epoch:      current epoch (1-indexed), used for the x-axis label
+        num_epochs: total epochs, used to fix x-axis range
+    """
+    epochs_so_far = list(range(1, len(history["train_loss"]) + 1))
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    fig.suptitle(name, fontsize=13)
+
+    panels = [
+        ("train_loss", "Total Loss"),
+        ("bce_loss", "Reconstruction (BCE)"),
+        ("kl_loss", "KL Divergence"),
+    ]
+
+    for ax, (key, title) in zip(axes, panels):  # noqa: B905
+        ax.plot(epochs_so_far, history[key])
+        ax.set_title(title)
+        ax.set_xlabel("Epoch")
+        ax.set_xlim(1, max(num_epochs, len(epochs_so_far)))
+        ax.grid(True)
+
+    plt.tight_layout()
+    os.makedirs(graph_dir, exist_ok=True)
+    fig.savefig(os.path.join(graph_dir, f"{name}.png"), dpi=130, bbox_inches="tight")
+    plt.close(fig)
