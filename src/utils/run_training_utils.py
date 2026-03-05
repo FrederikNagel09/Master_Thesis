@@ -6,6 +6,7 @@ from torch.utils.data import Subset
 
 sys.path.append(".")
 
+from src.models.vae_coders import BernoulliDecoder, GaussianEncoder
 from src.utils.general_utils import get_current_datetime
 from src.utils.parser_utils import save_config
 
@@ -208,6 +209,71 @@ def run_training_ndm(args):
     weights_dir = os.path.join(RES_DIR, "ndm/weights")
     os.makedirs(weights_dir, exist_ok=True)
     weights_path = os.path.join(weights_dir, f"{run_name}.pth")
+    torch.save(model.state_dict(), weights_path)
+    print(f"Weights saved to: {weights_path}")
+
+    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
+    save_config(args, save_dir, weights_path)
+
+
+def run_vae_training(args):
+    from torchvision import datasets, transforms
+
+    from src.models.prior import GaussianPrior, MoGPrior, VAMPPrior
+    from src.models.vae import VAE
+
+    # Imports for encoder, decoder, and prior
+    from src.utils.training_utils import train_vae
+
+    # Load MNIST as binarized at 'thresshold' and create data loaders
+    threshold = 0.5
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (threshold < x).float().squeeze())])
+
+    train_dataset = datasets.MNIST("data/", train=True, download=False, transform=transform)
+    test_dataset = datasets.MNIST("data/", train=False, download=False, transform=transform)
+
+    if args.subset_frac < 1.0:
+        n_train = int(len(train_dataset) * args.subset_frac)
+        n_test = int(len(test_dataset) * args.subset_frac)
+        train_dataset = torch.utils.data.Subset(train_dataset, range(n_train))
+        test_dataset = torch.utils.data.Subset(test_dataset, range(n_test))
+
+    mnist_train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    # mnist_test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True)
+
+    device = args.device
+    latent_dim = args.latent_dim
+    # Define encoder, decoder, and prior based on args
+
+    encoder = GaussianEncoder(input_dim=28 * 28, latent_dim=latent_dim, hidden_dims=args.hidden_dims)
+    decoder = BernoulliDecoder(latent_dim=latent_dim, output_shape=(28, 28), hidden_dims=args.hidden_dims)
+
+    if args.prior == "gaussian":
+        prior = GaussianPrior(latent_dim=latent_dim)
+    elif args.prior == "mog":
+        prior = MoGPrior(latent_dim=latent_dim)
+    elif args.prior == "vampp":
+        prior = VAMPPrior()
+    else:
+        raise ValueError(f"Unsupported prior: {args.prior}")
+
+    model = VAE(encoder=encoder, decoder=decoder, prior=prior, type=args.prior).to(device)
+
+    run_name = f"{args.name}_{get_current_datetime()}"
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    model = train_vae(
+        model=model,
+        optimizer=optimizer,
+        data_loader=mnist_train_loader,
+        epochs=args.epochs,
+        device=device,
+        name=run_name,
+    )
+
+    # Save weights
+    weights_path = os.path.join(RES_DIR, f"{args.model}/weights", f"{run_name}.pth")
     torch.save(model.state_dict(), weights_path)
     print(f"Weights saved to: {weights_path}")
 

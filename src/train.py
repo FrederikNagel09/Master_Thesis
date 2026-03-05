@@ -45,6 +45,19 @@ python src/train.py \
     --time_emb_dim 128 \
     --sample_every 4 \
     --subset_frac 0.5
+
+    ###### VAE Training ######
+python src/train.py \
+    --model vae \
+    --name vae_test \
+    --prior gaussian \
+    --epochs 50 \
+    --batch_size 128 \
+    --lr 1e-3 \
+    --latent_dim 16 \
+    --device cpu \
+    --hidden_dims 512 512 \
+    --subset_frac 1
 """
 
 import sys
@@ -56,6 +69,7 @@ from src.utils.run_training_utils import (
     run_training_inr_mlp_hypernet,
     run_training_ndm,
     run_training_siren_inr,
+    run_vae_training,
 )
 
 if __name__ == "__main__":
@@ -67,5 +81,7 @@ if __name__ == "__main__":
         run_training_inr_mlp_hypernet(args)
     elif args.model == "ndm":
         run_training_ndm(args)
+    elif args.model == "vae":
+        run_vae_training(args)
     else:
         raise ValueError(f"Unknown model type: {args.model}")

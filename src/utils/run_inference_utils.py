@@ -242,3 +242,71 @@ def run_inference_ndm(args, config):
     fig.savefig(out_path, bbox_inches="tight", dpi=150)
     plt.close(fig)
     print(f"Saved to: {out_path}")
+
+
+def run_inference_vae(args, config):
+    """
+    Runs inference using a trained VAE model to sample a grid of images from the prior,
+    and saves the result.
+    """
+    # imports:
+    from src.models.prior import GaussianPrior, MoGPrior, VAMPPrior
+    from src.models.vae import VAE
+    from src.models.vae_coders import BernoulliDecoder, GaussianEncoder
+    # Imports for encoder, decoder, and prior
+
+    # ------------------------------------------------------------------
+    # 1. Parse config
+    # ------------------------------------------------------------------
+    latent_dim = config["latent_dim"]
+    hidden_dims = config["hidden_dims"]
+    prior_type = config["prior"]
+    device = config.get("device", "cpu")
+
+    # ------------------------------------------------------------------
+    # 2. Rebuild model architecture
+    # ------------------------------------------------------------------
+    encoder = GaussianEncoder(input_dim=784, latent_dim=latent_dim, hidden_dims=hidden_dims)
+    decoder = BernoulliDecoder(latent_dim=latent_dim, output_shape=(28, 28), hidden_dims=hidden_dims)
+
+    if prior_type == "gaussian":
+        prior = GaussianPrior(latent_dim=latent_dim)
+    elif prior_type == "mog":
+        prior = MoGPrior(latent_dim=latent_dim)
+    elif prior_type == "vampp":
+        prior = VAMPPrior()
+    else:
+        raise ValueError(f"Unsupported prior: {prior_type}")
+
+    model = VAE(encoder=encoder, decoder=decoder, prior=prior)
+    model.load_state_dict(torch.load(config["weights_path"], map_location=device))
+    model.eval()
+    model.to(device)
+
+    # ------------------------------------------------------------------
+    # 3. Sample n x n grid from prior
+    # ------------------------------------------------------------------
+    n = args.grid_size  # grid will be n x n
+    n_total = n * n
+
+    with torch.no_grad():
+        samples = model.sample(n_samples=n_total).cpu().numpy()  # (n_total, 28, 28)
+
+    # ------------------------------------------------------------------
+    # 4. Arrange into grid and plot
+    # ------------------------------------------------------------------
+    fig, axes = plt.subplots(n, n, figsize=(n * 1.5, n * 1.5))
+    for i, ax in enumerate(axes.flat):
+        ax.imshow(samples[i], cmap="gray", vmin=0, vmax=1)
+        ax.axis("off")
+
+    plt.suptitle(f"VAE Samples — {prior_type} prior, latent_dim={latent_dim}", y=1.01)
+    plt.tight_layout()
+
+    out_dir = "src/results/vae/samples"
+    os.makedirs(out_dir, exist_ok=True)
+    run_name = os.path.splitext(os.path.basename(config["weights_path"]))[0]
+    out_path = os.path.join(out_dir, f"{run_name}_{n}x{n}.png")
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved to: {out_path}")

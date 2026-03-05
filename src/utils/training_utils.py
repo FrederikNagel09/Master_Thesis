@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.models.ndm import NDM
-from src.utils.plot_utils import plot_ndm_training, plot_training_and_reconstruction
+from src.utils.plot_utils import plot_ndm_training, plot_training_and_reconstruction, plot_vae_training
 
 
 def train_inr_siren(
@@ -362,4 +362,52 @@ def train_ndm(
     plot_ndm_training(history, name, graph_dir)
     print("Done.")
     return model
+    return model
+
+
+def train_vae(
+    model,
+    optimizer,
+    data_loader,
+    epochs,
+    device,
+    name: str = "vae",
+    graph_dir: str = "src/results/vae/training_graphs",
+    log_every_n_steps: int = 100,
+):
+    os.makedirs(graph_dir, exist_ok=True)
+    model.train()
+    total_steps = len(data_loader) * epochs
+    progress_bar = tqdm(range(total_steps), desc="Training")
+
+    history: dict = {"train_elbo": [], "steps": []}
+    global_step = 0
+    running_loss = 0.0
+    running_count = 0
+
+    for epoch in range(epochs):
+        for x in iter(data_loader):
+            x = x[0].to(device)
+            optimizer.zero_grad()
+            loss = model(x)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            running_count += 1
+            global_step += 1
+
+            progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch + 1}/{epochs}")
+            progress_bar.update()
+
+            if global_step % log_every_n_steps == 0:
+                avg_loss = running_loss / running_count
+                fractional_epoch = global_step / len(data_loader)
+                history["train_elbo"].append(avg_loss)
+                history["steps"].append(fractional_epoch)
+                running_loss = 0.0
+                running_count = 0
+
+    print("Last Loss: ", loss)
+    plot_vae_training(history, name, graph_dir)
     return model

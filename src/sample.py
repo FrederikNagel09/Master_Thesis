@@ -6,7 +6,7 @@ python src/sample.py \
 
         
 python src/sample.py \
-    --config_path src/results/ndm/experiments/quick_test_03-03-11:27.json \
+    --config_path src/results/vae/experiments/vae_test_05-03-11:01.json \
     --grid_size 4 
 """
 
@@ -15,7 +15,7 @@ import sys
 sys.path.append(".")
 
 from src.utils.parser_utils import parse_args_sample, parse_config_vars
-from src.utils.run_inference_utils import run_inference_inr_mlp_hypernet, run_inference_ndm, run_inference_siren_inr
+from src.utils.run_inference_utils import run_inference_inr_mlp_hypernet, run_inference_ndm, run_inference_siren_inr, run_inference_vae
 
 if __name__ == "__main__":
     args = parse_args_sample()
@@ -28,5 +28,7 @@ if __name__ == "__main__":
         run_inference_inr_mlp_hypernet(args, config)
     elif config["model"] == "ndm":
         run_inference_ndm(args, config)
+    elif config["model"] == "vae":
+        run_inference_vae(args, config)
     else:
         raise ValueError(f"Unknown model type: {config['model']}")

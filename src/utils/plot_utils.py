@@ -78,3 +78,18 @@ def plot_ndm_training(history: dict, name: str, graph_dir: str):
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Training plot saved to: {out_path}")
+
+
+def plot_vae_training(history: dict, name: str, graph_dir: str):
+    os.makedirs(graph_dir, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(history["steps"], history["train_elbo"], label="Train ELBO loss")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.set_title(f"VAE Training — {name}")
+    ax.legend()
+    fig.tight_layout()
+    save_path = os.path.join(graph_dir, f"{name}.png")
+    fig.savefig(save_path)
+    plt.close(fig)
+    print(f"Training graph saved to: {save_path}")

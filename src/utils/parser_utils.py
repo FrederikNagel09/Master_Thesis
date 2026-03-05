@@ -45,7 +45,7 @@ def parse_args_training():
         type=str,
         default="basic_inr",
         help="Model to train (default: 'basic_inr').",
-        choices=["basic_inr", "ddpm", "hypernet_inr", "ndm"],
+        choices=["basic_inr", "ddpm", "hypernet_inr", "ndm", "vae"],
     )
 
     parser.add_argument("--index", type=int, default=0, help="Index of the MNIST image to fit (default: 0).")
@@ -74,8 +74,16 @@ def parse_args_training():
     parser.add_argument("--ema_decay", type=float, default=0.9999)
     parser.add_argument("--sample_every", type=int, default=5, help="Save sample grid every N epochs")
     parser.add_argument("--sample_steps", type=int, default=None, help="Steps for sampling (None = full T)")
-    args = parser.parse_args()
 
+    # ---- VAE architecture ----
+    parser.add_argument("--latent_dim", type=int, default=20, help="Dimension of the VAE latent space (default: 20).")
+    parser.add_argument(
+        "--prior", type=str, default="gaussian", help="Type of prior for VAE (default: 'gaussian'). Choices: 'gaussian', 'mog', 'vamp'."
+    )
+    parser.add_argument("--device", type=str, default="cpu", help="Device to train on (default: 'cpu'). Use 'cuda' for GPU training.")
+    parser.add_argument("--hidden_dims", type=int, nargs="+", default=[512, 512, 512])
+
+    args = parser.parse_args()
     return args
 
 
