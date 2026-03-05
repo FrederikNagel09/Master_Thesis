@@ -66,10 +66,10 @@ class VAEINR(nn.Module):
     def __init__(self, prior, encoder, decoder_net, inr, beta=1.0, prior_type="gaussian"):
         """
         prior:        prior distribution p(z)
-        encoder:      maps image → q(z|x)  (your existing encoder module)
+        encoder:      maps image → q(z|x)
         decoder_net:  nn.Module, maps z → flat weight vector (dim = inr.num_weights)
         inr:          INR instance (stateless forward pass)
-        beta:         weight on KL term (beta-VAE style, use 1.0 for standard VAE)
+        beta:         weight on KL term
         """
         super().__init__()
         self.prior = prior
@@ -89,20 +89,20 @@ class VAEINR(nn.Module):
         coords:     (batch, 784, 2)   — pixel coordinates
         pixels:     (batch, 784, 1)   — binary target values
         """
-        # 1. Encode image → posterior q(z|x)
+        # Encode image  ( posterior q(z|x) )
         q = self.encoder(image_flat)
         z = q.rsample()  # (batch, latent_dim)
 
-        # 2. Decode z → INR weights
+        # Decode sampled z into  INR weights
         flat_weights = self.decode_to_weights(z)  # (batch, num_weights)
 
-        # 3. Run INR: coords + weights → pixel predictions
+        # Run INR: coords + weights = pixel predictions
         pixel_preds = self.inr(coords, flat_weights)  # (batch, 784, 1)
 
-        # 4. Reconstruction loss: BCE since pixels are binary
+        # Use binary cross-entropy for reconstruction loss
         recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="mean")
 
-        # 5. KL divergence
+        # Compute KL divergence between q(z|x) and p(z)
         kl = td.kl_divergence(q, self.prior()).mean()
 
         elbo = -(recon_loss + self.beta * kl)
@@ -113,8 +113,13 @@ class VAEINR(nn.Module):
         Sample INR weights from the prior, then render at given coords.
         coords: (784, 2) or (n_samples, 784, 2)
         """
+        # Prior sampling:
         z = self.prior().sample(torch.Size([n_samples]))  # (n_samples, latent_dim)
+
+        # Decode z into INR weights
         flat_weights = self.decode_to_weights(z)
+
+        # Throw weights and given pixel grid (coords) into the INR to get pixel predictions
         if coords.dim() == 2:
             coords = coords.unsqueeze(0).expand(n_samples, -1, -1)
         return self.inr(coords, flat_weights)  # (n_samples, 784, 1)
