@@ -35,9 +35,9 @@ def parse_args():
 
     # Paths
     parser.add_argument("--experiment_name", type=str, default="ddpm_mnist", help="Run name (used in filenames)")
-    parser.add_argument("--weights_dir", type=str, default="src/DDPM/weights", help="Where to save model weights")
-    parser.add_argument("--graphs_dir", type=str, default="src/DDPM/graphs", help="Where to save loss plot")
-    parser.add_argument("--results_dir", type=str, default="src/DDPM/results", help="Where to save sampled images")
+    parser.add_argument("--weights_dir", type=str, default="src/denoising_diffusion/weights", help="Where to save model weights")
+    parser.add_argument("--graphs_dir", type=str, default="src/denoising_diffusion/graphs", help="Where to save loss plot")
+    parser.add_argument("--results_dir", type=str, default="src/denoising_diffusion/results", help="Where to save sampled images")
     parser.add_argument("--data_root", type=str, default="./data", help="Root directory for MNIST download")
 
     # Device

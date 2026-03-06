@@ -1,6 +1,6 @@
 #!/bin/bash
 #BSUB -J ddpm_training                     # Job name
-#BSUB -q gpua10                              # Queue to submit the job to
+#BSUB -q gpuv100                             # Queue to submit the job to
 #BSUB -W 6                               # Wall time limit
 #BSUB -n 4                                 # Request 8 cores
 #BSUB -R "rusage[mem=512MB]"                 # Request 1 GB of memory per core
@@ -13,4 +13,4 @@
 source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # Run training
-python /zhome/66/4/156534/Master_Thesis/src/DDPM/inference.py --weights /zhome/66/4/156534/Master_Thesis/src/DDPM/weights/ddpm_mnist_epoch030.pt
+python /zhome/66/4/156534/Master_Thesis/src/denoising_diffusion/inference.py --weights /zhome/66/4/156534/Master_Thesis/src/denoising_diffusion/weights/ddpm_mnist_epoch030.pt
