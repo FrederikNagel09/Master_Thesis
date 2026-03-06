@@ -49,15 +49,15 @@ python src/train.py \
     ###### VAE Training ######
 python src/train.py \
     --model vae \
-    --name vae_mog \
-    --prior mog \
-    --epochs 2 \
+    --name vae_gauss \
+    --prior gaussian \
+    --epochs 75 \
     --batch_size 128 \
     --lr 1e-3 \
     --latent_dim 16 \
     --device mps \
     --hidden_dims 256 512 256 \
-    --subset_frac 0.5
+    --subset_frac 1
 
 python src/train.py \
     --model vae_inr_hypernet \

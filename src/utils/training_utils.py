@@ -373,7 +373,7 @@ def train_vae(
     device,
     name: str = "vae",
     graph_dir: str = "src/results/vae/training_graphs",
-    log_every_n_steps: int = 100,
+    log_every_n_steps: int = 20,
 ):
     os.makedirs(graph_dir, exist_ok=True)
     model.train()
