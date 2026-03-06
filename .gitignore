@@ -41,3 +41,4 @@ src/inr_ddpm_hypernetwork/weights/
 src/inr_ddpm_hypernetwork/results/
 
 src/results/
+src/outputs/
