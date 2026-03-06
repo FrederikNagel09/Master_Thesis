@@ -15,6 +15,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "types-tqdm>=4.67.3.20260205",
     "torchvision>=0.17.2",
+    "seaborn>=0.13.2",
 ]
 
 [tool.ruff]
