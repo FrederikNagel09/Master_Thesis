@@ -49,8 +49,8 @@ python src/train.py \
     ###### VAE Training ######
 python src/train.py \
     --model vae \
-    --name vae_gauss \
-    --prior gaussian \
+    --name vae_MoG \
+    --prior mog \
     --epochs 75 \
     --batch_size 128 \
     --lr 1e-3 \

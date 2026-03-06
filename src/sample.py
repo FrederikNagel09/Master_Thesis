@@ -6,7 +6,7 @@ python src/sample.py \
 
         
 python src/sample.py \
-    --config_path src/results/vae_inr_hypernet/experiments/inr_vae_mog_05-03-19:19.json \
+    --config_path src/results/vae_inr_hypernet/experiments/inr_vae_mog_06-03-13:59.json \
     --grid_size 4 
 """
 
