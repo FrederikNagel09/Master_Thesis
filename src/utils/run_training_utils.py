@@ -6,7 +6,7 @@ from torch.utils.data import Subset
 
 sys.path.append(".")
 
-from src.models.vae_coders import BernoulliDecoder, GaussianEncoder
+from src.models.vae_coders import GaussianEncoder
 from src.utils.general_utils import get_current_datetime
 from src.utils.parser_utils import save_config
 
@@ -221,6 +221,7 @@ def run_vae_training(args):
 
     from src.models.prior import GaussianPrior, MoGPrior, VAMPPrior
     from src.models.vae import VAE
+    from src.models.vae_coders import BernoulliFullDecoder, GaussianFullEncoder
 
     # Imports for encoder, decoder, and prior
     from src.utils.training_utils import train_vae
@@ -245,8 +246,8 @@ def run_vae_training(args):
     latent_dim = args.latent_dim
     # Define encoder, decoder, and prior based on args
 
-    encoder = GaussianEncoder(input_dim=28 * 28, latent_dim=latent_dim, hidden_dims=args.hidden_dims)
-    decoder = BernoulliDecoder(latent_dim=latent_dim, output_shape=(28, 28), hidden_dims=args.hidden_dims)
+    encoder = GaussianFullEncoder(input_dim=28 * 28, latent_dim=latent_dim, hidden_dims=args.hidden_dims)
+    decoder = BernoulliFullDecoder(latent_dim=latent_dim, output_shape=(28, 28), hidden_dims=args.hidden_dims)
 
     if args.prior == "gaussian":
         prior = GaussianPrior(latent_dim=latent_dim)

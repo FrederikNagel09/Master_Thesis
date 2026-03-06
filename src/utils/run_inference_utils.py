@@ -253,7 +253,7 @@ def run_inference_vae(args, config):
     # imports:
     from src.models.prior import GaussianPrior, MoGPrior, VAMPPrior
     from src.models.vae import VAE
-    from src.models.vae_coders import BernoulliDecoder, GaussianEncoder
+    from src.models.vae_coders import BernoulliFullDecoder, GaussianFullEncoder
     # Imports for encoder, decoder, and prior
 
     # ------------------------------------------------------------------
@@ -267,8 +267,8 @@ def run_inference_vae(args, config):
     # ------------------------------------------------------------------
     # 2. Rebuild model architecture
     # ------------------------------------------------------------------
-    encoder = GaussianEncoder(input_dim=784, latent_dim=latent_dim, hidden_dims=hidden_dims)
-    decoder = BernoulliDecoder(latent_dim=latent_dim, output_shape=(28, 28), hidden_dims=hidden_dims)
+    encoder = GaussianFullEncoder(input_dim=784, latent_dim=latent_dim, hidden_dims=hidden_dims)
+    decoder = BernoulliFullDecoder(latent_dim=latent_dim, output_shape=(28, 28), hidden_dims=hidden_dims)
 
     if prior_type == "gaussian":
         prior = GaussianPrior(latent_dim=latent_dim)
