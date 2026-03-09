@@ -51,6 +51,7 @@ MODEL_SAVE_KEYS = {
         "vae_dec_dim",
     ],
     "vae": ["model", "epochs", "batch_size", "lr", "latent_dim", "prior", "device", "name", "subset_frac", "hidden_dims"],
+    "ddpm": ["model", "epochs", "batch_size", "lr", "T", "name", "subset_frac", "device"],
     # add more model types here as needed
 }
 

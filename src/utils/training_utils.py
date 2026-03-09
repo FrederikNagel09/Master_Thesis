@@ -1,4 +1,3 @@
-import logging
 import os
 
 import torch
@@ -80,78 +79,55 @@ def train_inr_siren(
 
 
 def train_ddpm(
-    device: str = "cpu",
-    T: int = 1000,  # noqa: N803
-    img_size: int = 32,
-    channels: int = 32,
-    time_dim: int = 256,
-    batch_size: int = 128,
-    lr: float = 1e-3,
-    num_epochs: int = 10,
-    experiment_name: str = "ddpm_mnist",
-    weights_dir: str = "src/DDPM/weights",
-    graphs_dir: str = "src/DDPM/graphs",
-    results_dir: str = "src/DDPM/results",
-    data_root: str = "./data",
+    model: nn.Module,
+    optimizer,
+    data_loader,
+    epochs,
+    device,
+    name: str = "ddpm",
+    graph_dir: str = "src/results/ddpm/training_graphs",
+    log_every_n_steps: int = 20,
 ):
-    """Train a DDPM UNet on MNIST."""
-    # Directories
-    os.makedirs(weights_dir, exist_ok=True)
-    os.makedirs(graphs_dir, exist_ok=True)
-    os.makedirs(results_dir, exist_ok=True)
+    model.train()
 
-    # imports:
-    from src.models.ddpm import Diffusion
-    from src.models.unet import UNet
-    from src.utils.ddpm_utils import get_mnist_dataloader, plot_loss
+    total_steps = len(data_loader) * epochs
+    progress_bar = tqdm(range(total_steps), desc="Training")
+    history: dict = {"train_elbo": [], "steps": []}
+    global_step = 0
+    running_loss = 0.0
+    running_count = 0
 
-    # Data
-    dataloader = get_mnist_dataloader(batch_size, img_size=img_size, data_root=data_root)
-
-    # Model & diffusion
-    model = UNet(img_size=img_size, c_in=1, c_out=1, time_dim=time_dim, channels=channels, device=device).to(device)
-
-    diffusion = Diffusion(T=T, beta_start=1e-4, beta_end=0.02, img_size=img_size, img_channels=1, device=device)
-
-    optimizer = optim.AdamW(model.parameters(), lr=lr)
-    mse = torch.nn.MSELoss()
-
-    all_losses = []
-
-    for epoch in range(1, num_epochs + 1):
-        logging.info(f"Epoch {epoch}/{num_epochs}")
-        epoch_losses = []
-
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
-        for images, _labels in pbar:
-            images = images.to(device)
-
-            t = diffusion.sample_timesteps(images.shape[0])
-            x_t, noise = diffusion.q_sample(images, t)
-            predicted_noise = model(x_t, t)
-
-            loss = mse(noise, predicted_noise)
+    for epoch in range(epochs):
+        data_iter = iter(data_loader)
+        for x in data_iter:
+            if isinstance(x, list | tuple):
+                x = x[0]
+            x = x.to(device)
             optimizer.zero_grad()
+            loss = model.loss(x)
             loss.backward()
             optimizer.step()
 
-            epoch_losses.append(loss.item())
-            all_losses.append(loss.item())
-            pbar.set_postfix(MSE=f"{loss.item():.4f}")
+            running_loss += loss.item()
+            running_count += 1
+            global_step += 1
 
-        avg = sum(epoch_losses) / len(epoch_losses)
-        logging.info(f"Epoch {epoch} avg MSE: {avg:.4f}")
+            # Update progress bar
+            progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch + 1}/{epochs}")
+            progress_bar.update()
 
-    # Save weights
-    weight_path = os.path.join(weights_dir, f"{experiment_name}_epoch{epoch:03d}.pt")
-    torch.save(model.state_dict(), weight_path)
-    logging.info(f"Weights saved to {weight_path}")
+            if global_step % log_every_n_steps == 0:
+                avg_loss = running_loss / running_count
+                fractional_epoch = global_step / len(data_loader)
+                history["train_elbo"].append(avg_loss)
+                history["steps"].append(fractional_epoch)
+                running_loss = 0.0
+                running_count = 0
 
     # Save loss plot
-    plot_loss(all_losses, save_path=os.path.join(graphs_dir, f"{experiment_name}_loss.png"))
+    plot_vae_training(history, name, graph_dir)
 
-    logging.info("Training complete.")
-    return model, all_losses
+    return model
 
 
 def train_inr_mlp_hypernet(

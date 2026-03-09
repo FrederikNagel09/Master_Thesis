@@ -75,6 +75,16 @@ python src/train.py \
     --device mps \
     --subset_frac 0.1 
 
+python src/train.py \
+    --model ddpm \
+    --name ddpm_full_run \
+    --epochs 75 \
+    --batch_size 128 \
+    --lr 2e-4 \
+    --T 1000 \
+    --device mps \
+    --subset_frac 1
+
 """
 
 import sys
@@ -84,6 +94,7 @@ sys.path.append(".")
 from src.utils.parser_utils import parse_args_training
 from src.utils.run_training_utils import (
     run_inr_vae_training,
+    run_training_ddpm,
     run_training_inr_mlp_hypernet,
     run_training_ndm,
     run_training_siren_inr,
@@ -103,5 +114,7 @@ if __name__ == "__main__":
         run_vae_training(args)
     elif args.model == "vae_inr_hypernet":
         run_inr_vae_training(args)
+    elif args.model == "ddpm":
+        run_training_ddpm(args)
     else:
         raise ValueError(f"Unknown model type: {args.model}")

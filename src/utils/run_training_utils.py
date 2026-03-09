@@ -58,35 +58,50 @@ def run_training_siren_inr(args):
 
 def run_training_ddpm(args):
     # Imports
+    from torchvision import datasets, transforms
+
+    from src.models.ddpm import DDPM, Unet
     from src.utils.training_utils import train_ddpm
 
-    if args.device is None:
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-    else:
-        device = args.device
-
-    print(f"Training on device: {device}")
-
-    train_ddpm(
-        device=device,
-        T=args.T,
-        img_size=args.img_size,
-        channels=args.channels,
-        time_dim=args.time_dim,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        num_epochs=args.num_epochs,
-        experiment_name=args.experiment_name,
-        weights_dir=args.weights_dir,
-        graphs_dir=args.graphs_dir,
-        results_dir=args.results_dir,
-        data_root=args.data_root,
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x + torch.rand(x.shape) / 255),
+            transforms.Lambda(lambda x: (x - 0.5) * 2.0),
+            transforms.Lambda(lambda x: x.flatten()),
+        ]
     )
+
+    train_data = datasets.MNIST("data/", train=True, download=True, transform=transform)
+    # Subset: use first N images (or random sample)
+    n = int(len(train_data) * args.subset_frac)
+    train_data = Subset(train_data, range(n))
+    print(f"Training on {len(train_data)} samples ({args.subset_frac * 100:.1f}% of full dataset)")
+    # Create DataLoader
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+
+    run_name = f"{args.name}_{get_current_datetime()}"
+
+    network = Unet()
+
+    # Define model
+    model = DDPM(network, T=args.T).to(args.device)
+    print(f"# Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    # Define optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    # Train model
+    print("\nStarting DDPM training...")
+    model = train_ddpm(model, optimizer, train_loader, args.epochs, args.device, name=run_name)
+    print("DDPM training completed.")
+    # Save weights
+    weights_path = os.path.join(RES_DIR, f"{args.model}/weights", f"{run_name}.pth")
+    torch.save(model.state_dict(), weights_path)
+    print(f"Weights saved to: {weights_path}")
+
+    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
+    save_config(args, save_dir, weights_path)
 
 
 def run_training_inr_mlp_hypernet(args):

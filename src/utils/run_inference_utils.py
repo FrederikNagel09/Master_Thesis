@@ -149,55 +149,51 @@ def run_inference_inr_mlp_hypernet(args, config):
     print(f"Saved to: {out_path}")
 
 
-def run_inference_ddpm(args):
-    # Imports:
-    import torchvision
+def run_inference_ddpm(args, config):
+    # Imports
+    from src.models.ddpm import DDPM, Unet
 
-    from src.models.ddpm import Diffusion
-    from src.models.unet import UNet
+    device = config.get("device", "cpu")
 
-    # Device
-    if args.device is None:
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-    else:
-        device = args.device
+    network = Unet()
 
-    print(f"Running inference on: {device}")
+    # Define model
+    model = DDPM(network, T=config["T"]).to(device)
 
-    # Load model
-    model = UNet(img_size=args.img_size, c_in=1, c_out=1, time_dim=args.time_dim, channels=args.channels, device=device).to(device)
-
-    state_dict = torch.load(args.weights, map_location=device)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(torch.load(config["weights_path"], map_location=device))
     model.eval()
-    print(f"Loaded weights from: {args.weights}")
 
-    # Diffusion sampler
-    diffusion = Diffusion(T=args.T, beta_start=1e-4, beta_end=0.02, img_size=args.img_size, img_channels=1, device=device)
+    n = args.grid_size**2
 
-    # Generate 16 images (4x4 grid)
-    sampled = diffusion.p_sample_loop(model, batch_size=16)  # uint8, shape (16, 1, H, W)
+    with torch.no_grad():
+        samples = model.sample((n, 28 * 28))  # sample n images
+        samples = samples.view(n, 1, 28, 28)  # reshape correctly
 
-    # Build grid
-    grid = torchvision.utils.make_grid(sampled, nrow=4, padding=2)
-    ndarr = grid.permute(1, 2, 0).cpu().numpy().squeeze()  # H x W (grayscale)
+    # ---- Build grid and save ----
+    import os
 
-    # Save
-    os.makedirs(os.path.dirname(os.path.abspath(args.out_path)), exist_ok=True)
-    plt.figure(figsize=(6, 6))
-    plt.imshow(ndarr, cmap="gray", vmin=0, vmax=255)
-    plt.axis("off")
-    plt.title("DDPM - Generated MNIST digits")
-    plt.tight_layout()
-    plt.savefig(args.out_path, bbox_inches="tight", dpi=150)
-    plt.close()
+    import matplotlib.pyplot as plt
+    import numpy as np
 
-    print(f"4x4 grid saved to: {args.out_path}")
+    imgs = ((samples * 0.5 + 0.5).clamp(0, 1) * 255).byte().cpu().numpy()
+
+    rows = [np.concatenate([imgs[r * args.grid_size + c, 0] for c in range(args.grid_size)], axis=1) for r in range(args.grid_size)]
+
+    grid = np.concatenate(rows, axis=0)
+
+    fig, ax = plt.subplots()
+    ax.imshow(grid, cmap="gray", vmin=0, vmax=255)
+    ax.axis("off")
+    ax.set_title(f"DDPM Samples — {n} images", fontsize=12)
+
+    out_dir = f"src/results/{config['model']}/samples"
+    os.makedirs(out_dir, exist_ok=True)
+
+    out_path = os.path.join(out_dir, f"{args.grid_size}x{args.grid_size}_{config['name']}.png")
+    fig.savefig(out_path, bbox_inches="tight", dpi=150)
+
+    plt.close(fig)
+    print(f"Saved to: {out_path}")
 
 
 def run_inference_ndm(args, config):
