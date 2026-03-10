@@ -85,7 +85,7 @@ def run_training_ddpm(args):
     network = Unet()
 
     # Define model
-    model = DDPM(network, T=args.T).to(args.device)
+    model = DDPM(network, t=args.T).to(args.device)
     print(f"# Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Define optimizer
@@ -159,75 +159,91 @@ def run_training_inr_mlp_hypernet(args):
 
 
 def run_training_ndm(args):
-    """
-    Sets up data, model, and calls train_ndm().
-    Saves final checkpoint and config after training.
-    """
-    from torch.utils.data import DataLoader
     from torchvision import datasets, transforms
 
-    from src.models.ndm import NDM
+    from src.models.ddpm import Unet  # noise-prediction network
+    from src.models.ndm import (
+        MLPTransformation,  # <-- your ndm.py
+        NeuralDiffusionModel,
+        UNetTransformation,
+    )
     from src.utils.training_utils import train_ndm
 
-    # ---- Dataloader ----
+    # ---- Data ----
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,)),  # [0,1] -> [-1,1]
+            transforms.Lambda(lambda x: x + torch.rand(x.shape) / 255),
+            transforms.Lambda(lambda x: (x - 0.5) * 2.0),
+            transforms.Lambda(lambda x: x.flatten()),
         ]
     )
-    dataset = datasets.MNIST("data/MNIST/raw", train=True, download=True, transform=transform)
-    if args.subset_frac < 1.0:
-        n = int(len(dataset) * args.subset_frac)
-        dataset = torch.utils.data.Subset(dataset, range(n))
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=True,
-    )
 
-    # ---- Model ----
-    model = NDM(
-        in_channels=1,
-        T=args.T,
-        fphi_base_ch=args.fphi_ch,
-        denoiser_base_ch=args.denoiser_ch,
-        time_emb_dim=args.time_emb_dim,
-    )
+    train_data = datasets.MNIST("data/", train=True, download=True, transform=transform)
+    n = int(len(train_data) * args.subset_frac)
+    train_data = Subset(train_data, range(n))
+    print(f"Training on {len(train_data)} samples ({args.subset_frac * 100:.1f}% of full dataset)")
 
-    n_fphi = sum(p.numel() for p in model.fphi.parameters() if p.requires_grad)
-    n_denoiser = sum(p.numel() for p in model.denoiser.parameters() if p.requires_grad)
-    print("Trainable parameters:")
-    print(f"  F_phi    : {n_fphi:,}")
-    print(f"  Denoiser : {n_denoiser:,}")
-    print(f"  Total    : {n_fphi + n_denoiser:,}")
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
 
-    # ---- Run name ----
     run_name = f"{args.name}_{get_current_datetime()}"
 
-    # ---- Train ----
-    model = train_ndm(
-        model=model,
-        dataloader=dataloader,
-        name=run_name,
-        num_epochs=args.epochs,
-        lr=args.lr,
-        grad_clip=args.grad_clip,
-        sample_every=args.sample_every,
-        sample_steps=args.sample_steps,
-    )
+    # ---- Transformation network F_phi ----
+    if args.f_phi_type == "mlp":
+        F_phi = MLPTransformation(  # noqa: N806
+            data_dim=28 * 28,
+            hidden_dims=args.f_phi_hidden,
+            t_embed_dim=args.f_phi_t_embed,
+        )
+        print(f"F_phi: MLP  hidden={args.f_phi_hidden}  t_embed={args.f_phi_t_embed}")
+    elif args.f_phi_type == "unet":
+        F_phi = UNetTransformation()  # noqa: N806
+        print("F_phi: UNet")
+    else:
+        raise ValueError(f"Unknown f_phi_type: {args.f_phi_type!r}. Choose 'mlp' or 'unet'.")
 
-    # ---- Save final weights ----
-    weights_dir = os.path.join(RES_DIR, "ndm/weights")
+    # ---- Noise-prediction network (same Unet as DDPM) ----
+    network = Unet()
+
+    # ---- Model ----
+    model = NeuralDiffusionModel(
+        network=network,
+        F_phi=F_phi,
+        T=args.T,
+        sigma_tilde_factor=args.sigma_tilde,
+    ).to(args.device)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    fphi_params = sum(p.numel() for p in F_phi.parameters())
+    net_params = sum(p.numel() for p in network.parameters())
+    print(f"# Total parameters : {total_params:,}")
+    print(f"  ε_theta (Unet)   : {net_params:,}")
+    print(f"  F_phi            : {fphi_params:,}")
+
+    # ---- Optimizer ----
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    # ---- Train ----
+    print("\nStarting NDM training...")
+    model = train_ndm(
+        model,
+        optimizer,
+        train_loader,
+        epochs=args.epochs,
+        device=args.device,
+        name=run_name,
+        log_every_n_steps=args.log_every_n_steps,
+    )
+    print("NDM training completed.")
+
+    # ---- Save weights ----
+    weights_dir = os.path.join(RES_DIR, f"{args.model}/weights")
     os.makedirs(weights_dir, exist_ok=True)
     weights_path = os.path.join(weights_dir, f"{run_name}.pth")
     torch.save(model.state_dict(), weights_path)
     print(f"Weights saved to: {weights_path}")
 
-    save_dir = os.path.join(f"src/results/{args.model}/experiments", f"{run_name}.json")
+    save_dir = os.path.join(RES_DIR, f"{args.model}/experiments", f"{run_name}.json")
     save_config(args, save_dir, weights_path)
 
 

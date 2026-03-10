@@ -52,6 +52,20 @@ MODEL_SAVE_KEYS = {
     ],
     "vae": ["model", "epochs", "batch_size", "lr", "latent_dim", "prior", "device", "name", "subset_frac", "hidden_dims"],
     "ddpm": ["model", "epochs", "batch_size", "lr", "T", "name", "subset_frac", "device"],
+    "ndm": [
+        "model",
+        "epochs",
+        "batch_size",
+        "lr",
+        "T",
+        "name",
+        "subset_frac",
+        "device",
+        "f_phi_type",
+        "f_phi_hidden",
+        "f_phi_t_embed",
+        "sigma_tilde",
+    ],
     # add more model types here as needed
 }
 
@@ -100,9 +114,40 @@ def parse_args_training():
 
     # ---- NDM architecture ----
     parser.add_argument("--T", type=int, default=1000, help="Diffusion timesteps")
-    parser.add_argument("--fphi_ch", type=int, default=32, help="F_phi base channels")
-    parser.add_argument("--denoiser_ch", type=int, default=64, help="Denoiser base channels")
-    parser.add_argument("--time_emb_dim", type=int, default=256)
+    parser.add_argument(
+        "--f_phi_type",
+        type=str,
+        default="mlp",
+        choices=["mlp", "unet"],
+        help="Architecture for the learnable data-transformation F_phi. 'mlp' is faster; 'unet' matches the noise-predictor architecture.",
+    )
+    parser.add_argument(
+        "--f_phi_hidden",
+        type=int,
+        nargs="+",
+        default=[512, 512, 512],
+        help="Hidden layer sizes for the MLP transformation F_phi (ignored when --f_phi_type unet). Example: --f_phi_hidden 512 512 512",
+    )
+    parser.add_argument(
+        "--f_phi_t_embed",
+        type=int,
+        default=32,
+        help="Dimension of the time embedding in the MLP transformation (ignored when --f_phi_type unet).",
+    )
+    parser.add_argument(
+        "--sigma_tilde",
+        type=float,
+        default=1.0,
+        help="Stochasticity factor for the NDM reverse process. "
+        "0.0 → deterministic DDIM-style sampling. "
+        "1.0 → full DDPM-style stochasticity (default).",
+    )
+    parser.add_argument(
+        "--log_every_n_steps",
+        type=int,
+        default=20,
+        help="How often (in optimizer steps) to log the running average loss.",
+    )
 
     # ---- NDM training ----
     parser.add_argument("--grad_clip", type=float, default=1.0)
