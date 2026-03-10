@@ -1,548 +1,446 @@
-"""
-Neural Diffusion Model (NDM) - Model Architecture
-Based on: "Neural Diffusion Models" (Bartosh et al., 2024)
-
-Two networks:
-  - F_phi(x, t): learned data transformer (applied before noise injection)
-  - x_hat_theta(z_t, t): denoiser that predicts x from noisy z_t
-
-Forward marginal:  q_phi(z_t | x) = N(z_t; alpha_t * F_phi(x,t), sigma_t^2 * I)
-vs DDPM:           q(z_t | x)     = N(z_t; alpha_t * x,           sigma_t^2 * I)
-"""
-
-import math
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: N812
-from tqdm.asyncio import tqdm
+from tqdm import tqdm
+
+# =============================================================================
+# Data Transformation Networks F_phi(x, t)
+# =============================================================================
 
 
-class EMA:
-    """Exponential moving average of model parameters for cleaner samples."""
-
-    def __init__(self, model: nn.Module, decay: float = 0.9999):
-        self.decay = decay
-        self.shadow = {k: v.clone().float() for k, v in model.state_dict().items()}
-
-    @torch.no_grad()
-    def update(self, model: nn.Module):
-        for k, v in model.state_dict().items():
-            self.shadow[k] = self.decay * self.shadow[k] + (1 - self.decay) * v.float()
-
-    def apply(self, model: nn.Module) -> dict:
-        """Load EMA weights into model, return original weights to restore later."""
-        original = {k: v.clone() for k, v in model.state_dict().items()}
-        model.load_state_dict({k: v.to(next(model.parameters()).device) for k, v in self.shadow.items()})
-        return original
-
-    def restore(self, model: nn.Module, original: dict):
-        model.load_state_dict(original)
-
-
-# ---------------------------------------------------------------------------
-# Sinusoidal time embedding (shared by both networks)
-# ---------------------------------------------------------------------------
-
-
-class SinusoidalTimeEmbedding(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, t: torch.Tensor) -> torch.Tensor:
-        """
-        t: (B,) float tensor of timesteps in [0, 1] or [0, T]
-        returns: (B, dim) sinusoidal embedding
-        """
-        device = t.device
-        half = self.dim // 2
-        freqs = torch.exp(-math.log(10000) * torch.arange(half, device=device) / (half - 1))
-        args = t[:, None] * freqs[None, :]  # (B, half)
-        emb = torch.cat([args.sin(), args.cos()], dim=-1)  # (B, dim)
-        return emb
-
-
-# ---------------------------------------------------------------------------
-# Shared building blocks
-# ---------------------------------------------------------------------------
-
-
-class ResBlock(nn.Module):
-    """Simple residual block with time conditioning."""
-
-    def __init__(self, channels: int, time_dim: int):
-        super().__init__()
-        self.norm1 = nn.GroupNorm(8, channels)
-        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm2 = nn.GroupNorm(8, channels)
-        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.time_proj = nn.Linear(time_dim, channels)
-
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-        h = self.conv1(F.silu(self.norm1(x)))
-        h = h + self.time_proj(F.silu(t_emb))[:, :, None, None]
-        h = self.conv2(F.silu(self.norm2(h)))
-        return x + h
-
-
-class Downsample(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.conv = nn.Conv2d(channels, channels, 3, stride=2, padding=1)
-
-    def forward(self, x):
-        return self.conv(x)
-
-
-class Upsample(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.conv = nn.ConvTranspose2d(channels, channels, 4, stride=2, padding=1)
-
-    def forward(self, x):
-        return self.conv(x)
-
-
-# ---------------------------------------------------------------------------
-# F_phi: Learned data transformer
-# ---------------------------------------------------------------------------
-# Takes x (clean image) + t and outputs a transformed image of the same shape.
-# This is what replaces the identity in DDPM's forward process.
-# Architecture is intentionally lighter than the denoiser — it only needs to
-# learn a smooth warp of the data manifold, not undo stochastic noise.
-
-
-class FPhi(nn.Module):
+class MLPTransformation(nn.Module):
     """
-    F_phi(x, t): time-dependent learned transformation of clean data.
+    MLP-based transformation network F_phi(x, t) for MNIST.
 
-    Input:  x in R^(B, C, H, W),  t in R^(B,)
-    Output: F_phi(x, t) in R^(B, C, H, W)   (same shape as x)
+    Takes a flattened image x (784-dim) and scalar time t, and outputs a
+    transformed image of the same shape. Built to mirror the VAE encoder/decoder
+    style: simple, modular, drop-in replaceable with the UNet version.
 
-    Uses a lightweight UNet so it can learn spatial transformations.
-    Skip connection from input ensures F_phi(x,t) ≈ x at init (via zero-init
-    on the final conv), matching the DDPM baseline at the start of training.
+    Architecture: concatenate [x, t] -> MLP -> output (same dim as x)
     """
 
-    def __init__(
-        self,
-        in_channels: int = 1,
-        base_channels: int = 32,
-        time_emb_dim: int = 128,
-    ):
+    def __init__(self, data_dim: int = 784, hidden_dims: list = None, t_embed_dim: int = 32):  # noqa: RUF013
         super().__init__()
-        c = base_channels
-        self.time_emb = SinusoidalTimeEmbedding(time_emb_dim)
-        self.time_mlp = nn.Sequential(
-            nn.Linear(time_emb_dim, time_emb_dim * 2),
+        if hidden_dims is None:
+            hidden_dims = [512, 512, 512]
+
+        # Small MLP to embed scalar time t into a richer representation
+        self.t_embed = nn.Sequential(
+            nn.Linear(1, t_embed_dim),
             nn.SiLU(),
-            nn.Linear(time_emb_dim * 2, time_emb_dim),
+            nn.Linear(t_embed_dim, t_embed_dim),
+            nn.SiLU(),
         )
 
-        # Encoder
-        self.enc_in = nn.Conv2d(in_channels, c, 3, padding=1)
-        self.enc_r1 = ResBlock(c, time_emb_dim)
-        self.down1 = Downsample(c)
-        self.enc_r2 = ResBlock(c, time_emb_dim)
-        self.down2 = Downsample(c)
-
-        # Bottleneck
-        self.mid_r1 = ResBlock(c, time_emb_dim)
-        self.mid_r2 = ResBlock(c, time_emb_dim)
-
-        # Decoder
-        self.up2 = Upsample(c)
-        self.dec_r2 = ResBlock(c, time_emb_dim)
-        self.up1 = Upsample(c)
-        self.dec_r1 = ResBlock(c, time_emb_dim)
-
-        # Zero-init final conv → F_phi starts as identity
-        self.out_conv = nn.Conv2d(c, in_channels, 1)
-        nn.init.zeros_(self.out_conv.weight)
-        nn.init.zeros_(self.out_conv.bias)
+        layers = []
+        in_dim = data_dim + t_embed_dim
+        for h_dim in hidden_dims:
+            layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
+            in_dim = h_dim
+        layers.append(nn.Linear(in_dim, data_dim))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        t_emb = self.time_mlp(self.time_emb(t))  # (B, time_emb_dim)
-
-        h = self.enc_in(x)
-        h = self.enc_r1(h, t_emb)
-        skip1 = h
-        h = self.down1(h)
-        h = self.enc_r2(h, t_emb)
-        skip2 = h
-        h = self.down2(h)
-
-        h = self.mid_r1(h, t_emb)
-        h = self.mid_r2(h, t_emb)
-
-        h = self.up2(h) + skip2
-        h = self.dec_r2(h, t_emb)
-        h = self.up1(h) + skip1
-        h = self.dec_r1(h, t_emb)
-
-        delta = self.out_conv(h)
-        return x + delta  # residual: starts as identity, learns a warp
+        """
+        Parameters:
+            x: (batch, 784)  - flattened MNIST image
+            t: (batch, 1)    - normalized time in [0, 1]
+        Returns:
+            (batch, 784) - transformed image, same shape as input
+        """
+        t_emb = self.t_embed(t)  # (batch, t_embed_dim)
+        xt = torch.cat([x, t_emb], dim=-1)  # (batch, 784 + t_embed_dim)
+        return self.net(xt)  # (batch, 784)
 
 
-# ---------------------------------------------------------------------------
-# Denoiser: x_hat_theta(z_t, t)
-# ---------------------------------------------------------------------------
-# Standard UNet that predicts clean x from noisy z_t.
-# In NDM the loss compares F_phi(x_hat, s) vs F_phi(x, s), so this network
-# still outputs x-space predictions — same interface as DDPM's x-predictor.
-
-
-class Denoiser(nn.Module):
+class UNetTransformation(nn.Module):
     """
-    x_hat_theta(z_t, t): predict clean x from noisy observation z_t.
+    U-Net-based transformation network F_phi(x, t) for MNIST.
 
-    Input:  z_t in R^(B, C, H, W),  t in R^(B,)
-    Output: x_hat in R^(B, C, H, W)
+    Same input/output contract as MLPTransformation:
+        x: (batch, 784)  ->  output: (batch, 784)
+        t: (batch, 1)
+
+    Internally reshapes x to (batch, 1, 28, 28), concatenates a time channel,
+    runs through a U-Net, then flattens back. This is the same architectural
+    pattern used in the DDPM Unet above — here repurposed as the learnable
+    transformation F_phi rather than the noise predictor.
     """
 
-    def __init__(
-        self,
-        in_channels: int = 1,
-        base_channels: int = 64,
-        channel_mults: tuple = (1, 2, 2),
-        time_emb_dim: int = 256,
-    ):
+    def __init__(self):
         super().__init__()
-        self.time_emb = SinusoidalTimeEmbedding(time_emb_dim)
-        self.time_mlp = nn.Sequential(
-            nn.Linear(time_emb_dim, time_emb_dim * 2),
-            nn.SiLU(),
-            nn.Linear(time_emb_dim * 2, time_emb_dim),
+        chs = [32, 64, 128, 256, 256]
+
+        # Encoder (same as DDPM Unet)
+        self._convs = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(2, chs[0], kernel_size=3, padding=1),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.MaxPool2d(kernel_size=2, stride=2),
+                    nn.Conv2d(chs[0], chs[1], kernel_size=3, padding=1),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.MaxPool2d(kernel_size=2, stride=2),
+                    nn.Conv2d(chs[1], chs[2], kernel_size=3, padding=1),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.MaxPool2d(kernel_size=2, stride=2, padding=1),
+                    nn.Conv2d(chs[2], chs[3], kernel_size=3, padding=1),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.MaxPool2d(kernel_size=2, stride=2),
+                    nn.Conv2d(chs[3], chs[4], kernel_size=3, padding=1),
+                    nn.SiLU(),
+                ),
+            ]
         )
 
-        channels = [base_channels * m for m in channel_mults]
-
-        # Input projection
-        self.enc_in = nn.Conv2d(in_channels, channels[0], 3, padding=1)
-
-        # Encoder
-        self.enc_blocks = nn.ModuleList()
-        self.downsamples = nn.ModuleList()
-        for i in range(len(channels) - 1):
-            self.enc_blocks.append(ResBlock(channels[i], time_emb_dim))
-            self.downsamples.append(Downsample(channels[i]))
-            if channels[i] != channels[i + 1]:
-                self.downsamples[-1] = nn.Sequential(
-                    Downsample(channels[i]),
-                    nn.Conv2d(channels[i], channels[i + 1], 1),
-                )
-
-        # Bottleneck
-        self.mid1 = ResBlock(channels[-1], time_emb_dim)
-        self.mid2 = ResBlock(channels[-1], time_emb_dim)
-
         # Decoder
-        self.upsamples = nn.ModuleList()
-        self.dec_blocks = nn.ModuleList()
-        for i in reversed(range(len(channels) - 1)):
-            in_ch = channels[i + 1]
-            out_ch = channels[i]
-            self.upsamples.append(
+        self._tconvs = nn.ModuleList(
+            [
                 nn.Sequential(
-                    Upsample(in_ch),
-                    nn.Conv2d(in_ch, out_ch, 1),
-                )
-                if in_ch != out_ch
-                else Upsample(in_ch)
-            )
-            self.dec_blocks.append(ResBlock(out_ch, time_emb_dim))
+                    nn.ConvTranspose2d(chs[4], chs[3], kernel_size=3, stride=2, padding=1, output_padding=1),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.ConvTranspose2d(chs[3] * 2, chs[2], kernel_size=3, stride=2, padding=1, output_padding=0),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.ConvTranspose2d(chs[2] * 2, chs[1], kernel_size=3, stride=2, padding=1, output_padding=1),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.ConvTranspose2d(chs[1] * 2, chs[0], kernel_size=3, stride=2, padding=1, output_padding=1),
+                    nn.SiLU(),
+                ),
+                nn.Sequential(
+                    nn.Conv2d(chs[0] * 2, chs[0], kernel_size=3, padding=1),
+                    nn.SiLU(),
+                    nn.Conv2d(chs[0], 1, kernel_size=3, padding=1),
+                ),
+            ]
+        )
 
-        # Output
-        self.out_norm = nn.GroupNorm(8, channels[0])
-        self.out_conv = nn.Conv2d(channels[0], in_channels, 1)
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters:
+            x: (batch, 784)
+            t: (batch, 1)
+        Returns:
+            (batch, 784)
+        """
+        batch_size = x.shape[0]
+        x2 = x.view(batch_size, 1, 28, 28)
+        tt = t[:, :, None, None].expand(batch_size, 1, 28, 28)
+        x2t = torch.cat([x2, tt], dim=1)  # (batch, 2, 28, 28)
 
-    def forward(self, z_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        t_emb = self.time_mlp(self.time_emb(t))
+        signal = x2t
+        signals = []
+        for i, conv in enumerate(self._convs):
+            signal = conv(signal)
+            if i < len(self._convs) - 1:
+                signals.append(signal)
 
-        h = self.enc_in(z_t)
+        for i, tconv in enumerate(self._tconvs):
+            if i == 0:
+                signal = tconv(signal)
+            else:
+                signal = torch.cat([signal, signals[-i]], dim=1)
+                signal = tconv(signal)
 
-        skips = []
-        for resblock, down in zip(self.enc_blocks, self.downsamples, strict=False):
-            h = resblock(h, t_emb)
-            skips.append(h)
-            h = down(h)
-
-        h = self.mid1(h, t_emb)
-        h = self.mid2(h, t_emb)
-
-        for resblock, up, skip in zip(self.dec_blocks, self.upsamples, reversed(skips), strict=False):
-            h = up(h)
-            h = h + skip
-            h = resblock(h, t_emb)
-
-        return self.out_conv(F.silu(self.out_norm(h)))
+        return signal.view(batch_size, -1)  # (batch, 784)
 
 
-# ---------------------------------------------------------------------------
-# Noise schedule
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Neural Diffusion Model
+# =============================================================================
 
 
-class NoiseSchedule(nn.Module):
+class NeuralDiffusionModel(nn.Module):
     """
-    DDPM variance-preserving schedule (same as paper's default).
-    alpha_t^2 + sigma_t^2 = 1  (signal-to-noise tradeoff)
+    Neural Diffusion Model (NDM) as described in "Neural Diffusion Models".
 
-    alpha_t: signal coefficient  (1 at t=0, ~0 at t=T)
-    sigma_t: noise std           (0 at t=0, ~1 at t=T)
-    """
+    Generalises DDPM by introducing a learnable, time-dependent data
+    transformation F_phi(x, t) in the forward process. The marginal becomes:
 
-    def __init__(self, T: int = 1000, beta_start: float = 1e-4, beta_end: float = 0.02):  # noqa: N803
-        super().__init__()
-        betas = torch.linspace(beta_start, beta_end, T)
-        alphas = 1.0 - betas
-        alpha_bar = torch.cumprod(alphas, dim=0)  # ᾱ_t = prod_{s=1}^{t} (1-β_s)
+        q_phi(z_t | x) = N(z_t; alpha_t * F_phi(x, t), sigma_t^2 * I)
 
-        # alpha_t in NDM notation = sqrt(ᾱ_t)
-        self.register_buffer("alpha", alpha_bar.sqrt())
-        self.register_buffer("sigma", (1.0 - alpha_bar).sqrt())
-        self.T = T
+    The full variational objective (Eq. 8 in the paper) is:
 
-    def get(self, t_idx: torch.Tensor):
-        """Return alpha_t and sigma_t for integer timestep indices (1-indexed)."""
-        idx = (t_idx - 1).clamp(0, self.T - 1)
-        return self.alpha[idx], self.sigma[idx]
+        L = L_prior + L_rec + L_diff
 
+    where:
+      - L_diff : the main denoising term (analogous to DDPM's MSE loss)
+      - L_prior: KL[ q_phi(z_T|x) || p(z_T) ]  — non-trivial when F_phi is learned
+      - L_rec  : -log p_theta(x | z_0)           — reconstruction term
 
-# ---------------------------------------------------------------------------
-# Full NDM
-# ---------------------------------------------------------------------------
+    Crucially, because F_phi is learned, L_prior and L_rec cannot be ignored
+    (unlike standard DDPM). This parallels the VAE ELBO structure, and the
+    implementation below mirrors the VAE's elbo() method for those two terms.
 
-
-class NDM(nn.Module):
-    """
-    Neural Diffusion Model wrapper.
-
-    Holds:
-      - F_phi  : learned forward transformer
-      - denoiser: x_hat_theta
-      - schedule: noise schedule
-
-    Exposes:
-      - q_sample(x, t_idx, eps): sample z_t ~ q_phi(z_t | x)
-      - loss(x): full ELBO loss (L_diff + L_prior + L_rec)
+    Parameters:
+        network  : noise prediction network epsilon_theta (same Unet as DDPM)
+        F_phi    : transformation network, either MLPTransformation or
+                   UNetTransformation — interchangeable, same I/O contract
+        beta_1   : noise schedule start
+        beta_T   : noise schedule end
+        T        : number of diffusion steps
+        sigma_tilde_factor: controls stochasticity in reverse process (0=DDIM)
     """
 
     def __init__(
         self,
-        in_channels: int = 1,
-        T: int = 1000,  # noqa: N803
-        fphi_base_ch: int = 32,
-        denoiser_base_ch: int = 64,
-        time_emb_dim: int = 256,
+        network: nn.Module,
+        F_phi: nn.Module,  # noqa: N803
+        beta_1: float = 1e-4,
+        beta_T: float = 2e-2,  # noqa: N803
+        T: int = 100,  # noqa: N803
+        sigma_tilde_factor: float = 1.0,
     ):
         super().__init__()
+        self.network = network  # epsilon_theta: noise predictor
+        self.F_phi = F_phi  # learnable data transformation
+
+        self.beta_1 = beta_1
+        self.beta_T = beta_T
         self.T = T
-        self.schedule = NoiseSchedule(T)
-        self.fphi = FPhi(in_channels, fphi_base_ch, time_emb_dim // 2)
-        self.denoiser = Denoiser(in_channels, denoiser_base_ch, time_emb_dim=time_emb_dim)
+        self.sigma_tilde_factor = sigma_tilde_factor  # in [0,1]; 0 = deterministic DDIM
+
+        # DDPM variance-preserving noise schedule (same as base DDPM)
+        beta = torch.linspace(beta_1, beta_T, T)
+        alpha = 1.0 - beta
+        alpha_cumprod = alpha.cumprod(dim=0)  # alpha_bar_t  = prod_{i=1}^{t} alpha_i
+
+        # sigma_t^2 = 1 - alpha_bar_t,  alpha_t (NDM notation) = sqrt(alpha_bar_t)
+        self.register_buffer("beta", beta)
+        self.register_buffer("alpha", alpha)
+        self.register_buffer("alpha_cumprod", alpha_cumprod)  # alpha_bar
+        self.register_buffer("sqrt_alpha_cumprod", alpha_cumprod.sqrt())
+        self.register_buffer("sigma_sq", 1.0 - alpha_cumprod)  # sigma_t^2
+        self.register_buffer("sigma", (1.0 - alpha_cumprod).sqrt())
 
     # ------------------------------------------------------------------
-    # Helper: sample z_t from forward process marginal
-    # q_phi(z_t | x) = N(alpha_t * F_phi(x,t), sigma_t^2 * I)
+    # Helper: sigma_tilde^2_{s|t}  (design choice in the paper)
+    # We use the DDPM-consistent choice from Appendix C:
+    #   sigma_tilde^2_{s|t} = (sigma_t^2 - alpha_t^2/alpha_s^2 * sigma_s^2)
+    #                          * sigma_s^2 / sigma_t^2
+    # and scale by sigma_tilde_factor to interpolate between DDIM and DDPM.
     # ------------------------------------------------------------------
-    def q_sample(
+    def _sigma_tilde_sq(self, s_idx: torch.Tensor, t_idx: torch.Tensor) -> torch.Tensor:
+        sigma_s_sq = self.sigma_sq[s_idx]
+        sigma_t_sq = self.sigma_sq[t_idx]
+        alpha_t_sq = self.alpha_cumprod[t_idx]
+        alpha_s_sq = self.alpha_cumprod[s_idx]
+
+        base = (sigma_t_sq - alpha_t_sq / alpha_s_sq * sigma_s_sq) * sigma_s_sq / sigma_t_sq
+        return self.sigma_tilde_factor * base
+
+    # ------------------------------------------------------------------
+    # Forward process sample:  z_t | x  ~  N(alpha_t * F(x,t), sigma_t^2 I)
+    # ------------------------------------------------------------------
+    def _sample_zt(
         self,
         x: torch.Tensor,
         t_idx: torch.Tensor,
-        eps: torch.Tensor | None = None,
+        t_norm: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns (z_t, eps) where z_t = alpha_t * F_phi(x,t) + sigma_t * eps
-        t_idx: integer timesteps, shape (B,), values in [1, T]
-        """
-        if eps is None:
-            eps = torch.randn_like(x)
-
-        t_cont = t_idx.float() / self.T  # continuous t in (0,1] for network input
-        F_x_t = self.fphi(x, t_cont)  # (B, C, H, W)  # noqa: N806
-
-        alpha_t, sigma_t = self.schedule.get(t_idx)
-        alpha_t = alpha_t[:, None, None, None]
-        sigma_t = sigma_t[:, None, None, None]
-
-        z_t = alpha_t * F_x_t + sigma_t * eps
-        return z_t, F_x_t
+        """Returns z_t and the noise epsilon used."""
+        Fx = self.F_phi(x, t_norm)  # (batch, 784)  # noqa: N806
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+        epsilon = torch.randn_like(x)
+        z_t = alpha_t * Fx + sigma_t * epsilon
+        return z_t, epsilon, Fx
 
     # ------------------------------------------------------------------
-    # Compute posterior mean for q_phi(z_s | z_t, x)
-    # mu_{s|t} = alpha_s * F_phi(x,s) + sqrt(sigma_s^2 - sigma_tilde_s^2) / sigma_t
-    #            * (z_t - alpha_t * F_phi(x,t))
+    # L_diff — denoising loss (Eq. 9 in paper, noise-prediction form)
     # ------------------------------------------------------------------
-    def _posterior_mean(
+    def _l_diff(
         self,
         x: torch.Tensor,
         z_t: torch.Tensor,
-        s_idx: torch.Tensor,
         t_idx: torch.Tensor,
-        sigma_tilde_sq: torch.Tensor,
+        t_norm: torch.Tensor,
+        Fx_t: torch.Tensor,  # noqa: N803
     ) -> torch.Tensor:
-        s_cont = s_idx.float() / self.T
-        t_cont = t_idx.float() / self.T
-
-        F_x_s = self.fphi(x, s_cont)  # noqa: N806
-        F_x_t = self.fphi(x, t_cont)  # noqa: N806
-
-        alpha_s, sigma_s = self.schedule.get(s_idx)
-        alpha_t, sigma_t = self.schedule.get(t_idx)
-
-        alpha_s = alpha_s[:, None, None, None]
-        sigma_s = sigma_s[:, None, None, None]
-        alpha_t = alpha_t[:, None, None, None]
-        sigma_t = sigma_t[:, None, None, None]
-        sigma_tilde_sq = sigma_tilde_sq[:, None, None, None]
-
-        coeff = (sigma_s**2 - sigma_tilde_sq).sqrt() / sigma_t
-        mu = alpha_s * F_x_s + coeff * (z_t - alpha_t * F_x_t)
-        return mu, F_x_s, F_x_t
-
-    # ------------------------------------------------------------------
-    # Full ELBO loss  (Eq. 8-9 in the paper)
-    # ------------------------------------------------------------------
-    def loss(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """
-        Compute the NDM ELBO loss for a batch of clean images x.
+        KL divergence between forward posterior q_phi(z_{t-1}|z_t, x) and
+        reverse p_theta(z_{t-1}|z_t), collapsed to an MSE on the transformed
+        data (Eq. 9).
 
-        Returns dict with keys: 'loss', 'ldiff', 'lprior', 'lrec'
+        We use the noise-prediction reparameterisation (Appendix C, Eq. 34):
+            x_hat = (z_t - sigma_t * eps_hat) / alpha_t
+        which means F_phi(x_hat, s) is used as the predicted transform.
+
+        In practice we minimise the squared difference between predicted and
+        true F_phi values, weighted by 1/(2*sigma_tilde^2).  For simplicity
+        and training stability we drop the scalar prefactor (same convention
+        as DDPM dropping 1/beta_t from the MSE).
         """
-        B, c, _, _ = x.shape  # noqa: N806
-        device = x.device
 
-        # Sample timestep t uniformly from [1, T]
-        t_idx = torch.randint(1, self.T + 1, (B,), device=device)
-        s_idx = (t_idx - 1).clamp(min=1)  # s = t-1, clamped to >=1
+        # Predict noise -> reconstruct x_hat -> get F_phi(x_hat, t)
+        eps_hat = self.network(z_t, t_norm.unsqueeze(1))  # (batch, 784)
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+        x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
 
-        # ---- Sample z_t from forward process ----
-        eps = torch.randn_like(x)
-        z_t, _ = self.q_sample(x, t_idx, eps)
-        # ---- Denoiser predicts x from z_t ----
-        t_cont = t_idx.float() / self.T
-        x_hat = self.denoiser(z_t, t_cont)  # x_hat_theta(z_t, t)
+        # s = t - 1  (0-indexed; clamp at 0)
+        s_idx = (t_idx - 1).clamp(min=0)
+        s_norm = s_idx.float() / (self.T - 1)
 
-        # ---- Compute sigma_tilde^2 ----
-        # DDPM posterior variance: sigma_tilde^2_{s|t} = sigma_s^2 * (1 - alpha_t^2 / alpha_s^2)
-        # Derived from: Var[z_s | z_t, x] in the Gaussian forward process.
-        # Both alpha_s, alpha_t are scalars per batch element here.
-        alpha_s, sigma_s = self.schedule.get(s_idx)
-        alpha_t, sigma_t = self.schedule.get(t_idx)
+        Fx_hat_t = self.F_phi(x_hat, t_norm.unsqueeze(1))  # F_phi(x_hat, t)  # noqa: N806
+        Fx_hat_s = self.F_phi(x_hat, s_norm.unsqueeze(1))  # F_phi(x_hat, s)  # noqa: N806
+        Fx_s = self.F_phi(x, s_norm.unsqueeze(1))  # F_phi(x,    s)  # noqa: N806
 
-        alpha_s_sq = alpha_s**2
-        alpha_t_sq = alpha_t**2
-        sigma_tilde_sq = sigma_s**2 * (1.0 - alpha_t_sq / alpha_s_sq.clamp(min=1e-8))
-        sigma_tilde_sq = sigma_tilde_sq.clamp(min=1e-8)  # numerical safety
+        # All per-sample scalars unsqueezed to (batch, 1) for broadcasting with (batch, 784)
+        alpha_s = self.sqrt_alpha_cumprod[s_idx].unsqueeze(1)  # (batch, 1)
+        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)  # (batch, 1)
+        coeff = (self.sigma_sq[s_idx].unsqueeze(1) - sigma_tilde_sq).clamp(min=0).sqrt()
+        coeff = coeff / self.sigma[t_idx].unsqueeze(1).clamp(min=1e-6)  # (batch, 1)
 
-        # ---- L_diff: KL between forward posterior and reverse (Eq. 9) ----
-        # Since both posteriors are Gaussian with the same variance sigma_tilde^2,
-        # KL reduces to: (1 / 2*sigma_tilde^2) * || mu_true - mu_pred ||^2
-        #
-        # mu_true = alpha_s*F_phi(x,s)    + c * (z_t - alpha_t*F_phi(x,t))
-        # mu_pred = alpha_s*F_phi(x_hat,s) + c * (z_t - alpha_t*F_phi(x_hat,t))
-        # where c = sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t
-        #
-        # The z_t terms cancel, leaving Eq. 9:
-        # || alpha_s*(F_phi(x,s) - F_phi(x_hat,s)) - c*alpha_t*(F_phi(x,t) - F_phi(x_hat,t)) ||^2
-        s_cont = s_idx.float() / self.T
-        t_cont2 = t_idx.float() / self.T
-
-        F_x_s_true = self.fphi(x, s_cont)  # F_phi(x, s)  # noqa: N806
-        F_x_t_true = self.fphi(x, t_cont2)  # F_phi(x, t)  — note: same t as z_t was sampled at  # noqa: N806
-        F_x_s_pred = self.fphi(x_hat, s_cont)  # F_phi(x_hat, s)  # noqa: N806
-        F_x_t_pred = self.fphi(x_hat, t_cont2)  # F_phi(x_hat, t)  # noqa: N806
-
-        alpha_s_4d = alpha_s[:, None, None, None]
-        alpha_t_4d = alpha_t[:, None, None, None]
-        sigma_tilde_sq_4d = sigma_tilde_sq[:, None, None, None]  # noqa: F841
-
-        # coefficient c = sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t
-        c = ((sigma_s**2 - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t.clamp(min=1e-8))[:, None, None, None]
-
-        diff_s = alpha_s_4d * (F_x_s_true - F_x_s_pred)
-        diff_t = c * alpha_t_4d * (F_x_t_true - F_x_t_pred)
-
-        ldiff = (diff_s - diff_t).pow(2).mean()
-
-        # ---- L_prior: KL( q_phi(z_T|x) || N(0,I) ) ----
-        # q_phi(z_T|x) = N(alpha_T * F_phi(x,T), sigma_T^2 * I)
-        T_idx = torch.full((B,), self.T, device=device, dtype=torch.long)  # noqa: N806
-        T_cont = torch.ones(B, device=device)  # noqa: N806
-        F_x_T = self.fphi(x, T_cont)  # noqa: N806
-        alpha_T, sigma_T = self.schedule.get(T_idx)  # noqa: N806
-        alpha_T = alpha_T[:, None, None, None]  # noqa: N806
-        sigma_T = sigma_T[:, None, None, None]  # noqa: N806
-
-        # KL( N(mu, sigma^2 I) || N(0, I) ) = 0.5 * (mu^2 + sigma^2 - 1 - log sigma^2)
-        lprior = 0.5 * ((alpha_T * F_x_T) ** 2 + sigma_T**2 - 1 - (sigma_T**2).log()).mean()
-
-        # ---- L_rec: -log p_theta(x | z_0) ----
-        # At t=1 (s=0), z_0 ≈ x. We approximate with a Gaussian reconstruction.
-        # Simplified: MSE between x and x_hat from z_1
-        t1_idx = torch.ones(B, device=device, dtype=torch.long)
-        z_1, _ = self.q_sample(x, t1_idx)
-        t1_cont = t1_idx.float() / self.T
-        x_hat_1 = self.denoiser(z_1, t1_cont)
-        lrec = F.mse_loss(x_hat_1, x)
-
-        total = ldiff + lprior + lrec
-        return {
-            "loss": total,
-            "ldiff": ldiff.detach(),
-            "lprior": lprior.detach(),
-            "lrec": lrec.detach(),
-        }
+        # MSE on the mean difference (Eq. 9, squared ‖·‖^2 term)
+        diff = alpha_s * (Fx_s - Fx_hat_s) + coeff * alpha_t * (Fx_hat_t - Fx_t)
+        l_diff = 0.5 * (diff**2).sum(dim=-1)  # (batch,)
+        return l_diff
 
     # ------------------------------------------------------------------
-    # Sampling
+    # L_prior  — KL[ q_phi(z_T|x) || N(0,I) ]   (Eq. 20 in paper)
+    # ------------------------------------------------------------------
+    def _l_prior(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Closed-form KL between N(alpha_T * F(x,T), sigma_T^2 I) and N(0, I).
+        Mirrors the VAE's kl_divergence(q, prior()) computation.
+
+        KL = 0.5 * [ d*(sigma_T^2 - log sigma_T^2 - 1) + alpha_T^2 * ||F(x,T)||^2 ]
+        """
+        T_idx = self.T - 1  # noqa: N806
+        t_norm_T = torch.ones(x.shape[0], 1, device=x.device)  # noqa: N806
+        Fx_T = self.F_phi(x, t_norm_T)  # (batch, 784)  # noqa: N806
+
+        sigma_T_sq = self.sigma_sq[T_idx]  # scalar  # noqa: N806
+        alpha_T_sq = self.alpha_cumprod[T_idx]  # scalar  # noqa: N806
+        d = x.shape[-1]  # 784
+
+        # Eq. 20:  0.5 * [ d*(sigma_T^2 - log(sigma_T^2) - 1) + alpha_T^2 * ||F||^2 ]
+        kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (Fx_T**2).sum(dim=-1))
+        return kl  # (batch,)
+
+    # ------------------------------------------------------------------
+    # L_rec  — reconstruction  -log p_theta(x | z_0)
+    # ------------------------------------------------------------------
+    def _l_rec(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Reconstruction loss at t=0. Following Appendix C (Eq. 35), the
+        transformation is constrained so F_phi(x, 0) = x, meaning
+        z_0 ≈ x. We therefore model p(x|z_0) as a unit Gaussian centred
+        at z_0, giving -log p ∝ ||x - z_0||^2.
+
+        This mirrors the VAE's decoder.log_prob(x) term.
+        """
+        t0_idx = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
+        t0_norm = torch.zeros(x.shape[0], 1, device=x.device)
+        z0, _, _ = self._sample_zt(x, t0_idx, t0_norm)
+
+        # Gaussian reconstruction: -log N(x; z0, I) ∝ 0.5 ||x - z0||^2
+        l_rec = 0.5 * ((x - z0) ** 2).sum(dim=-1)  # (batch,)
+        return l_rec
+
+    # ------------------------------------------------------------------
+    # Full NDM ELBO  (Eq. 8)
+    # ------------------------------------------------------------------
+    def negative_elbo(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Estimates the negative ELBO:
+            L = E[ L_prior + L_rec + L_diff ]
+
+        using a single Monte-Carlo sample over t (same as DDPM training).
+
+        Parameters:
+            x: (batch, 784)
+        Returns:
+            (batch,) negative ELBO per sample
+        """
+        batch_size = x.shape[0]
+
+        # --- Sample random time step (1-indexed, like the paper) ---
+        t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1  # 0-indexed
+        t_norm = t_idx.float() / (self.T - 1)
+
+        # --- Forward process: z_t ~ q_phi(z_t | x) ---
+        z_t, _, Fx_t = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))  # noqa: N806
+
+        # --- Three terms of the objective ---
+        l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
+        l_prior = self._l_prior(x)  # (batch,)
+        l_rec = self._l_rec(x)  # (batch,)
+
+        return l_diff + l_prior + l_rec  # (batch,)
+
+    def loss(self, x: torch.Tensor) -> torch.Tensor:
+        return self.negative_elbo(x).mean()
+
+    # ------------------------------------------------------------------
+    # Sampling  (Algorithm 2 in paper)
     # ------------------------------------------------------------------
     @torch.no_grad()
-    def sample(self, n: int, device: torch.device, steps: int | None = None) -> torch.Tensor:
+    def sample(self, shape: tuple) -> torch.Tensor:
         """
-        Ancestral sampling from z_T ~ N(0,I) back to x.
-        steps: if None, uses full T steps; otherwise subsamples uniformly.
+        Ancestral sampling from the NDM.
+
+        Algorithm 2:
+            z_T ~ N(0, I)
+            for t = T, ..., 1:
+                x_hat = x_hat_theta(z_t, t)          [noise -> x_hat]
+                z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat)
+            x ~ p(x | z_0)  [identity at t=0, so return z_0]
+
+        Parameters:
+            shape: (n_samples, 784)
         """
-        T = self.T  # noqa: N806
-        step_seq = list(range(T, 0, -1)) if steps is None else list(range(T, 0, -(T // steps)))[:steps]
+        device = self.sqrt_alpha_cumprod.device
+        z_t = torch.randn(shape, device=device)
 
-        # Determine image shape from a dummy forward pass
-        dummy = torch.zeros(1, 1, 28, 28, device=device)
-        with torch.no_grad():
-            _ = self.fphi(dummy, torch.zeros(1, device=device))
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
+            t_idx = torch.full((shape[0],), t, dtype=torch.long, device=device)
+            t_norm = torch.full((shape[0], 1), t / max(self.T - 1, 1), device=device)
 
-        z = torch.randn(n, 1, 28, 28, device=device)
+            # --- Predict x_hat from z_t (Eq. 34, Appendix C) ---
+            eps_hat = self.network(z_t, t_norm)
+            alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
+            sigma_t = self.sigma[t].unsqueeze(0)
+            x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
 
-        for i, t in enumerate(tqdm(step_seq, desc="Sampling", unit="step")):
-            t_idx = torch.full((n,), t, device=device, dtype=torch.long)
-            s = step_seq[i + 1] if i + 1 < len(step_seq) else 1
-            s_idx = torch.full((n,), s, device=device, dtype=torch.long)
+            if t == 0:
+                # p(x|z_0) = identity (F_phi constrained to identity at t=0)
+                z_t = x_hat
+                break
 
-            t_cont = t_idx.float() / T
-            x_hat = self.denoiser(z, t_cont)
+            # --- Sample z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat) (Eq. 7/15) ---
+            s = t - 1
+            s_idx = torch.full((shape[0],), s, dtype=torch.long, device=device)
+            s_norm = torch.full((shape[0], 1), s / max(self.T - 1, 1), device=device)
 
-            alpha_s, sigma_s = self.schedule.get(s_idx)
-            alpha_t, sigma_t = self.schedule.get(t_idx)
+            Fx_hat_s = self.F_phi(x_hat, s_norm)  # F_phi(x_hat, s)  # noqa: N806
+            Fx_hat_t = self.F_phi(x_hat, t_norm)  # F_phi(x_hat, t)  # noqa: N806
 
-            # DDPM posterior variance: sigma_s^2 * (1 - alpha_t^2 / alpha_s^2)
-            alpha_s_sq = alpha_s**2
-            alpha_t_sq = alpha_t**2
-            sigma_tilde_sq = sigma_s**2 * (1.0 - alpha_t_sq / alpha_s_sq.clamp(min=1e-8))
-            sigma_tilde_sq = sigma_tilde_sq.clamp(min=1e-8)
+            # All scalars kept as (1, 1) so they broadcast cleanly with (batch, 784)
+            alpha_s = self.sqrt_alpha_cumprod[s].view(1, 1)  # (1, 1)
+            sigma_s_sq = self.sigma_sq[s].view(1, 1)  # (1, 1)
+            sigma_t_val = self.sigma[t].view(1, 1)  # (1, 1)
+            alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)  # (1, 1)
+            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).mean().view(1, 1)  # scalar → (1,1)
 
-            s_cont = s_idx.float() / T
-            F_xs = self.fphi(x_hat, s_cont)  # noqa: N806
-            F_xt = self.fphi(x_hat, t_cont)  # noqa: N806
+            # Mean of q_phi(z_s | z_t, x_hat) — Eq. 7
+            coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)
+            mu = alpha_s * Fx_hat_s + coeff * (z_t - alpha_t_val * Fx_hat_t)
 
-            alpha_s_4d = alpha_s[:, None, None, None]
-            alpha_t_4d = alpha_t[:, None, None, None]
+            noise = torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(z_t)
+            z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
 
-            coeff = ((sigma_s**2 - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t.clamp(min=1e-8))[:, None, None, None]
-            mu = alpha_s_4d * F_xs + coeff * (z - alpha_t_4d * F_xt)
-
-            noise = torch.randn_like(z) if t > 1 else torch.zeros_like(z)
-            z = mu + sigma_tilde_sq[:, None, None, None].clamp(min=0).sqrt() * noise
-
-        return z.clamp(-1, 1)
+        return z_t

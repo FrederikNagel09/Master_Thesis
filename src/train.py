@@ -2,7 +2,7 @@
 train.py
 - Main training script
 
-###### Basic INR Training ######
+######################### Basic INR Training ####################################
 python src/train.py \
     --model basic_inr \
     --epochs 30 \
@@ -17,7 +17,7 @@ python src/train.py \
     --omega_0 20.0 
 
     
-###### MLP Hypernet INR Training ######    
+######################### MLP Hypernet INR Training ###############################
 python src/train.py \
     --model hypernet_inr \
     --name full_train_40E \
@@ -32,21 +32,36 @@ python src/train.py \
     --hyper_h 256 \
     --subset_frac 1
 
-    ###### NDM Training ######
+############################## NDM Training ####################################
 python src/train.py \
     --model ndm \
-    --name quick_test \
-    --epochs 10 \
-    --batch_size 64 \
-    --lr 1e-4 \
-    --T 500 \
-    --fphi_ch 16 \
-    --denoiser_ch 32 \
-    --time_emb_dim 128 \
-    --sample_every 4 \
-    --subset_frac 0.5
+    --name ndm_mlp_run \
+    --epochs 30 \
+    --batch_size 128 \
+    --lr 2e-4 \
+    --T 1000 \
+    --device mps \
+    --subset_frac 0.2 \
+    --f_phi_type mlp \
+    --f_phi_hidden 512 512 512 \
+    --f_phi_t_embed 32 \
+    --sigma_tilde 1.0 \
+    --log_every_n_steps 20
 
-    ###### VAE Training ######
+python src/train.py \
+    --model ndm \
+    --name ndm_unet_run \
+    --epochs 2 \
+    --batch_size 128 \
+    --lr 2e-4 \
+    --T 1000 \
+    --device mps \
+    --subset_frac 0.01 \
+    --f_phi_type unet \
+    --sigma_tilde 1.0 \
+    --log_every_n_steps 20
+
+############################## VAE Training #######################################
 python src/train.py \
     --model vae \
     --name vae_MoG \
@@ -59,6 +74,7 @@ python src/train.py \
     --hidden_dims 256 512 256 \
     --subset_frac 1
 
+######################### VAE Hypernet INR Training #############################
 python src/train.py \
     --model vae_inr_hypernet \
     --name inr_vae_mog \
@@ -75,6 +91,7 @@ python src/train.py \
     --device mps \
     --subset_frac 0.1 
 
+###############################. DDPM Training  ################################
 python src/train.py \
     --model ddpm \
     --name ddpm_full_run \

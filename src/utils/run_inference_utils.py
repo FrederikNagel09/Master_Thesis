@@ -197,43 +197,54 @@ def run_inference_ddpm(args, config):
 
 
 def run_inference_ndm(args, config):
+    import matplotlib.pyplot as plt
     import numpy as np
 
-    from src.models.ndm import NDM
+    from src.models.ddpm import Unet
+    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UNetTransformation
 
-    # ---- Load model ----
-    model = NDM(
-        in_channels=1,
+    device = config.get("device", "cpu")
+
+    # ---- Re-build the same architecture that was saved ----
+    if config.get("f_phi_type", "mlp") == "mlp":
+        F_phi = MLPTransformation(  # noqa: N806
+            data_dim=28 * 28,
+            hidden_dims=config.get("f_phi_hidden", [512, 512, 512]),
+            t_embed_dim=config.get("f_phi_t_embed", 32),
+        )
+    else:
+        F_phi = UNetTransformation()  # noqa: N806
+
+    network = Unet()
+
+    model = NeuralDiffusionModel(
+        network=network,
+        F_phi=F_phi,
         T=config["T"],
-        fphi_base_ch=config["fphi_ch"],
-        denoiser_base_ch=config["denoiser_ch"],
-        time_emb_dim=config["time_emb_dim"],
-    )
-    model.load_state_dict(torch.load(config["weights_path"], map_location="cpu"))
+        sigma_tilde_factor=config.get("sigma_tilde", 1.0),
+    ).to(device)
+
+    model.load_state_dict(torch.load(config["weights_path"], map_location=device))
     model.eval()
 
-    # ---- Sample ----
-    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-    model = model.to(device)
-
     n = args.grid_size**2
+
     with torch.no_grad():
-        samples = model.sample(n, device=torch.device(device), steps=args.sample_steps)
+        samples = model.sample((n, 28 * 28))
+        samples = samples.view(n, 1, 28, 28)
 
     # ---- Build grid and save ----
-    import matplotlib.pyplot as plt
-
-    n = args.grid_size**2
     imgs = ((samples * 0.5 + 0.5).clamp(0, 1) * 255).byte().cpu().numpy()
+
     rows = [np.concatenate([imgs[r * args.grid_size + c, 0] for c in range(args.grid_size)], axis=1) for r in range(args.grid_size)]
     grid = np.concatenate(rows, axis=0)
 
     fig, ax = plt.subplots()
     ax.imshow(grid, cmap="gray", vmin=0, vmax=255)
     ax.axis("off")
-    ax.set_title(f"NDM Samples — {args.grid_size**2} images", fontsize=12)
+    ax.set_title(f"NDM Samples — {n} images", fontsize=12)
 
-    out_dir = "src/results/ndm/samples"
+    out_dir = f"src/results/{config['model']}/samples"
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{args.grid_size}x{args.grid_size}_{config['name']}.png")
     fig.savefig(out_path, bbox_inches="tight", dpi=150)
