@@ -12,8 +12,7 @@ class MLPTransformation(nn.Module):
     MLP-based transformation network F_phi(x, t) for MNIST.
 
     Takes a flattened image x (784-dim) and scalar time t, and outputs a
-    transformed image of the same shape. Built to mirror the VAE encoder/decoder
-    style: simple, modular, drop-in replaceable with the UNet version.
+    transformed image of the same shape.
 
     Architecture: concatenate [x, t] -> MLP -> output (same dim as x)
     """
@@ -164,34 +163,10 @@ class UNetTransformation(nn.Module):
 
 class NeuralDiffusionModel(nn.Module):
     """
-    Neural Diffusion Model (NDM) as described in "Neural Diffusion Models".
+    Neural Diffusion Model (NDM).
 
     Generalises DDPM by introducing a learnable, time-dependent data
-    transformation F_phi(x, t) in the forward process. The marginal becomes:
-
-        q_phi(z_t | x) = N(z_t; alpha_t * F_phi(x, t), sigma_t^2 * I)
-
-    The full variational objective (Eq. 8 in the paper) is:
-
-        L = L_prior + L_rec + L_diff
-
-    where:
-      - L_diff : the main denoising term (analogous to DDPM's MSE loss)
-      - L_prior: KL[ q_phi(z_T|x) || p(z_T) ]  — non-trivial when F_phi is learned
-      - L_rec  : -log p_theta(x | z_0)           — reconstruction term
-
-    Crucially, because F_phi is learned, L_prior and L_rec cannot be ignored
-    (unlike standard DDPM). This parallels the VAE ELBO structure, and the
-    implementation below mirrors the VAE's elbo() method for those two terms.
-
-    Parameters:
-        network  : noise prediction network epsilon_theta (same Unet as DDPM)
-        F_phi    : transformation network, either MLPTransformation or
-                   UNetTransformation — interchangeable, same I/O contract
-        beta_1   : noise schedule start
-        beta_T   : noise schedule end
-        T        : number of diffusion steps
-        sigma_tilde_factor: controls stochasticity in reverse process (0=DDIM)
+    transformation F_phi(x, t) in the forward process.
     """
 
     def __init__(
@@ -212,12 +187,11 @@ class NeuralDiffusionModel(nn.Module):
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor  # in [0,1]; 0 = deterministic DDIM
 
-        # DDPM variance-preserving noise schedule (same as base DDPM)
+        # DDPM variance-preserving noise schedule
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
-        alpha_cumprod = alpha.cumprod(dim=0)  # alpha_bar_t  = prod_{i=1}^{t} alpha_i
+        alpha_cumprod = alpha.cumprod(dim=0)
 
-        # sigma_t^2 = 1 - alpha_bar_t,  alpha_t (NDM notation) = sqrt(alpha_bar_t)
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
         self.register_buffer("alpha_cumprod", alpha_cumprod)  # alpha_bar
@@ -225,13 +199,6 @@ class NeuralDiffusionModel(nn.Module):
         self.register_buffer("sigma_sq", 1.0 - alpha_cumprod)  # sigma_t^2
         self.register_buffer("sigma", (1.0 - alpha_cumprod).sqrt())
 
-    # ------------------------------------------------------------------
-    # Helper: sigma_tilde^2_{s|t}  (design choice in the paper)
-    # We use the DDPM-consistent choice from Appendix C:
-    #   sigma_tilde^2_{s|t} = (sigma_t^2 - alpha_t^2/alpha_s^2 * sigma_s^2)
-    #                          * sigma_s^2 / sigma_t^2
-    # and scale by sigma_tilde_factor to interpolate between DDIM and DDPM.
-    # ------------------------------------------------------------------
     def _sigma_tilde_sq(self, s_idx: torch.Tensor, t_idx: torch.Tensor) -> torch.Tensor:
         sigma_s_sq = self.sigma_sq[s_idx]
         sigma_t_sq = self.sigma_sq[t_idx]
@@ -241,9 +208,6 @@ class NeuralDiffusionModel(nn.Module):
         base = (sigma_t_sq - alpha_t_sq / alpha_s_sq * sigma_s_sq) * sigma_s_sq / sigma_t_sq
         return self.sigma_tilde_factor * base
 
-    # ------------------------------------------------------------------
-    # Forward process sample:  z_t | x  ~  N(alpha_t * F(x,t), sigma_t^2 I)
-    # ------------------------------------------------------------------
     def _sample_zt(
         self,
         x: torch.Tensor,
@@ -258,9 +222,6 @@ class NeuralDiffusionModel(nn.Module):
         z_t = alpha_t * Fx + sigma_t * epsilon
         return z_t, epsilon, Fx
 
-    # ------------------------------------------------------------------
-    # L_diff — denoising loss (Eq. 9 in paper, noise-prediction form)
-    # ------------------------------------------------------------------
     def _l_diff(
         self,
         x: torch.Tensor,
@@ -272,16 +233,7 @@ class NeuralDiffusionModel(nn.Module):
         """
         KL divergence between forward posterior q_phi(z_{t-1}|z_t, x) and
         reverse p_theta(z_{t-1}|z_t), collapsed to an MSE on the transformed
-        data (Eq. 9).
-
-        We use the noise-prediction reparameterisation (Appendix C, Eq. 34):
-            x_hat = (z_t - sigma_t * eps_hat) / alpha_t
-        which means F_phi(x_hat, s) is used as the predicted transform.
-
-        In practice we minimise the squared difference between predicted and
-        true F_phi values, weighted by 1/(2*sigma_tilde^2).  For simplicity
-        and training stability we drop the scalar prefactor (same convention
-        as DDPM dropping 1/beta_t from the MSE).
+        data
         """
 
         # Predict noise -> reconstruct x_hat -> get F_phi(x_hat, t)
@@ -304,20 +256,14 @@ class NeuralDiffusionModel(nn.Module):
         coeff = (self.sigma_sq[s_idx].unsqueeze(1) - sigma_tilde_sq).clamp(min=0).sqrt()
         coeff = coeff / self.sigma[t_idx].unsqueeze(1).clamp(min=1e-6)  # (batch, 1)
 
-        # MSE on the mean difference (Eq. 9, squared ‖·‖^2 term)
+        # MSE on the mean difference
         diff = alpha_s * (Fx_s - Fx_hat_s) + coeff * alpha_t * (Fx_hat_t - Fx_t)
         l_diff = 0.5 * (diff**2).sum(dim=-1)  # (batch,)
         return l_diff
 
-    # ------------------------------------------------------------------
-    # L_prior  — KL[ q_phi(z_T|x) || N(0,I) ]   (Eq. 20 in paper)
-    # ------------------------------------------------------------------
     def _l_prior(self, x: torch.Tensor) -> torch.Tensor:
         """
         Closed-form KL between N(alpha_T * F(x,T), sigma_T^2 I) and N(0, I).
-        Mirrors the VAE's kl_divergence(q, prior()) computation.
-
-        KL = 0.5 * [ d*(sigma_T^2 - log sigma_T^2 - 1) + alpha_T^2 * ||F(x,T)||^2 ]
         """
         T_idx = self.T - 1  # noqa: N806
         t_norm_T = torch.ones(x.shape[0], 1, device=x.device)  # noqa: N806
@@ -331,17 +277,9 @@ class NeuralDiffusionModel(nn.Module):
         kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (Fx_T**2).sum(dim=-1))
         return kl  # (batch,)
 
-    # ------------------------------------------------------------------
-    # L_rec  — reconstruction  -log p_theta(x | z_0)
-    # ------------------------------------------------------------------
     def _l_rec(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Reconstruction loss at t=0. Following Appendix C (Eq. 35), the
-        transformation is constrained so F_phi(x, 0) = x, meaning
-        z_0 ≈ x. We therefore model p(x|z_0) as a unit Gaussian centred
-        at z_0, giving -log p ∝ ||x - z_0||^2.
-
-        This mirrors the VAE's decoder.log_prob(x) term.
+        Reconstruction loss at t=0.
         """
         t0_idx = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
         t0_norm = torch.zeros(x.shape[0], 1, device=x.device)
@@ -351,9 +289,6 @@ class NeuralDiffusionModel(nn.Module):
         l_rec = 0.5 * ((x - z0) ** 2).sum(dim=-1)  # (batch,)
         return l_rec
 
-    # ------------------------------------------------------------------
-    # Full NDM ELBO  (Eq. 8)
-    # ------------------------------------------------------------------
     def negative_elbo(self, x: torch.Tensor) -> torch.Tensor:
         """
         Estimates the negative ELBO:
@@ -368,7 +303,7 @@ class NeuralDiffusionModel(nn.Module):
         """
         batch_size = x.shape[0]
 
-        # --- Sample random time step (1-indexed, like the paper) ---
+        # --- Sample random time step ---
         t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1  # 0-indexed
         t_norm = t_idx.float() / (self.T - 1)
 
@@ -385,9 +320,6 @@ class NeuralDiffusionModel(nn.Module):
     def loss(self, x: torch.Tensor) -> torch.Tensor:
         return self.negative_elbo(x).mean()
 
-    # ------------------------------------------------------------------
-    # Sampling  (Algorithm 2 in paper)
-    # ------------------------------------------------------------------
     @torch.no_grad()
     def sample(self, shape: tuple) -> torch.Tensor:
         """
