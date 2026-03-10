@@ -6,7 +6,7 @@ python src/sample.py \
 
         
 python src/sample.py \
-    --config_path src/results/ndm/experiments/ndm_mlp_run_09-03-20:36.json \
+    --config_path src/results/ndm/experiments/ndm_mlp_run_10-03-08:15.json \
     --grid_size 5 
 """
 
