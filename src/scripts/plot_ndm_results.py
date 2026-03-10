@@ -148,7 +148,7 @@ def make_plot(config: dict, out_dir: str):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    for label, config_path in [("MLP", MLP_CONFIG_PATH), ("UNet", UNET_CONFIG_PATH)]:
+    for label, config_path in [("MLP", MLP_CONFIG_PATH)]:  # , ("UNet", UNET_CONFIG_PATH)
         if not os.path.exists(config_path):
             print(f"[SKIP] {label} config not found at: {config_path}")
             continue
