@@ -46,9 +46,10 @@ class MLPTransformation(nn.Module):
         Returns:
             (batch, 784) - transformed image, same shape as input
         """
-        t_emb = self.t_embed(t)  # (batch, t_embed_dim)
-        xt = torch.cat([x, t_emb], dim=-1)  # (batch, 784 + t_embed_dim)
-        return self.net(xt)  # (batch, 784)
+        t_emb = self.t_embed(t)
+        xt = torch.cat([x, t_emb], dim=-1)
+        f_bar = self.net(xt)                      # raw network output F_bar_phi
+        return (1 - t) * x + t * f_bar
 
 
 class UNetTransformation(nn.Module):

@@ -24,7 +24,7 @@ from torchvision import datasets, transforms
 # =============================================================================
 # HARDCODE YOUR CONFIG PATHS HERE
 # =============================================================================
-MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp_run_10-03-08:15.json"
+MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp_no_rec_10-03-15:47.json"
 UNET_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_run_10-03-08:18.json"
 # =============================================================================
 

@@ -1,0 +1,21 @@
+#!/bin/bash
+#BSUB -J ndm_mlp_sample                       # Job name
+#BSUB -q hpc                           # Queue to submit the job to
+#BSUB -W 15                              # Wall time limit (6 hours)
+#BSUB -n 4                                 # Request 4 cores
+#BSUB -R "rusage[mem=2GB]"                 # Request 2 GB of memory per core
+#BSUB -R "span[hosts=1]"                   # Request all cores on the same host
+#BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
+#BSUB -o src/outputs/ndm_mlp_sample.out                        # Standard output redirection
+#BSUB -e src/outputs/ndm_mlp_sample.err                        # Standard error redirection
+
+# Activate virtual environment
+source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
+
+# --- Phase 1+2+3: Training ---
+python /zhome/66/4/156534/Master_Thesis/src/sample.py \
+    --config_path src/results/ndm/experiments/ndm_mlp_no_rec_10-03-15:47.json \
+    --grid_size 5 
+
+
+python /zhome/66/4/156534/Master_Thesis/src/scripts/plot_ndm_results.py
