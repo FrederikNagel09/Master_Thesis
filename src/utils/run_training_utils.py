@@ -85,7 +85,7 @@ def run_training_ddpm(args):
     network = Unet()
 
     # Define model
-    model = DDPM(network, T=args.T).to(args.device)
+    model = DDPM(network, t=args.T).to(args.device)
     print(f"# Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Define optimizer

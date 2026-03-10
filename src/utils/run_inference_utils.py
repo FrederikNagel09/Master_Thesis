@@ -158,7 +158,7 @@ def run_inference_ddpm(args, config):
     network = Unet()
 
     # Define model
-    model = DDPM(network, T=config["T"]).to(device)
+    model = DDPM(network, t=config["T"]).to(device)
 
     model.load_state_dict(torch.load(config["weights_path"], map_location=device))
     model.eval()
