@@ -46,9 +46,10 @@ class MLPTransformation(nn.Module):
         Returns:
             (batch, 784) - transformed image, same shape as input
         """
-        t_emb = self.t_embed(t)  # (batch, t_embed_dim)
-        xt = torch.cat([x, t_emb], dim=-1)  # (batch, 784 + t_embed_dim)
-        return self.net(xt)  # (batch, 784)
+        t_emb = self.t_embed(t)
+        xt = torch.cat([x, t_emb], dim=-1)
+        f_bar = self.net(xt)  # raw network output F_bar_phi
+        return f_bar
 
 
 class UNetTransformation(nn.Module):
@@ -312,10 +313,10 @@ class NeuralDiffusionModel(nn.Module):
 
         # --- Three terms of the objective ---
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
-        l_prior = self._l_prior(x)  # (batch,)
+        # l_prior = self._l_prior(x)  # (batch,)
         l_rec = self._l_rec(x)  # (batch,)
 
-        return l_diff + l_prior + l_rec  # (batch,)
+        return l_diff + l_rec  # l_prior + l_rec  # (batch,)
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:
         return self.negative_elbo(x).mean()

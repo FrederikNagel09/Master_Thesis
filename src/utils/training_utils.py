@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -279,7 +280,7 @@ def train_ndm(
             if global_step % log_every_n_steps == 0:
                 avg_loss = running_loss / running_count
                 fractional_epoch = global_step / len(data_loader)
-                history["train_elbo"].append(avg_loss)
+                history["train_elbo"].append(float(np.log(max(avg_loss, 1e-8))))
                 history["steps"].append(fractional_epoch)
                 running_loss = 0.0
                 running_count = 0
