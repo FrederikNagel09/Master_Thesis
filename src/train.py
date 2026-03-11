@@ -35,13 +35,13 @@ python src/train.py \
 ############################## NDM Training ####################################
 python src/train.py \
     --model ndm \
-    --name ndm_mlp_FINAL \
-    --epochs 100 \
+    --name ndm_mlp_ \
+    --epochs 20 \
     --batch_size 64 \
     --lr 2e-4 \
     --T 1000 \
     --device mps \
-    --subset_frac 1.0 \
+    --subset_frac 0.25 \
     --f_phi_type mlp \
     --f_phi_hidden 512 512 512 \
     --f_phi_t_embed 32 \
@@ -50,13 +50,13 @@ python src/train.py \
 
 python src/train.py \
     --model ndm \
-    --name ndm_unet_run \
-    --epochs 2 \
-    --batch_size 128 \
+    --name ndm_unet_final \
+    --epochs 100 \
+    --batch_size 64 \
     --lr 2e-4 \
     --T 1000 \
     --device mps \
-    --subset_frac 0.01 \
+    --subset_frac 1.0 \
     --f_phi_type unet \
     --sigma_tilde 1.0 \
     --log_every_n_steps 20

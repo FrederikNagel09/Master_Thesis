@@ -24,7 +24,7 @@ from torchvision import datasets, transforms
 # =============================================================================
 # HARDCODE YOUR CONFIG PATHS HERE
 # =============================================================================
-MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp_no_prior_10-03-18:40.json"
+MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp__11-03-14:56.json"
 UNET_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_run_10-03-08:18.json"
 # =============================================================================
 
@@ -106,11 +106,9 @@ def make_plot(config: dict, out_dir: str):
     print("Running data transformation F_phi across time...")
     # Each of the 8 images is transformed at a different t, evenly spaced 0→1,
     # so the row reads as a timeline: identity on the left, full transform on the right.
-    t_values = torch.linspace(0, 1, N_IMAGES, device=device).unsqueeze(1)  # (8, 1)
+    t_T = torch.ones(N_IMAGES, 1, device=device)  # noqa: N806
     with torch.no_grad():
-        transformed = torch.stack(
-            [model.F_phi(real[i].unsqueeze(0), t_values[i].unsqueeze(0)).squeeze(0) for i in range(N_IMAGES)]
-        )  # (8, 784)
+        transformed = model.F_phi(real, t_T)  # (8, 784)
 
     # ── Row 3: full NDM samples ────────────────────────────────────────────────
     print("Sampling from full NDM...")
@@ -128,7 +126,7 @@ def make_plot(config: dict, out_dir: str):
 
     rows = [
         (strip_real, f"Real MNIST images"),  # noqa: F541
-        (strip_transformed, f"F_phi transformation  t=0 → t=1  [{f_phi_type}]"),
+        (strip_transformed, f"F_phi transformation  t=T  [{f_phi_type}]"),
         (strip_samples, f"Full NDM samples  [{f_phi_type}]"),
     ]
 

@@ -1,6 +1,5 @@
 import os
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -244,7 +243,6 @@ def train_ndm(
     Identical structure to train_ddpm — model.loss(x) already returns the
     full NDM ELBO (L_diff + L_prior + L_rec).
     """
-    from src.utils.training_utils import plot_vae_training  # reuse your existing plotter
 
     model.train()
 
@@ -255,7 +253,7 @@ def train_ndm(
     running_loss = 0.0
     running_count = 0
 
-    for epoch in range(epochs):
+    for epoch in range(epochs):  # noqa: B007
         data_iter = iter(data_loader)
         for x in data_iter:
             if isinstance(x, list | tuple):
@@ -263,28 +261,32 @@ def train_ndm(
             x = x.to(device)
 
             optimizer.zero_grad()
-            loss = model.loss(x)
+            loss, diff, prior, rec = model.loss(x)
             loss.backward()
+
             optimizer.step()
 
             running_loss += loss.item()
             running_count += 1
             global_step += 1
 
+            # Update progress bar
             progress_bar.set_postfix(
-                loss=f"⠀{loss.item():12.4f}",
-                epoch=f"{epoch + 1}/{epochs}",
+                loss=f"{loss.item():.4f}",
+                kl=f"{prior.item():.4f}",
+                diff=f"{diff.item():.4f}",
+                rec=f"{rec.item():.4f}",
             )
             progress_bar.update()
 
             if global_step % log_every_n_steps == 0:
                 avg_loss = running_loss / running_count
                 fractional_epoch = global_step / len(data_loader)
-                history["train_elbo"].append(float(np.log(max(avg_loss, 1e-8))))
+                history["train_elbo"].append(avg_loss)
                 history["steps"].append(fractional_epoch)
                 running_loss = 0.0
                 running_count = 0
-
+        # print(f"Epoch {epoch + 1} complete. Last batch loss: {loss.item():.4f}")
     plot_vae_training(history, name, graph_dir)
     return model
 

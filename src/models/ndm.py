@@ -313,13 +313,14 @@ class NeuralDiffusionModel(nn.Module):
 
         # --- Three terms of the objective ---
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
-        # l_prior = self._l_prior(x)  # (batch,)
+        l_prior = self._l_prior(x)  # (batch,)
         l_rec = self._l_rec(x)  # (batch,)
 
-        return l_diff + l_rec  # l_prior + l_rec  # (batch,)
+        elbo = l_diff + l_rec + l_prior
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:
-        return self.negative_elbo(x).mean()
+        return self.negative_elbo(x)
 
     @torch.no_grad()
     def sample(self, shape: tuple) -> torch.Tensor:
