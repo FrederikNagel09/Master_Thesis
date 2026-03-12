@@ -24,7 +24,7 @@ from torchvision import datasets, transforms
 # =============================================================================
 # HARDCODE YOUR CONFIG PATHS HERE
 # =============================================================================
-MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp__11-03-14:56.json"
+MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp__11-03-15:41.json"
 UNET_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_run_10-03-08:18.json"
 # =============================================================================
 
@@ -105,8 +105,20 @@ def make_plot(config: dict, out_dir: str):
     # ── Row 2: F_phi transformation across t=0 → t=1 ─────────────────────────
     print("Running data transformation F_phi across time...")
     # Each of the 8 images is transformed at a different t, evenly spaced 0→1,
+
+    print("=======================================")
+    # --- Sample random time step ---
+    t_idx = torch.randint(1, 1000 + 1, (64,), device=device) - 1  # 0-indexed
+    t_norm = t_idx.float() / (1000 - 1)
+    t_norm.unsqueeze(1)
+    print(f"Random t indices: {t_idx.cpu().numpy()}")
+    print(f"Normalized t values: {t_norm.cpu().numpy()}")
+    print(t_norm.unsqueeze(1).shape)
+    print(t_norm.unsqueeze(1))
+    print("=======================================")
     # so the row reads as a timeline: identity on the left, full transform on the right.
     t_T = torch.ones(N_IMAGES, 1, device=device)  # noqa: N806
+    print(f"t_T shape: {t_T.shape}, values: {t_T}")  # Debug print
     with torch.no_grad():
         transformed = model.F_phi(real, t_T)  # (8, 784)
 

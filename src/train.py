@@ -35,13 +35,13 @@ python src/train.py \
 ############################## NDM Training ####################################
 python src/train.py \
     --model ndm \
-    --name ndm_mlp_ \
-    --epochs 20 \
+    --name ndm_mlp_chat_fix \
+    --epochs 30 \
     --batch_size 64 \
     --lr 2e-4 \
     --T 1000 \
     --device mps \
-    --subset_frac 0.25 \
+    --subset_frac 0.5 \
     --f_phi_type mlp \
     --f_phi_hidden 512 512 512 \
     --f_phi_t_embed 32 \
@@ -77,13 +77,13 @@ python src/train.py \
 ######################### VAE Hypernet INR Training #############################
 python src/train.py \
     --model vae_inr_hypernet \
-    --name inr_vae_mog \
+    --name inr_vae_quick \
     --epochs 5 \
     --prior gaussian \
     --batch_size 64 \
     --lr 1e-3 \
     --latent_dim 128\
-    --inr_hidden_dim 64 \
+    --inr_hidden_dim 20 \
     --inr_layers 3 \
     --inr_out_dim 1 \
     --vae_enc_dim 512 \

@@ -49,7 +49,7 @@ class MLPTransformation(nn.Module):
         t_emb = self.t_embed(t)
         xt = torch.cat([x, t_emb], dim=-1)
         f_bar = self.net(xt)  # raw network output F_bar_phi
-        return f_bar
+        return (1 - t) * x + t * f_bar
 
 
 class UNetTransformation(nn.Module):
@@ -216,7 +216,7 @@ class NeuralDiffusionModel(nn.Module):
         t_norm: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns z_t and the noise epsilon used."""
-        Fx = self.F_phi(x, t_norm)  # (batch, 784)  # noqa: N806
+        Fx = self.F_phi(x, t_norm)  # (batch, 784)  # noqa: N806 #####################################################
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
         epsilon = torch.randn_like(x)
@@ -247,7 +247,7 @@ class NeuralDiffusionModel(nn.Module):
         s_idx = (t_idx - 1).clamp(min=0)
         s_norm = s_idx.float() / (self.T - 1)
 
-        Fx_hat_t = self.F_phi(x_hat, t_norm.unsqueeze(1))  # F_phi(x_hat, t)  # noqa: N806
+        Fx_hat_t = self.F_phi(x_hat, t_norm.unsqueeze(1))  # F_phi(x_hat, t)  # noqa: N806 ##########################################
         Fx_hat_s = self.F_phi(x_hat, s_norm.unsqueeze(1))  # F_phi(x_hat, s)  # noqa: N806
         Fx_s = self.F_phi(x, s_norm.unsqueeze(1))  # F_phi(x,    s)  # noqa: N806
 
@@ -268,7 +268,7 @@ class NeuralDiffusionModel(nn.Module):
         """
         T_idx = self.T - 1  # noqa: N806
         t_norm_T = torch.ones(x.shape[0], 1, device=x.device)  # noqa: N806
-        Fx_T = self.F_phi(x, t_norm_T)  # (batch, 784)  # noqa: N806
+        Fx_T = self.F_phi(x, t_norm_T)  # (batch, 784)  # noqa: N806 ####################################################################
 
         sigma_T_sq = self.sigma_sq[T_idx]  # scalar  # noqa: N806
         alpha_T_sq = self.alpha_cumprod[T_idx]  # scalar  # noqa: N806
