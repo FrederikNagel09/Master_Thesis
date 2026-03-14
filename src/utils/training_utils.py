@@ -237,45 +237,62 @@ def train_ndm(
     name: str = "ndm",
     graph_dir: str = "src/results/ndm/training_graphs",
     log_every_n_steps: int = 20,
+    warmup_steps: int = 5000,  # paper uses 45k for CIFAR, 20k for ImageNet
+    peak_lr: float = 4e-4,  # must match the lr used to construct optimizer
 ):
-    """
-    Training loop for NeuralDiffusionModel.
-    Identical structure to train_ddpm — model.loss(x) already returns the
-    full NDM ELBO (L_diff + L_prior + L_rec).
-    """
-
     model.train()
 
     total_steps = len(data_loader) * epochs
+
+    def lr_lambda(current_step: int) -> float:
+        """
+        Linear warmup then linear decay back to ~0, matching the paper's
+        polynomial decay schedule (Appendix C).
+        Returns a multiplier on the base lr set in the optimizer.
+        """
+        if current_step < warmup_steps:
+            # Ramp from 1e-8/peak_lr up to 1.0 (i.e. peak_lr)
+            return max(1e-8 / peak_lr, current_step / max(warmup_steps, 1))
+        else:
+            # Linear decay from 1.0 down to 1e-8/peak_lr
+            progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
+            floor = 1e-8 / peak_lr
+            return max(floor, 1.0 - progress * (1.0 - floor))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
     progress_bar = tqdm(range(total_steps), desc="Training NDM")
-    history: dict = {"train_elbo": [], "steps": []}
+    history: dict = {"train_elbo": [], "steps": [], "lr": []}
     global_step = 0
     running_loss = 0.0
     running_count = 0
 
-    for epoch in range(epochs):  # noqa: B007
-        data_iter = iter(data_loader)
-        for x in data_iter:
+    for _ in range(epochs):
+        for x in data_loader:
             if isinstance(x, list | tuple):
                 x = x[0]
             x = x.to(device)
 
             optimizer.zero_grad()
-            loss, diff, prior, rec = model.loss(x)
+            loss, diff, prior = model.loss(x)
             loss.backward()
 
+            # Gradient clipping helps stabilise joint F_phi + network training
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()
+            scheduler.step()  # step every iteration, not every epoch
 
             running_loss += loss.item()
             running_count += 1
             global_step += 1
 
-            # Update progress bar
+            current_lr = scheduler.get_last_lr()[0]
             progress_bar.set_postfix(
                 loss=f"{loss.item():.4f}",
                 kl=f"{prior.item():.4f}",
                 diff=f"{diff.item():.4f}",
-                rec=f"{rec.item():.4f}",
+                lr=f"{current_lr:.2e}",
             )
             progress_bar.update()
 
@@ -284,9 +301,10 @@ def train_ndm(
                 fractional_epoch = global_step / len(data_loader)
                 history["train_elbo"].append(avg_loss)
                 history["steps"].append(fractional_epoch)
+                history["lr"].append(current_lr)
                 running_loss = 0.0
                 running_count = 0
-        # print(f"Epoch {epoch + 1} complete. Last batch loss: {loss.item():.4f}")
+
     plot_vae_training(history, name, graph_dir)
     return model
 

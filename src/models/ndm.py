@@ -205,7 +205,6 @@ class NeuralDiffusionModel(nn.Module):
         # Accumulated product of alpha: alpha_bar_t = Π_{s=1}^t alpha_s
         alpha_cumprod = alpha.cumprod(dim=0)  # goes to 0 as t increases, since alpha < 1
 
-        # NO IDEA IF THIS IS CORRECT ??
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
         self.register_buffer("alpha_cumprod", alpha_cumprod)  # alpha_bar
@@ -272,7 +271,8 @@ class NeuralDiffusionModel(nn.Module):
 
         # MSE on the mean difference
         diff = alpha_s * (Fx_s - Fx_hat_s) + coeff * alpha_t * (Fx_hat_t - Fx_t)
-        l_diff = 0.5 * (diff**2).sum(dim=-1)  # (batch,)
+        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)  # (batch, 1)
+        l_diff = (diff**2).sum(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
         return l_diff
 
     def _l_prior(self, x: torch.Tensor) -> torch.Tensor:
@@ -327,10 +327,10 @@ class NeuralDiffusionModel(nn.Module):
         # --- Three terms of the objective ---
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
         l_prior = self._l_prior(x)  # (batch,)
-        l_rec = self._l_rec(x)  # (batch,)
+        # l_rec = self._l_rec(x)  # (batch,)
 
-        elbo = l_diff + l_rec + l_prior
-        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+        elbo = l_diff + l_prior
+        return elbo.mean(), l_diff.mean(), l_prior.mean()
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:
         return self.negative_elbo(x)
@@ -381,7 +381,7 @@ class NeuralDiffusionModel(nn.Module):
             sigma_s_sq = self.sigma_sq[s].view(1, 1)  # (1, 1)
             sigma_t_val = self.sigma[t].view(1, 1)  # (1, 1)
             alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)  # (1, 1)
-            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).mean().view(1, 1)  # scalar → (1,1)
+            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)  # scalar → (1,1)
 
             # Mean of q_phi(z_s | z_t, x_hat) — Eq. 7
             coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)
