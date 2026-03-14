@@ -24,12 +24,12 @@ from torchvision import datasets, transforms
 # =============================================================================
 # HARDCODE YOUR CONFIG PATHS HERE
 # =============================================================================
-MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp__11-03-15:41.json"
+MLP_CONFIG_PATH = "src/results/ndm/experiments/ndm_mlp_1.2_14-03-17:35.json"
 UNET_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_run_10-03-08:18.json"
 # =============================================================================
 
 N_IMAGES = 8
-OUT_DIR = "src/results/general"
+OUT_DIR = "src/results/ndm/samples"
 
 
 def load_config(path: str) -> dict:
@@ -73,8 +73,18 @@ def get_mnist_samples(n: int) -> torch.Tensor:
             transforms.Lambda(lambda x: x.flatten()),
         ]
     )
+
     dataset = datasets.MNIST("data/", train=False, download=True, transform=transform)
     indices = torch.randperm(len(dataset))[:n]
+
+    single_class = 1  # set to an int 0-9 to filter to that digit only
+    if single_class is not None:
+        targets = torch.tensor(dataset.targets)
+        class_indices = torch.where(targets == single_class)[0]
+        indices = class_indices[torch.randperm(len(class_indices))[:n]]
+    else:
+        indices = torch.randperm(len(dataset))[:n]
+
     images = torch.stack([dataset[i][0] for i in indices])  # (n, 784)
     return images
 
@@ -108,19 +118,19 @@ def make_plot(config: dict, out_dir: str):
 
     print("=======================================")
     # --- Sample random time step ---
-    t_idx = torch.randint(1, 1000 + 1, (64,), device=device) - 1  # 0-indexed
-    t_norm = t_idx.float() / (1000 - 1)
+    t_idx = torch.randint(1, config["T"] + 1, (64,), device=device) - 1  # 0-indexed
+    t_norm = t_idx.float() / (config["T"] - 1)
     t_norm.unsqueeze(1)
     print(f"Random t indices: {t_idx.cpu().numpy()}")
     print(f"Normalized t values: {t_norm.cpu().numpy()}")
     print(t_norm.unsqueeze(1).shape)
     print(t_norm.unsqueeze(1))
     print("=======================================")
-    # so the row reads as a timeline: identity on the left, full transform on the right.
-    t_T = torch.ones(N_IMAGES, 1, device=device)  # noqa: N806
-    print(f"t_T shape: {t_T.shape}, values: {t_T}")  # Debug print
+    # Show transformation at t = 0, T/4, T/2, 3T/4, T for the first image only
+    t_values = torch.linspace(0, 1, N_IMAGES, device=device).unsqueeze(1)  # (8, 1)
+    first_img = real[0:1].expand(N_IMAGES, -1)  # repeat same image 8 times
     with torch.no_grad():
-        transformed = model.F_phi(real, t_T)  # (8, 784)
+        transformed = model.F_phi(first_img, t_values)  # (8, 784)
 
     # ── Row 3: full NDM samples ────────────────────────────────────────────────
     print("Sampling from full NDM...")

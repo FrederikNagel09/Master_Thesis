@@ -161,10 +161,10 @@ def run_training_inr_mlp_hypernet(args):
 def run_training_ndm(args):
     from torchvision import datasets, transforms
 
-    from src.models.ddpm import Unet  # noise-prediction network
     from src.models.ndm import (
         MLPTransformation,  # <-- your ndm.py
         NeuralDiffusionModel,
+        UnetNDM,
         UNetTransformation,
     )
     from src.utils.training_utils import train_ndm
@@ -183,6 +183,17 @@ def run_training_ndm(args):
     n = int(len(train_data) * args.subset_frac)
     train_data = Subset(train_data, range(n))
     print(f"Training on {len(train_data)} samples ({args.subset_frac * 100:.1f}% of full dataset)")
+
+    single_class = 1
+    if single_class is not None:
+        # train_data.indices are the indices into the full MNIST dataset
+        full_targets = torch.tensor(train_data.dataset.targets)
+        subset_indices = torch.tensor(train_data.indices)
+        subset_targets = full_targets[subset_indices]
+        mask = subset_targets == single_class
+        filtered_indices = subset_indices[mask].tolist()
+        train_data = Subset(train_data.dataset, filtered_indices)
+        print(f"Single-class mode: digit {single_class}, {len(train_data)} samples")
 
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
 
@@ -203,7 +214,7 @@ def run_training_ndm(args):
         raise ValueError(f"Unknown f_phi_type: {args.f_phi_type!r}. Choose 'mlp' or 'unet'.")
 
     # ---- Noise-prediction network (same Unet as DDPM) ----
-    network = Unet()
+    network = UnetNDM()
 
     # ---- Model ----
     model = NeuralDiffusionModel(
@@ -239,7 +250,7 @@ def run_training_ndm(args):
         device=args.device,
         name=run_name,
         log_every_n_steps=args.log_every_n_steps,
-        warmup_steps=5000,  # add to your args
+        warmup_steps=2500,  # add to your args
         peak_lr=args.lr,
     )
     print("NDM training completed.")

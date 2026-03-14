@@ -266,7 +266,19 @@ def train_ndm(
     global_step = 0
     running_loss = 0.0
     running_count = 0
-
+    """
+    alpha_T = model.sqrt_alpha_cumprod[-1].item()
+    sigma_T = model.sigma[-1].item()
+    alpha_1 = model.sqrt_alpha_cumprod[0].item()
+    print(f"\n── Schedule diagnostics ──────────────────────────────")
+    print(f"  T={model.T}")
+    print(f"  a_T (sqrt_ᾱ_T)  = {alpha_T:.6f}  (should be ~0 for signal to be gone)")
+    print(f"  a_T              = {sigma_T:.6f}  (should be ~1)")
+    print(f"  a_1 (sqrt_ᾱ_1)  = {alpha_1:.6f}  (should be ~1)")
+    print(f"  a_T² contribution to L_prior will be ~{alpha_T**2:.2e}")
+    print(f"  Total steps: {total_steps},  Warmup: {warmup_steps} ({100*warmup_steps/total_steps:.1f}%)")
+    print(f"─────────────────────────────────────────────────────\n")
+    """
     for _ in range(epochs):
         for x in data_loader:
             if isinstance(x, list | tuple):
