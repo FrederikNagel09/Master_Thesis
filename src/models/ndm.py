@@ -153,8 +153,9 @@ class UNetTransformation(nn.Module):
             else:
                 signal = torch.cat([signal, signals[-i]], dim=1)
                 signal = tconv(signal)
+        f_bar = signal.view(batch_size, -1)  # (batch, 784)
 
-        return signal.view(batch_size, -1)  # (batch, 784)
+        return (1 - t) * x + t * f_bar
 
 
 # =============================================================================
@@ -180,19 +181,31 @@ class NeuralDiffusionModel(nn.Module):
         sigma_tilde_factor: float = 1.0,
     ):
         super().__init__()
-        self.network = network  # epsilon_theta: noise predictor
-        self.F_phi = F_phi  # learnable data transformation
 
+        # epsilon_theta: noise predictor network
+        self.network = network
+        # learnable data transformation network
+        self.F_phi = F_phi
+
+        # beta 1 start value
         self.beta_1 = beta_1
+        # beta T end value
         self.beta_T = beta_T
+
+        # Amount of time steps
         self.T = T
+
+        # Controlls something?
         self.sigma_tilde_factor = sigma_tilde_factor  # in [0,1]; 0 = deterministic DDIM
 
         # DDPM variance-preserving noise schedule
-        beta = torch.linspace(beta_1, beta_T, T)
-        alpha = 1.0 - beta
-        alpha_cumprod = alpha.cumprod(dim=0)
+        beta = torch.linspace(beta_1, beta_T, T)  # goes from 0.0001 to 0.02 in T steps
+        alpha = 1.0 - beta  # goes from 0.9999 to 0.98 in T steps
 
+        # Accumulated product of alpha: alpha_bar_t = Π_{s=1}^t alpha_s
+        alpha_cumprod = alpha.cumprod(dim=0)  # goes to 0 as t increases, since alpha < 1
+
+        # NO IDEA IF THIS IS CORRECT ??
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
         self.register_buffer("alpha_cumprod", alpha_cumprod)  # alpha_bar
@@ -216,7 +229,7 @@ class NeuralDiffusionModel(nn.Module):
         t_norm: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns z_t and the noise epsilon used."""
-        Fx = self.F_phi(x, t_norm)  # (batch, 784)  # noqa: N806 #####################################################
+        Fx = self.F_phi(x, t_norm)  # noqa: N806
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
         epsilon = torch.randn_like(x)
