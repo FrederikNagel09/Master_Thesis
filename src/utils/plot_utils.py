@@ -1,7 +1,9 @@
 import os
 
+import numpy as np
 import torch
 from matplotlib import pyplot as plt
+from torch import nn
 
 
 def plot_training_and_reconstruction(
@@ -51,33 +53,92 @@ def plot_training_and_reconstruction(
 
 
 def plot_ndm_training(history: dict, name: str, graph_dir: str):
-    import matplotlib.pyplot as plt
+    os.makedirs(graph_dir, exist_ok=True)
 
-    epochs = range(1, len(history["loss"]) + 1)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle(f"NDM Training — {name}", fontsize=14, fontweight="bold", y=1.02)
 
-    # Left: total loss
-    axes[0].plot(epochs, history["loss"], label="Total loss")
-    axes[0].set_title("Total ELBO Loss")
-    axes[0].set_xlabel("Epoch")
-    axes[0].set_ylabel("Loss")
-    axes[0].legend()
+    # Shared style
+    spine_color = "#cccccc"
+    grid_kw = dict(color="#eeeeee", linewidth=0.8, zorder=0)  # noqa: C408
 
-    # Right: the three components
-    axes[1].plot(epochs, history["ldiff"], label="L_diff")
-    axes[1].plot(epochs, history["lprior"], label="L_prior")
-    axes[1].plot(epochs, history["lrec"], label="L_rec")
-    axes[1].set_title("Loss Components")
-    axes[1].set_xlabel("Epoch")
-    axes[1].set_ylabel("Loss")
-    axes[1].legend()
+    def style_ax(ax, title, ylabel, color):
+        ax.set_title(title, fontsize=12, fontweight="medium", pad=8)
+        ax.set_xlabel("Epoch", fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(spine_color)
+        ax.tick_params(colors="#555555")
+        ax.yaxis.grid(True, **grid_kw)
+        ax.set_axisbelow(True)
+        ax.plot(
+            history["steps"],
+            history[ylabel.lower().replace(" ", "_")],
+            color=color,
+            linewidth=1.5,
+            alpha=0.9,
+        )
+        # Smoothed overlay
+        if len(history["steps"]) >= 10:
+            kernel = max(1, len(history["steps"]) // 20)
+            smoothed = np.convolve(
+                history[ylabel.lower().replace(" ", "_")],
+                np.ones(kernel) / kernel,
+                mode="valid",
+            )
+            steps_trimmed = history["steps"][kernel - 1 :]
+            ax.plot(steps_trimmed, smoothed, color=color, linewidth=2.5, alpha=0.5)
 
-    fig.suptitle(f"NDM Training — {name}", fontsize=13)
-    plt.tight_layout()
-    out_path = os.path.join(graph_dir, f"{name}.png")
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    # Panel 1 — Total loss (black)
+    axes[0].set_title("Total Loss", fontsize=12, fontweight="medium", pad=8)
+    axes[0].set_xlabel("Epoch", fontsize=10)
+    axes[0].set_ylabel("Loss", fontsize=10)
+    for spine in axes[0].spines.values():
+        spine.set_edgecolor(spine_color)
+    axes[0].tick_params(colors="#555555")
+    axes[0].yaxis.grid(True, **grid_kw)
+    axes[0].set_axisbelow(True)
+    axes[0].plot(history["steps"], history["train_elbo"], color="black", linewidth=1.2, alpha=0.4)
+    if len(history["steps"]) >= 10:
+        kernel = max(1, len(history["steps"]) // 20)
+        smoothed = np.convolve(history["train_elbo"], np.ones(kernel) / kernel, mode="valid")
+        axes[0].plot(history["steps"][kernel - 1 :], smoothed, color="black", linewidth=2.2)
+
+    # Panel 2 — Diffusion loss (blue)
+    axes[1].set_title("Diffusion Loss", fontsize=12, fontweight="medium", pad=8)
+    axes[1].set_xlabel("Epoch", fontsize=10)
+    axes[1].set_ylabel("Diff Loss", fontsize=10)
+    for spine in axes[1].spines.values():
+        spine.set_edgecolor(spine_color)
+    axes[1].tick_params(colors="#555555")
+    axes[1].yaxis.grid(True, **grid_kw)
+    axes[1].set_axisbelow(True)
+    axes[1].plot(history["steps"], history["diff"], color="#2a6fdb", linewidth=1.2, alpha=0.4)
+    if len(history["steps"]) >= 10:
+        kernel = max(1, len(history["steps"]) // 20)
+        smoothed = np.convolve(history["diff"], np.ones(kernel) / kernel, mode="valid")
+        axes[1].plot(history["steps"][kernel - 1 :], smoothed, color="#2a6fdb", linewidth=2.2)
+
+    # Panel 3 — KL / prior loss (green)
+    axes[2].set_title("KL Prior Loss", fontsize=12, fontweight="medium", pad=8)
+    axes[2].set_xlabel("Epoch", fontsize=10)
+    axes[2].set_ylabel("KL Loss", fontsize=10)
+    for spine in axes[2].spines.values():
+        spine.set_edgecolor(spine_color)
+    axes[2].tick_params(colors="#555555")
+    axes[2].yaxis.grid(True, **grid_kw)
+    axes[2].set_axisbelow(True)
+    axes[2].plot(history["steps"], history["prior"], color="#2ca05a", linewidth=1.2, alpha=0.4)
+    if len(history["steps"]) >= 10:
+        kernel = max(1, len(history["steps"]) // 20)
+        smoothed = np.convolve(history["prior"], np.ones(kernel) / kernel, mode="valid")
+        axes[2].plot(history["steps"][kernel - 1 :], smoothed, color="#2ca05a", linewidth=2.2)
+
+    fig.tight_layout()
+    save_path = os.path.join(graph_dir, f"{name}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Training plot saved to: {out_path}")
+    print(f"Training graph saved to: {save_path}")
 
 
 def plot_vae_training(history: dict, name: str, graph_dir: str):
@@ -129,3 +190,138 @@ def _save_plot_vae_hypernet(history: dict, name: str, graph_dir: str, epoch: int
     os.makedirs(graph_dir, exist_ok=True)
     fig.savefig(os.path.join(graph_dir, f"{name}.png"), dpi=130, bbox_inches="tight")
     plt.close(fig)
+
+
+class VisualCheckpointer:
+    """
+    Saves growing side-by-side strips of F_net and sampler outputs
+    at evenly spaced checkpoints throughout training.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        device: str,
+        name: str,
+        graph_dir: str,
+        total_steps: int,
+        n_checkpoints: int = 5,
+        image_size: int = 28,
+    ):
+        self.model = model
+        self.device = device
+        self.name = name
+        self.graph_dir = graph_dir
+        self.image_size = image_size
+        self.n_pixels = image_size * image_size
+
+        # Evenly spaced checkpoint steps (never step 0)
+        self.checkpoint_steps = set(int(round(total_steps * i / n_checkpoints)) for i in range(1, n_checkpoints + 1))  # noqa: C401
+
+        # Fix a single image for F_net evaluation throughout training
+        self.fixed_image = self._get_fixed_image()
+
+        # Accumulated panels — each entry is a (H, W) numpy array
+        self.f_net_panels: list[tuple[int, np.ndarray]] = []  # (step, img)
+        self.sample_panels: list[tuple[int, np.ndarray]] = []
+
+        os.makedirs(graph_dir, exist_ok=True)
+
+    def _get_fixed_image(self) -> torch.Tensor:
+        """Grab one MNIST image and keep it fixed for the whole run."""
+        from torchvision import datasets, transforms
+
+        single_class = True  # set to False for all classes
+
+        dataset = datasets.MNIST(
+            root="data",
+            train=True,
+            download=True,
+            transform=transforms.ToTensor(),
+        )
+
+        indices = [i for i, (_, label) in enumerate(dataset) if label == 1] if single_class else list(range(len(dataset)))
+
+        img, _ = dataset[indices[0]]  # (1, 28, 28)
+        img = img.view(1, -1).to(self.device)  # (1, 784)
+        return img
+
+    def maybe_checkpoint(self, global_step: int):
+        if global_step not in self.checkpoint_steps:
+            return
+
+        self.model.eval()
+        with torch.no_grad():
+            t_T = torch.ones(1, 1, device=self.device)  # noqa: N806
+            transformed = self.model.F_phi(self.fixed_image, t_T)
+            f_img = self._to_img(transformed)
+
+            sample = self.model.sample((1, self.n_pixels))
+            s_img = self._to_img(sample)
+
+        self.model.train()
+
+        self.f_net_panels.append((global_step, f_img))
+        self.sample_panels.append((global_step, s_img))
+
+        self._save_f_net_strip()
+        self._save_strip(self.sample_panels, f"{self.name}_samples.png", "NDM samples")
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _to_img(self, tensor: torch.Tensor) -> np.ndarray:
+        """(1, 784) tensor → (28, 28) numpy float array clipped to [0, 1]."""
+        return tensor.squeeze(0).cpu().numpy().reshape(self.image_size, self.image_size).clip(0.0, 1.0)
+
+    def _save_f_net_strip(self):
+        n = len(self.f_net_panels)
+        # +1 column for the fixed original on the left
+        fig, axes = plt.subplots(1, n + 1, figsize=(3 * (n + 1), 3.4))
+
+        spine_color = "#cccccc"
+
+        # ── Column 0: original image (shown once, static) ──────────────────────
+        orig_img = self._to_img(self.fixed_image)
+        axes[0].imshow(orig_img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+        axes[0].set_title("original", fontsize=9, color="#444444")
+        axes[0].axis("off")
+        # Subtle box to visually separate original from checkpoints
+        for spine in axes[0].spines.values():
+            spine.set_visible(True)
+            spine.set_edgecolor(spine_color)
+
+        # ── Columns 1..n: F_net outputs at each checkpoint ─────────────────────
+        for ax, (step, img) in zip(axes[1:], self.f_net_panels, strict=False):
+            ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.set_title(f"step {step:,}", fontsize=9, color="#444444")
+            ax.axis("off")
+
+        fig.suptitle("F_net output (t=T)", fontsize=11, fontweight="bold", y=1.02)
+        fig.tight_layout()
+
+        save_path = os.path.join(self.graph_dir, f"{self.name}_F_net.png")
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    def _save_strip(
+        self,
+        panels: list[tuple[int, np.ndarray]],
+        filename: str,
+        suptitle: str,
+    ):
+        n = len(panels)
+        fig, axes = plt.subplots(1, n, figsize=(3 * n, 3.4))
+        if n == 1:
+            axes = [axes]
+
+        for ax, (step, img) in zip(axes, panels, strict=False):
+            ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.set_title(f"step {step:,}", fontsize=9, color="#444444")
+            ax.axis("off")
+
+        fig.suptitle(suptitle, fontsize=11, fontweight="bold", y=1.02)
+        fig.tight_layout()
+
+        save_path = os.path.join(self.graph_dir, filename)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)

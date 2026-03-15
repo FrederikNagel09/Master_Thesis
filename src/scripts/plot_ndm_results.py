@@ -26,7 +26,7 @@ from torchvision import datasets, transforms
 # =============================================================================
 MLP_CONFIG_PATH = "Master_Thesis/src/results/ndm/experiments/ndm_mlp_Final_10-03-19:13.json"
 
-UNET_CONFIG_PATH = "/zhome/66/4/156534/Master_Thesis/src/results/ndm/experiments/ndm_unet_15-03-07:37.json"
+UNET_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_no_prior_15-03-15:06.json"
 # =============================================================================
 
 N_IMAGES = 8
@@ -39,8 +39,7 @@ def load_config(path: str) -> dict:
 
 
 def build_model(config: dict):
-    from src.models.ddpm import Unet
-    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UNetTransformation, UnetNDM
+    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation
 
     if config.get("f_phi_type", "mlp") == "mlp":
         F_phi = MLPTransformation(  # noqa: N806
@@ -65,7 +64,7 @@ def build_model(config: dict):
     return model, device
 
 
-def get_mnist_samples(n: int) -> torch.Tensor:
+def get_mnist_samples(n: int, single_class: bool = True) -> torch.Tensor:
     """Return n randomly selected MNIST images, flattened and normalised to [-1, 1]."""
     transform = transforms.Compose(
         [
@@ -74,10 +73,12 @@ def get_mnist_samples(n: int) -> torch.Tensor:
             transforms.Lambda(lambda x: x.flatten()),
         ]
     )
-
     dataset = datasets.MNIST("data/", train=False, download=True, transform=transform)
-    indices = torch.randperm(len(dataset))[:n]
-    images = torch.stack([dataset[i][0] for i in indices])  # (n, 784)
+
+    indices = [i for i, (_, label) in enumerate(dataset) if label == 1] if single_class else list(range(len(dataset)))
+
+    selected = torch.tensor(indices)[torch.randperm(len(indices))[:n]]
+    images = torch.stack([dataset[i][0] for i in selected])  # (n, 784)
     return images
 
 
@@ -109,20 +110,12 @@ def make_plot(config: dict, out_dir: str):
     # Each of the 8 images is transformed at a different t, evenly spaced 0→1,
 
     print("=======================================")
-    # --- Sample random time step ---
-    t_idx = torch.randint(1, config["T"] + 1, (64,), device=device) - 1  # 0-indexed
-    t_norm = t_idx.float() / (config["T"] - 1)
-    t_norm.unsqueeze(1)
-    print(f"Random t indices: {t_idx.cpu().numpy()}")
-    print(f"Normalized t values: {t_norm.cpu().numpy()}")
-    print(t_norm.unsqueeze(1).shape)
-    print(t_norm.unsqueeze(1))
-    print("=======================================")
+
     # Show transformation at t = 0, T/4, T/2, 3T/4, T for the first image only
-    t_values = torch.linspace(0, 1, N_IMAGES, device=device).unsqueeze(1)  # (8, 1)
-    first_img = real[0:1].expand(N_IMAGES, -1)  # repeat same image 8 times
+    # Show F_phi transformation at t=T for all real images
+    t_T = torch.ones(N_IMAGES, 1, device=device)  # t=1 for all  # noqa: N806
     with torch.no_grad():
-        transformed = model.F_phi(first_img, t_values)  # (8, 784)
+        transformed = model.F_phi(real, t_T)  # (8, 784)
 
     # ── Row 3: full NDM samples ────────────────────────────────────────────────
     print("Sampling from full NDM...")
@@ -160,7 +153,7 @@ def make_plot(config: dict, out_dir: str):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    for label, config_path in [(("UNet", UNET_CONFIG_PATH))]: # "MLP", MLP_CONFIG_PATH,
+    for label, config_path in [(("UNet", UNET_CONFIG_PATH))]:  # "MLP", MLP_CONFIG_PATH,
         if not os.path.exists(config_path):
             print(f"[SKIP] {label} config not found at: {config_path}")
             continue

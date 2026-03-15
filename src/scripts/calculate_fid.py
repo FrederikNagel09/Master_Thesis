@@ -33,12 +33,13 @@ sys.path.append(".")
 
 VAE_CONFIG_PATH = "src/results/vae_inr_hypernet/experiments/inr_vae_gauss_06-03-13:58.json"
 DDPM_CONFIG_PATH = "src/results/ddpm/experiments/ddpm_full_run_09-03-17:00.json"
+NDM_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_15-03-07:37.json"
 
 # Number of samples for FID
-N_SAMPLES = 2024
-BATCH_SIZE = 1024
+N_SAMPLES = 5000
+BATCH_SIZE = 2500
 # Samples shown in the quality grid (n x n)
-GRID_SIZE = 5
+GRID_SIZE = 8
 
 # Output paths
 OUT_DIR = "src/results/general"
@@ -202,6 +203,44 @@ class ModelEvaluator:
 # ══════════════════════════════════════════════════════════════
 # Samplers
 # ══════════════════════════════════════════════════════════════
+def sample_ndm(config, n, device) -> torch.Tensor:
+    """Returns (n, 1, 28, 28) float tensor in [0, 1]."""
+    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation
+
+    if config.get("f_phi_type", "mlp") == "mlp":
+        F_phi = MLPTransformation(  # noqa: N806
+            data_dim=28 * 28,
+            hidden_dims=config.get("f_phi_hidden", [512, 512, 512]),
+            t_embed_dim=config.get("f_phi_t_embed", 32),
+        )
+    else:
+        F_phi = UNetTransformation()  # noqa: N806
+
+    network = UnetNDM()
+
+    model = NeuralDiffusionModel(
+        network=network,
+        F_phi=F_phi,
+        T=config["T"],
+        sigma_tilde_factor=config.get("sigma_tilde", 1.0),
+    ).to(device)
+
+    model.load_state_dict(torch.load(config["weights_path"], map_location=device))
+    model.eval()
+
+    all_images = []
+    batch = BATCH_SIZE
+
+    with torch.no_grad():
+        for i in range(0, n, batch):
+            k = min(batch, n - i)
+
+            s = model.sample((k, 28 * 28))
+            s = s.view(k, 1, 28, 28)
+
+            all_images.append(((s * 0.5 + 0.5).clamp(0, 1)).cpu())
+
+    return torch.cat(all_images)
 
 
 def sample_vae(config, n, device) -> torch.Tensor:
@@ -305,7 +344,7 @@ def make_sample_grid(images_01, n=GRID_SIZE) -> np.ndarray:
     return grid.permute(1, 2, 0).numpy()
 
 
-def build_report(results: dict, vae_samples, ddpm_samples, real_samples):
+def build_report(results: dict, vae_samples, ddpm_samples, real_samples, ndm_samples):
     """
     Three-row figure:
       Row 1 — sample quality grids 5x5 (real / VAE / DDPM)
@@ -324,7 +363,7 @@ def build_report(results: dict, vae_samples, ddpm_samples, real_samples):
 
     gs = gridspec.GridSpec(
         3,
-        3,
+        4,
         figure=fig,
         height_ratios=[2.2, 1.5, 0.55],
         hspace=0.32,
@@ -336,6 +375,7 @@ def build_report(results: dict, vae_samples, ddpm_samples, real_samples):
         ("Real MNIST", real_samples, ACCENT_REAL),
         ("VAE Samples", vae_samples, ACCENT_VAE),
         ("DDPM Samples", ddpm_samples, ACCENT_DDPM),
+        ("NDM Samples", ndm_samples, "#845ef7"),
     ]
     for col, (title, imgs, color) in enumerate(grids):
         ax = fig.add_subplot(gs[0, col])
@@ -350,11 +390,13 @@ def build_report(results: dict, vae_samples, ddpm_samples, real_samples):
     dist_real = results["vae"]["dist_real"]
     dist_vae = results["vae"]["dist_gen"]
     dist_ddpm = results["ddpm"]["dist_gen"]
+    dist_ndm = results["ndm"]["dist_gen"]
 
     dists = [
         ("Real MNIST", dist_real, ACCENT_REAL),
         ("VAE", dist_vae, ACCENT_VAE),
         ("DDPM", dist_ddpm, ACCENT_DDPM),
+        ("NDM", dist_ndm, "#845ef7"),
     ]
     digits = np.arange(10)
     y_max = max(dist_real.max(), dist_vae.max(), dist_ddpm.max()) * 100 * 1.18
@@ -386,22 +428,32 @@ def build_report(results: dict, vae_samples, ddpm_samples, real_samples):
 
     vae_fid = results["vae"]["fid"]
     ddpm_fid = results["ddpm"]["fid"]
+    ndm_fid = results["ndm"]["fid"]
+
     vae_time = results["vae"]["sample_time"]
     ddpm_time = results["ddpm"]["sample_time"]
-
-    better_fid = "VAE ✓" if vae_fid < ddpm_fid else "DDPM ✓"
-    better_time = "VAE ✓" if vae_time < ddpm_time else "DDPM ✓"
+    ndm_time = results["ndm"]["sample_time"]
 
     uniform = np.ones(10) / 10
     vae_coverage = float(np.sum((dist_vae - uniform) ** 2) * 1000)
     ddpm_coverage = float(np.sum((dist_ddpm - uniform) ** 2) * 1000)
-    better_cov = "VAE ✓" if vae_coverage < ddpm_coverage else "DDPM ✓"
+    ndm_coverage = float(np.sum((dist_ndm - uniform) ** 2) * 1000)
 
-    col_labels = ["Metric", "VAE", "DDPM", "Better"]
+    # Determine winners
+    fid_vals = {"VAE": vae_fid, "DDPM": ddpm_fid, "NDM": ndm_fid}
+    time_vals = {"VAE": vae_time, "DDPM": ddpm_time, "NDM": ndm_time}
+    cov_vals = {"VAE": vae_coverage, "DDPM": ddpm_coverage, "NDM": ndm_coverage}
+
+    best_fid = min(fid_vals, key=fid_vals.get)
+    best_time = min(time_vals, key=time_vals.get)
+    best_cov = min(cov_vals, key=cov_vals.get)
+
+    col_labels = ["Metric", "VAE", "DDPM", "NDM", "Best"]
+
     table_data = [
-        ["FID Score ↓", f"{vae_fid:.2f}", f"{ddpm_fid:.2f}", better_fid],
-        [f"Sample time ({N_SAMPLES:,} imgs) ↓", f"{vae_time:.1f}s", f"{ddpm_time:.1f}s", better_time],
-        ["Digit coverage (↓ = more uniform)", f"{vae_coverage:.2f}", f"{ddpm_coverage:.2f}", better_cov],
+        ["FID Score ↓", f"{vae_fid:.2f}", f"{ddpm_fid:.2f}", f"{ndm_fid:.2f}", best_fid],
+        [f"Sample time ({N_SAMPLES:,} imgs) ↓", f"{vae_time:.1f}s", f"{ddpm_time:.1f}s", f"{ndm_time:.1f}s", best_time],
+        ["Digit coverage (↓ = more uniform)", f"{vae_coverage:.2f}", f"{ddpm_coverage:.2f}", f"{ndm_coverage:.2f}", best_cov],
     ]
 
     tbl = ax_tbl.table(
@@ -410,23 +462,34 @@ def build_report(results: dict, vae_samples, ddpm_samples, real_samples):
         loc="center",
         cellLoc="center",
     )
+
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(12)
     tbl.scale(1, 1.7)
+
+    ACCENT_NDM = "#845ef7"  # noqa: N806
 
     for (row, col), cell in tbl.get_celld().items():
         cell.set_facecolor("#f5f5f5" if row % 2 == 0 else "white")
         cell.set_text_props(color=TEXT)
         cell.set_edgecolor("#dddddd")
+
         if row == 0:
             cell.set_facecolor("#eeeeee")
             cell.set_text_props(color=TEXT, fontweight="bold")
-        if col == 3 and row > 0:
-            winner = table_data[row - 1][3]
-            cell.set_text_props(
-                color=ACCENT_DDPM if "DDPM" in winner else ACCENT_VAE,
-                fontweight="bold",
-            )
+
+        # Highlight winner column
+        if col == 4 and row > 0:
+            winner = table_data[row - 1][4]
+
+            if winner == "VAE":
+                color = ACCENT_VAE
+            elif winner == "DDPM":
+                color = ACCENT_DDPM
+            else:
+                color = ACCENT_NDM
+
+            cell.set_text_props(color=color, fontweight="bold")
 
     plt.savefig(PLOT_PATH, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
@@ -449,7 +512,10 @@ def main():
         vae_cfg = json.load(f)
     with open(DDPM_CONFIG_PATH) as f:
         ddpm_cfg = json.load(f)
-    vae_cfg["device"] = ddpm_cfg["device"] = device
+    with open(NDM_CONFIG_PATH) as f:
+        ndm_cfg = json.load(f)
+
+    vae_cfg["device"] = ddpm_cfg["device"] = ndm_cfg["device"] = device
 
     evaluator = ModelEvaluator(device=device)
 
@@ -479,10 +545,22 @@ def main():
     ddpm_metrics = evaluator.compute_all(real, ddpm_samples)
     print(f"  DDPM FID = {ddpm_metrics['fid']:.2f}")
 
+    # ── NDM ─────────────────────────────────────────────────
+    print(f"\n  Sampling {N_SAMPLES:,} images from NDM...")
+    t0 = time.time()
+    ndm_samples = sample_ndm(ndm_cfg, N_SAMPLES, device)
+    ndm_time = time.time() - t0
+    print(f"  Done in {ndm_time:.1f}s")
+
+    print("  Computing NDM metrics...")
+    ndm_metrics = evaluator.compute_all(real, ndm_samples)
+    print(f"  NDM  FID = {ndm_metrics['fid']:.2f}")
+
     # ── Results ───────────────────────────────────────────────
     results = {
         "vae": {**vae_metrics, "sample_time": vae_time, "dist_real": vae_metrics["dist_real"], "dist_gen": vae_metrics["dist_gen"]},
         "ddpm": {**ddpm_metrics, "sample_time": ddpm_time, "dist_real": ddpm_metrics["dist_real"], "dist_gen": ddpm_metrics["dist_gen"]},
+        "ndm": {**ndm_metrics, "sample_time": ndm_time, "dist_real": ndm_metrics["dist_real"], "dist_gen": ndm_metrics["dist_gen"]},
     }
 
     # Save JSON (convert numpy arrays)
@@ -502,11 +580,12 @@ def main():
 
     # Build report figure
     print("  Building comparison report...")
-    build_report(results, vae_samples, ddpm_samples, real)
+    build_report(results, vae_samples, ddpm_samples, real, ndm_samples)
 
     print(f"\n{'=' * 55}")
     print(f"  VAE  FID : {results['vae']['fid']:.2f}")
     print(f"  DDPM FID : {results['ddpm']['fid']:.2f}")
+    print(f"  NDM  FID : {results['ndm']['fid']:.2f}")
     winner = "VAE" if results["vae"]["fid"] < results["ddpm"]["fid"] else "DDPM"
     print(f"  Winner   : {winner}  (lower FID is better)")
     print(f"{'=' * 55}\n")

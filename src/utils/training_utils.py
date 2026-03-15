@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.utils.plot_utils import plot_training_and_reconstruction, plot_vae_training
+from src.utils.plot_utils import VisualCheckpointer, plot_ndm_training, plot_training_and_reconstruction, plot_vae_training
 
 
 def train_inr_siren(
@@ -262,10 +262,24 @@ def train_ndm(
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     progress_bar = tqdm(range(total_steps), desc="Training NDM")
-    history: dict = {"train_elbo": [], "steps": [], "lr": []}
+    history: dict = {"train_elbo": [], "diff": [], "prior": [], "steps": [], "lr": []}
+
+    # ── visual checkpointer ────────────────────────────────────────────────────
+    checkpointer = VisualCheckpointer(
+        model=model,
+        device=device,
+        name=name,
+        graph_dir=graph_dir,
+        total_steps=total_steps,
+        n_checkpoints=5,
+    )
+    # ──────────────────────────────────────────────────────────────────────────
+
     global_step = 0
     running_loss = 0.0
     running_count = 0
+    running_diff = 0.0
+    running_prior = 0.0
     """
     alpha_T = model.sqrt_alpha_cumprod[-1].item()
     sigma_T = model.sigma[-1].item()
@@ -278,7 +292,9 @@ def train_ndm(
     print(f"  a_T² contribution to L_prior will be ~{alpha_T**2:.2e}")
     print(f"  Total steps: {total_steps},  Warmup: {warmup_steps} ({100*warmup_steps/total_steps:.1f}%)")
     print(f"─────────────────────────────────────────────────────\n")
+
     """
+    print(f"  Total steps: {total_steps},  Warmup: {warmup_steps} ({100*warmup_steps/total_steps:.1f}%)")
     for _ in range(epochs):
         for x in data_loader:
             if isinstance(x, list | tuple):
@@ -295,6 +311,8 @@ def train_ndm(
             optimizer.step()
             scheduler.step()  # step every iteration, not every epoch
 
+            running_diff += diff.item()
+            running_prior += prior.item()
             running_loss += loss.item()
             running_count += 1
             global_step += 1
@@ -308,16 +326,24 @@ def train_ndm(
             )
             progress_bar.update()
 
+            # ── visual checkpoint ──────────────────────────────────────────
+            checkpointer.maybe_checkpoint(global_step)
+            # ──────────────────────────────────────────────────────────────
+
             if global_step % log_every_n_steps == 0:
                 avg_loss = running_loss / running_count
                 fractional_epoch = global_step / len(data_loader)
                 history["train_elbo"].append(avg_loss)
                 history["steps"].append(fractional_epoch)
                 history["lr"].append(current_lr)
+                history["diff"].append(running_diff / running_count)
+                history["prior"].append(running_prior / running_count)
+                running_diff = 0.0
+                running_prior = 0.0
                 running_loss = 0.0
                 running_count = 0
 
-    plot_vae_training(history, name, graph_dir)
+    plot_ndm_training(history, name, graph_dir)
     return model
 
 

@@ -50,9 +50,9 @@ python src/train.py \
 
 python src/train.py \
     --model ndm \
-    --name ndm_unet \
-    --epochs 400 \
-    --batch_size 128 \
+    --name ndm_unet_no_prior_only_class_1 \
+    --epochs 50 \
+    --batch_size 64 \
     --lr 2e-4 \
     --T 100 \
     --device mps \

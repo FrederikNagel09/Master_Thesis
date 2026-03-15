@@ -180,10 +180,16 @@ def run_training_ndm(args):
     )
 
     train_data = datasets.MNIST("data/", train=True, download=True, transform=transform)
+
+    single_class = True
+
+    if single_class:
+        indices = [i for i, (_, label) in enumerate(train_data) if label == 1]
+        train_data = Subset(train_data, indices)
+
     n = int(len(train_data) * args.subset_frac)
     train_data = Subset(train_data, range(n))
     print(f"Training on {len(train_data)} samples ({args.subset_frac * 100:.1f}% of full dataset)")
-
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
 
     run_name = f"{args.name}_{get_current_datetime()}"
@@ -239,7 +245,7 @@ def run_training_ndm(args):
         device=args.device,
         name=run_name,
         log_every_n_steps=args.log_every_n_steps,
-        warmup_steps=2500,  # add to your args
+        warmup_steps=200,  # add to your args
         peak_lr=args.lr,
     )
     print("NDM training completed.")

@@ -454,9 +454,8 @@ class NeuralDiffusionModel(nn.Module):
         # --- Three terms of the objective ---
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
         l_prior = self._l_prior(x)  # (batch,)
-        # l_rec = self._l_rec(x)  # (batch,)
 
-        elbo = l_diff + l_prior
+        elbo = l_diff
         return elbo.mean(), l_diff.mean(), l_prior.mean()
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:
@@ -480,7 +479,7 @@ class NeuralDiffusionModel(nn.Module):
         device = self.sqrt_alpha_cumprod.device
         z_t = torch.randn(shape, device=device)
 
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T, disable=True):
             t_idx = torch.full((shape[0],), t, dtype=torch.long, device=device)
             t_norm = torch.full((shape[0], 1), t / max(self.T - 1, 1), device=device)
 
