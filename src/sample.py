@@ -6,8 +6,8 @@ python src/sample.py \
 
         
 python src/sample.py \
-    --config_path src/results/ndm/experiments/ndm_mlp_Final_10-03-19:13.json \
-    --grid_size 5 
+    --config_path src/results/ndm/experiments/ndm_unet_15-03-07:37.json \
+    --grid_size 6 
 """
 
 import sys

@@ -200,8 +200,7 @@ def run_inference_ndm(args, config):
     import matplotlib.pyplot as plt
     import numpy as np
 
-    from src.models.ddpm import Unet
-    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UNetTransformation
+    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation
 
     device = config.get("device", "cpu")
 
@@ -215,7 +214,7 @@ def run_inference_ndm(args, config):
     else:
         F_phi = UNetTransformation()  # noqa: N806
 
-    network = Unet()
+    network = UnetNDM()
 
     model = NeuralDiffusionModel(
         network=network,
