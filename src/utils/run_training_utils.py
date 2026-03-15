@@ -184,17 +184,6 @@ def run_training_ndm(args):
     train_data = Subset(train_data, range(n))
     print(f"Training on {len(train_data)} samples ({args.subset_frac * 100:.1f}% of full dataset)")
 
-    single_class = 1
-    if single_class is not None:
-        # train_data.indices are the indices into the full MNIST dataset
-        full_targets = torch.tensor(train_data.dataset.targets)
-        subset_indices = torch.tensor(train_data.indices)
-        subset_targets = full_targets[subset_indices]
-        mask = subset_targets == single_class
-        filtered_indices = subset_indices[mask].tolist()
-        train_data = Subset(train_data.dataset, filtered_indices)
-        print(f"Single-class mode: digit {single_class}, {len(train_data)} samples")
-
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
 
     run_name = f"{args.name}_{get_current_datetime()}"

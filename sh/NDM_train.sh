@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J ndm_unet_Final                       # Job name
+#BSUB -J ndm_unet                      # Job name
 #BSUB -q gpuv100                            # Queue to submit the job to
-#BSUB -W 200                               # Wall time limit (6 hours)
+#BSUB -W 400                               # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/ndm_unet_Final.out                        # Standard output redirection
-#BSUB -e src/outputs/ndm_unet_Final.err                        # Standard error redirection
+#BSUB -o src/outputs/ndm_unet.out                        # Standard output redirection
+#BSUB -e src/outputs/ndm_unet.err                        # Standard error redirection
 
 # Activate virtual environment
 source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
@@ -15,15 +15,13 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/src/train.py \
     --model ndm \
-    --name ndm_unet_Final \
-    --epochs 100 \
-    --batch_size 64 \
+    --name ndm_unet \
+    --epochs 300 \
+    --batch_size 128 \
     --lr 2e-4 \
-    --T 1000 \
+    --T 150 \
     --device cuda \
     --subset_frac 1.0 \
     --f_phi_type unet \
-    --f_phi_hidden 512 512 512 \
-    --f_phi_t_embed 32 \
     --sigma_tilde 1.0 \
-    --log_every_n_steps 50
+    --log_every_n_steps 20

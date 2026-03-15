@@ -13,9 +13,5 @@
 source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
-python /zhome/66/4/156534/Master_Thesis/src/sample.py \
-    --config_path Master_Thesis/src/results/ndm/experiments/ndm_unet_Final_10-03-19:38.json \
-    --grid_size 5 
-
 
 python /zhome/66/4/156534/Master_Thesis/src/scripts/plot_ndm_results.py

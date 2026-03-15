@@ -25,7 +25,8 @@ from torchvision import datasets, transforms
 # HARDCODE YOUR CONFIG PATHS HERE
 # =============================================================================
 MLP_CONFIG_PATH = "Master_Thesis/src/results/ndm/experiments/ndm_mlp_Final_10-03-19:13.json"
-UNET_CONFIG_PATH = "Master_Thesis/src/results/ndm/experiments/ndm_unet_Final_10-03-19:38.json"
+
+UNET_CONFIG_PATH = "/zhome/66/4/156534/Master_Thesis/src/results/ndm/experiments/ndm_unet_15-03-07:37.json"
 # =============================================================================
 
 N_IMAGES = 8
@@ -39,7 +40,7 @@ def load_config(path: str) -> dict:
 
 def build_model(config: dict):
     from src.models.ddpm import Unet
-    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UNetTransformation
+    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UNetTransformation, UnetNDM
 
     if config.get("f_phi_type", "mlp") == "mlp":
         F_phi = MLPTransformation(  # noqa: N806
@@ -51,7 +52,7 @@ def build_model(config: dict):
         F_phi = UNetTransformation()  # noqa: N806
 
     model = NeuralDiffusionModel(
-        network=Unet(),
+        network=UnetNDM(),
         F_phi=F_phi,
         T=config["T"],
         sigma_tilde_factor=config.get("sigma_tilde", 1.0),
@@ -76,15 +77,6 @@ def get_mnist_samples(n: int) -> torch.Tensor:
 
     dataset = datasets.MNIST("data/", train=False, download=True, transform=transform)
     indices = torch.randperm(len(dataset))[:n]
-
-    single_class = 1  # set to an int 0-9 to filter to that digit only
-    if single_class is not None:
-        targets = torch.tensor(dataset.targets)
-        class_indices = torch.where(targets == single_class)[0]
-        indices = class_indices[torch.randperm(len(class_indices))[:n]]
-    else:
-        indices = torch.randperm(len(dataset))[:n]
-
     images = torch.stack([dataset[i][0] for i in indices])  # (n, 784)
     return images
 
@@ -168,7 +160,7 @@ def make_plot(config: dict, out_dir: str):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    for label, config_path in [("MLP", MLP_CONFIG_PATH)]:  # , ("UNet", UNET_CONFIG_PATH)
+    for label, config_path in [(("UNet", UNET_CONFIG_PATH))]: # "MLP", MLP_CONFIG_PATH,
         if not os.path.exists(config_path):
             print(f"[SKIP] {label} config not found at: {config_path}")
             continue
