@@ -1,6 +1,6 @@
 #!/bin/bash
 #BSUB -J ndm_mlp_sample                       # Job name
-#BSUB -q hpc                           # Queue to submit the job to
+#BSUB -q gpuv100                           # Queue to submit the job to
 #BSUB -W 15                              # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=2GB]"                 # Request 2 GB of memory per core
@@ -14,7 +14,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/src/sample.py \
-    --config_path src/results/ndm/experiments/ndm_mlp_no_rec_10-03-15:47.json \
+    --config_path Master_Thesis/src/results/ndm/experiments/ndm_unet_Final_10-03-19:38.json \
     --grid_size 5 
 
 
