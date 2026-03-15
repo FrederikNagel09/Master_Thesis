@@ -1,5 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 # =============================================================================
@@ -49,117 +52,260 @@ class MLPTransformation(nn.Module):
         t_emb = self.t_embed(t)
         xt = torch.cat([x, t_emb], dim=-1)
         f_bar = self.net(xt)  # raw network output F_bar_phi
-        return f_bar
+        return (1 - t) * x + t * f_bar
 
 
 class UNetTransformation(nn.Module):
     """
-    U-Net-based transformation network F_phi(x, t) for MNIST.
+    U-Net F_phi(x, t) for NDM on MNIST.
 
-    Same input/output contract as MLPTransformation:
-        x: (batch, 784)  ->  output: (batch, 784)
-        t: (batch, 1)
+    Replaces the naive channel-concatenation time conditioning with:
+      - Sinusoidal time embedding projected to t_dim
+      - AdaGN (scale+shift) injection at every encoder and decoder block
+      - Residual connections inside each block
+      - Skip connections across the U-Net
 
-    Internally reshapes x to (batch, 1, 28, 28), concatenates a time channel,
-    runs through a U-Net, then flattens back. This is the same architectural
-    pattern used in the DDPM Unet above — here repurposed as the learnable
-    transformation F_phi rather than the noise predictor.
+    Input/output contract identical to the original:
+        x: (batch, 784)  ->  (batch, 784)
+        t: (batch, 1)    normalised to [0, 1]
+
+    The t=0 identity constraint is enforced in forward():
+        F_phi(x, 0) = x  exactly,  via  (1-t)*x + t*f_bar
     """
 
-    def __init__(self):
+    def __init__(self, t_dim: int = 64):
         super().__init__()
-        chs = [32, 64, 128, 256, 256]
+        chs = [16, 32, 64, 128, 128]
 
-        # Encoder (same as DDPM Unet)
-        self._convs = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Conv2d(2, chs[0], kernel_size=3, padding=1),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.MaxPool2d(kernel_size=2, stride=2),
-                    nn.Conv2d(chs[0], chs[1], kernel_size=3, padding=1),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.MaxPool2d(kernel_size=2, stride=2),
-                    nn.Conv2d(chs[1], chs[2], kernel_size=3, padding=1),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.MaxPool2d(kernel_size=2, stride=2, padding=1),
-                    nn.Conv2d(chs[2], chs[3], kernel_size=3, padding=1),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.MaxPool2d(kernel_size=2, stride=2),
-                    nn.Conv2d(chs[3], chs[4], kernel_size=3, padding=1),
-                    nn.SiLU(),
-                ),
-            ]
+        # ── Time embedding ────────────────────────────────────────────────────
+        self.t_embed = nn.Sequential(
+            SinusoidalTimeEmbedding(t_dim),
+            nn.Linear(t_dim, t_dim * 2),
+            nn.SiLU(),
+            nn.Linear(t_dim * 2, t_dim),
         )
 
-        # Decoder
-        self._tconvs = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.ConvTranspose2d(chs[4], chs[3], kernel_size=3, stride=2, padding=1, output_padding=1),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.ConvTranspose2d(chs[3] * 2, chs[2], kernel_size=3, stride=2, padding=1, output_padding=0),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.ConvTranspose2d(chs[2] * 2, chs[1], kernel_size=3, stride=2, padding=1, output_padding=1),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.ConvTranspose2d(chs[1] * 2, chs[0], kernel_size=3, stride=2, padding=1, output_padding=1),
-                    nn.SiLU(),
-                ),
-                nn.Sequential(
-                    nn.Conv2d(chs[0] * 2, chs[0], kernel_size=3, padding=1),
-                    nn.SiLU(),
-                    nn.Conv2d(chs[0], 1, kernel_size=3, padding=1),
-                ),
-            ]
-        )
+        # ── Encoder ───────────────────────────────────────────────────────────
+        # Each level: ResBlock (with time conditioning) + optional downsample
+        self.enc0 = TimeConditionedResBlock(1, chs[0], t_dim)
+        self.enc1 = TimeConditionedResBlock(chs[0], chs[1], t_dim)
+        self.enc2 = TimeConditionedResBlock(chs[1], chs[2], t_dim)
+        self.enc3 = TimeConditionedResBlock(chs[2], chs[3], t_dim)
+        self.enc4 = TimeConditionedResBlock(chs[3], chs[4], t_dim)  # bottleneck
+
+        self.down0 = nn.MaxPool2d(2)  # 28 -> 14
+        self.down1 = nn.MaxPool2d(2)  # 14 ->  7
+        self.down2 = nn.MaxPool2d(2, padding=1)  #  7 ->  4
+        self.down3 = nn.MaxPool2d(2)  #  4 ->  2
+
+        # ── Decoder ───────────────────────────────────────────────────────────
+        # skip connections double the input channels at each level
+        self.dec3 = TimeConditionedResBlock(chs[4] + chs[3], chs[3], t_dim)
+        self.dec2 = TimeConditionedResBlock(chs[3] + chs[2], chs[2], t_dim)
+        self.dec1 = TimeConditionedResBlock(chs[2] + chs[1], chs[1], t_dim)
+        self.dec0 = TimeConditionedResBlock(chs[1] + chs[0], chs[0], t_dim)
+
+        self.up3 = nn.ConvTranspose2d(chs[4], chs[4], kernel_size=2, stride=2)  #  2 ->  4
+        self.up2 = nn.ConvTranspose2d(chs[3], chs[3], kernel_size=2, stride=2)  #  4 ->  8 (trimmed to 7)
+        self.up1 = nn.ConvTranspose2d(chs[2], chs[2], kernel_size=2, stride=2)  #  7 -> 14
+        self.up0 = nn.ConvTranspose2d(chs[1], chs[1], kernel_size=2, stride=2)  # 14 -> 28
+
+        # ── Output projection ─────────────────────────────────────────────────
+        self.out_conv = nn.Conv2d(chs[0], 1, kernel_size=3, padding=1)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
-        Parameters:
-            x: (batch, 784)
-            t: (batch, 1)
-        Returns:
-            (batch, 784)
+        x: (batch, 784)
+        t: (batch, 1)   normalised time in [0, 1]
+        returns: (batch, 784)
         """
-        batch_size = x.shape[0]
-        x2 = x.view(batch_size, 1, 28, 28)
-        tt = t[:, :, None, None].expand(batch_size, 1, 28, 28)
-        x2t = torch.cat([x2, tt], dim=1)  # (batch, 2, 28, 28)
+        batch = x.shape[0]
+        h = x.view(batch, 1, 28, 28)  # (batch, 1, 28, 28)
 
-        signal = x2t
-        signals = []
-        for i, conv in enumerate(self._convs):
-            signal = conv(signal)
-            if i < len(self._convs) - 1:
-                signals.append(signal)
+        t_emb = self.t_embed(t)  # (batch, t_dim)
 
-        for i, tconv in enumerate(self._tconvs):
-            if i == 0:
-                signal = tconv(signal)
-            else:
-                signal = torch.cat([signal, signals[-i]], dim=1)
-                signal = tconv(signal)
+        # ── Encoder ───────────────────────────────────────────────────────────
+        s0 = self.enc0(h, t_emb)  # (batch, 32,  28, 28)
+        s1 = self.enc1(self.down0(s0), t_emb)  # (batch, 64,  14, 14)
+        s2 = self.enc2(self.down1(s1), t_emb)  # (batch, 128,  7,  7)
+        s3 = self.enc3(self.down2(s2), t_emb)  # (batch, 256,  4,  4)
+        s4 = self.enc4(self.down3(s3), t_emb)  # (batch, 256,  2,  2)  <- bottleneck
 
-        return signal.view(batch_size, -1)  # (batch, 784)
+        # ── Decoder with skip connections ─────────────────────────────────────
+        # up3: 2->4, concat with s3 (4x4)
+        d = self.up3(s4)  # (batch, 256, 4, 4)
+        d = self.dec3(torch.cat([d, s3], dim=1), t_emb)  # (batch, 256, 4, 4)
+
+        # up2: 4->8, but s2 is 7x7 — crop to match
+        d = self.up2(d)  # (batch, 128, 8, 8)
+        d = d[:, :, :7, :7]  # (batch, 128, 7, 7)
+        d = self.dec2(torch.cat([d, s2], dim=1), t_emb)  # (batch, 128, 7, 7)
+
+        # up1: 7->14, matches s1 exactly
+        d = self.up1(d)  # (batch, 64, 14, 14)
+        d = self.dec1(torch.cat([d, s1], dim=1), t_emb)  # (batch, 64, 14, 14)
+
+        # up0: 14->28, matches s0 exactly
+        d = self.up0(d)  # (batch, 32, 28, 28)
+        d = self.dec0(torch.cat([d, s0], dim=1), t_emb)  # (batch, 32, 28, 28)
+
+        # ── Output ────────────────────────────────────────────────────────────
+        f_bar = self.out_conv(d)  # (batch, 1, 28, 28)
+        f_bar = f_bar.view(batch, -1)  # (batch, 784)
+
+        # Enforce F_phi(x, 0) = x exactly (Appendix C.2)
+        return (1 - t) * x + t * f_bar
+
+
+class UnetNDM(nn.Module):
+    """
+    Noise prediction network epsilon_theta(z_t, t) for NDM.
+
+    Same input/output contract as the original Unet:
+        x: (batch, 784)  ->  (batch, 784)
+        t: (batch, 1)
+
+    Architecture matches UNetTransformation exactly (sinusoidal time embedding,
+    AdaGN ResBlocks, skip connections) so both networks share the same
+    structure, as specified in Section 4.1 of the NDM paper.
+
+    The only difference from UNetTransformation is the output:
+        - UNetTransformation returns (1-t)*x + t*f_bar  (identity constraint)
+        - UnetNDM returns the raw predicted noise epsilon_hat  (no constraint)
+    """
+
+    def __init__(self, t_dim: int = 64):
+        super().__init__()
+        chs = [16, 32, 64, 128, 128]
+
+        # ── Time embedding ────────────────────────────────────────────────────
+        self.t_embed = nn.Sequential(
+            SinusoidalTimeEmbedding(t_dim),
+            nn.Linear(t_dim, t_dim * 2),
+            nn.SiLU(),
+            nn.Linear(t_dim * 2, t_dim),
+        )
+
+        # ── Encoder ───────────────────────────────────────────────────────────
+        self.enc0 = TimeConditionedResBlock(1, chs[0], t_dim)
+        self.enc1 = TimeConditionedResBlock(chs[0], chs[1], t_dim)
+        self.enc2 = TimeConditionedResBlock(chs[1], chs[2], t_dim)
+        self.enc3 = TimeConditionedResBlock(chs[2], chs[3], t_dim)
+        self.enc4 = TimeConditionedResBlock(chs[3], chs[4], t_dim)  # bottleneck
+
+        self.down0 = nn.MaxPool2d(2)  # 28 -> 14
+        self.down1 = nn.MaxPool2d(2)  # 14 ->  7
+        self.down2 = nn.MaxPool2d(2, padding=1)  #  7 ->  4
+        self.down3 = nn.MaxPool2d(2)  #  4 ->  2
+
+        # ── Decoder ───────────────────────────────────────────────────────────
+        self.dec3 = TimeConditionedResBlock(chs[4] + chs[3], chs[3], t_dim)
+        self.dec2 = TimeConditionedResBlock(chs[3] + chs[2], chs[2], t_dim)
+        self.dec1 = TimeConditionedResBlock(chs[2] + chs[1], chs[1], t_dim)
+        self.dec0 = TimeConditionedResBlock(chs[1] + chs[0], chs[0], t_dim)
+
+        self.up3 = nn.ConvTranspose2d(chs[4], chs[4], kernel_size=2, stride=2)  #  2 ->  4
+        self.up2 = nn.ConvTranspose2d(chs[3], chs[3], kernel_size=2, stride=2)  #  4 ->  8 (trimmed to 7)
+        self.up1 = nn.ConvTranspose2d(chs[2], chs[2], kernel_size=2, stride=2)  #  7 -> 14
+        self.up0 = nn.ConvTranspose2d(chs[1], chs[1], kernel_size=2, stride=2)  # 14 -> 28
+
+        # ── Output projection ─────────────────────────────────────────────────
+        self.out_conv = nn.Conv2d(chs[0], 1, kernel_size=3, padding=1)
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        x: (batch, 784)   noisy latent z_t
+        t: (batch, 1)     normalised time in [0, 1]
+        returns: (batch, 784)  predicted noise epsilon_hat
+        """
+        batch = x.shape[0]
+        h = x.view(batch, 1, 28, 28)
+
+        t_emb = self.t_embed(t)  # (batch, t_dim)
+
+        # ── Encoder ───────────────────────────────────────────────────────────
+        s0 = self.enc0(h, t_emb)  # (batch, 32,  28, 28)
+        s1 = self.enc1(self.down0(s0), t_emb)  # (batch, 64,  14, 14)
+        s2 = self.enc2(self.down1(s1), t_emb)  # (batch, 128,  7,  7)
+        s3 = self.enc3(self.down2(s2), t_emb)  # (batch, 256,  4,  4)
+        s4 = self.enc4(self.down3(s3), t_emb)  # (batch, 256,  2,  2)
+
+        # ── Decoder ───────────────────────────────────────────────────────────
+        d = self.up3(s4)  # (batch, 256, 4, 4)
+        d = self.dec3(torch.cat([d, s3], dim=1), t_emb)  # (batch, 256, 4, 4)
+
+        d = self.up2(d)  # (batch, 128, 8, 8)
+        d = d[:, :, :7, :7]  # (batch, 128, 7, 7)
+        d = self.dec2(torch.cat([d, s2], dim=1), t_emb)  # (batch, 128, 7, 7)
+
+        d = self.up1(d)  # (batch, 64, 14, 14)
+        d = self.dec1(torch.cat([d, s1], dim=1), t_emb)  # (batch, 64, 14, 14)
+
+        d = self.up0(d)  # (batch, 32, 28, 28)
+        d = self.dec0(torch.cat([d, s0], dim=1), t_emb)  # (batch, 32, 28, 28)
+
+        # ── Output ────────────────────────────────────────────────────────────
+        out = self.out_conv(d)  # (batch, 1, 28, 28)
+        return out.view(batch, -1)  # (batch, 784)
+
+
+class SinusoidalTimeEmbedding(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        # t: (batch, 1) normalised to [0, 1]
+        device = t.device
+        half = self.dim // 2
+        freqs = torch.exp(-math.log(10000) * torch.arange(half, device=device) / (half - 1))
+        args = t * freqs.unsqueeze(0) * 1000  # scale t to [0, 1000] range
+        return torch.cat([args.sin(), args.cos()], dim=-1)  # (batch, dim)
 
 
 # =============================================================================
 # Neural Diffusion Model
 # =============================================================================
+class TimeConditionedResBlock(nn.Module):
+    """
+    Conv -> GroupNorm -> SiLU -> Conv -> GroupNorm,
+    with time embedding injected as a scale+shift into the first GroupNorm
+    (AdaGN style, as used in ADM/Dhariwal & Nichol 2021).
+    Includes a residual connection with a 1x1 conv if channel dims differ.
+    """
+
+    def __init__(self, in_ch: int, out_ch: int, t_dim: int):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1)
+        self.gn1 = nn.GroupNorm(min(8, out_ch), out_ch)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1)
+        self.gn2 = nn.GroupNorm(min(8, out_ch), out_ch)
+
+        # Projects time embedding to scale and shift for AdaGN on gn1
+        self.t_proj = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(t_dim, out_ch * 2),  # split into scale + shift
+        )
+
+        # Residual projection if channel count changes
+        self.res_conv = nn.Conv2d(in_ch, out_ch, kernel_size=1) if in_ch != out_ch else nn.Identity()
+
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        # t_emb: (batch, t_dim)
+        h = self.conv1(x)
+        h = self.gn1(h)
+
+        # AdaGN: modulate normalised features with time-derived scale/shift
+        t_out = self.t_proj(t_emb)  # (batch, out_ch*2)
+        scale, shift = t_out.chunk(2, dim=1)  # each (batch, out_ch)
+        h = h * (1 + scale[:, :, None, None]) + shift[:, :, None, None]
+
+        h = F.silu(h)
+        h = self.conv2(h)
+        h = self.gn2(h)
+        h = F.silu(h)
+
+        return h + self.res_conv(x)
 
 
 class NeuralDiffusionModel(nn.Module):
@@ -180,18 +326,29 @@ class NeuralDiffusionModel(nn.Module):
         sigma_tilde_factor: float = 1.0,
     ):
         super().__init__()
-        self.network = network  # epsilon_theta: noise predictor
-        self.F_phi = F_phi  # learnable data transformation
 
+        # epsilon_theta: noise predictor network
+        self.network = network
+        # learnable data transformation network
+        self.F_phi = F_phi
+
+        # beta 1 start value
         self.beta_1 = beta_1
+        # beta T end value
         self.beta_T = beta_T
+
+        # Amount of time steps
         self.T = T
+
+        # Controlls something?
         self.sigma_tilde_factor = sigma_tilde_factor  # in [0,1]; 0 = deterministic DDIM
 
         # DDPM variance-preserving noise schedule
-        beta = torch.linspace(beta_1, beta_T, T)
-        alpha = 1.0 - beta
-        alpha_cumprod = alpha.cumprod(dim=0)
+        beta = torch.linspace(beta_1, beta_T, T)  # goes from 0.0001 to 0.02 in T steps
+        alpha = 1.0 - beta  # goes from 0.9999 to 0.98 in T steps
+
+        # Accumulated product of alpha: alpha_bar_t = Π_{s=1}^t alpha_s
+        alpha_cumprod = alpha.cumprod(dim=0)  # goes to 0 as t increases, since alpha < 1
 
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
@@ -216,50 +373,33 @@ class NeuralDiffusionModel(nn.Module):
         t_norm: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns z_t and the noise epsilon used."""
-        Fx = self.F_phi(x, t_norm)  # (batch, 784)  # noqa: N806
+        Fx = self.F_phi(x, t_norm)  # noqa: N806
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
         epsilon = torch.randn_like(x)
         z_t = alpha_t * Fx + sigma_t * epsilon
         return z_t, epsilon, Fx
 
-    def _l_diff(
-        self,
-        x: torch.Tensor,
-        z_t: torch.Tensor,
-        t_idx: torch.Tensor,
-        t_norm: torch.Tensor,
-        Fx_t: torch.Tensor,  # noqa: N803
-    ) -> torch.Tensor:
-        """
-        KL divergence between forward posterior q_phi(z_{t-1}|z_t, x) and
-        reverse p_theta(z_{t-1}|z_t), collapsed to an MSE on the transformed
-        data
-        """
-
-        # Predict noise -> reconstruct x_hat -> get F_phi(x_hat, t)
-        eps_hat = self.network(z_t, t_norm.unsqueeze(1))  # (batch, 784)
+    def _l_diff(self, x, z_t, t_idx, t_norm, Fx_t):  # noqa: N803
+        eps_hat = self.network(z_t, t_norm.unsqueeze(1))
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
         x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
 
-        # s = t - 1  (0-indexed; clamp at 0)
         s_idx = (t_idx - 1).clamp(min=0)
         s_norm = s_idx.float() / (self.T - 1)
 
-        Fx_hat_t = self.F_phi(x_hat, t_norm.unsqueeze(1))  # F_phi(x_hat, t)  # noqa: N806
-        Fx_hat_s = self.F_phi(x_hat, s_norm.unsqueeze(1))  # F_phi(x_hat, s)  # noqa: N806
-        Fx_s = self.F_phi(x, s_norm.unsqueeze(1))  # F_phi(x,    s)  # noqa: N806
+        Fx_hat_t = self.F_phi(x_hat, t_norm.unsqueeze(1))  # noqa: N806
+        Fx_hat_s = self.F_phi(x_hat, s_norm.unsqueeze(1))  # noqa: N806
+        Fx_s = self.F_phi(x, s_norm.unsqueeze(1))  # noqa: N806
 
-        # All per-sample scalars unsqueezed to (batch, 1) for broadcasting with (batch, 784)
-        alpha_s = self.sqrt_alpha_cumprod[s_idx].unsqueeze(1)  # (batch, 1)
-        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)  # (batch, 1)
+        alpha_s = self.sqrt_alpha_cumprod[s_idx].unsqueeze(1)
+        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)  # compute once
         coeff = (self.sigma_sq[s_idx].unsqueeze(1) - sigma_tilde_sq).clamp(min=0).sqrt()
-        coeff = coeff / self.sigma[t_idx].unsqueeze(1).clamp(min=1e-6)  # (batch, 1)
+        coeff = coeff / self.sigma[t_idx].unsqueeze(1).clamp(min=1e-6)
 
-        # MSE on the mean difference
         diff = alpha_s * (Fx_s - Fx_hat_s) + coeff * alpha_t * (Fx_hat_t - Fx_t)
-        l_diff = 0.5 * (diff**2).sum(dim=-1)  # (batch,)
+        l_diff = (diff**2).sum(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
         return l_diff
 
     def _l_prior(self, x: torch.Tensor) -> torch.Tensor:
@@ -268,7 +408,7 @@ class NeuralDiffusionModel(nn.Module):
         """
         T_idx = self.T - 1  # noqa: N806
         t_norm_T = torch.ones(x.shape[0], 1, device=x.device)  # noqa: N806
-        Fx_T = self.F_phi(x, t_norm_T)  # (batch, 784)  # noqa: N806
+        Fx_T = self.F_phi(x, t_norm_T)  # (batch, 784)  # noqa: N806 ####################################################################
 
         sigma_T_sq = self.sigma_sq[T_idx]  # scalar  # noqa: N806
         alpha_T_sq = self.alpha_cumprod[T_idx]  # scalar  # noqa: N806
@@ -313,13 +453,14 @@ class NeuralDiffusionModel(nn.Module):
 
         # --- Three terms of the objective ---
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
-        # l_prior = self._l_prior(x)  # (batch,)
-        l_rec = self._l_rec(x)  # (batch,)
+        l_prior = self._l_prior(x)  # (batch,)
+        # l_rec = self._l_rec(x)  # (batch,)
 
-        return l_diff + l_rec  # l_prior + l_rec  # (batch,)
+        elbo = l_diff + l_prior
+        return elbo.mean(), l_diff.mean(), l_prior.mean()
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:
-        return self.negative_elbo(x).mean()
+        return self.negative_elbo(x)
 
     @torch.no_grad()
     def sample(self, shape: tuple) -> torch.Tensor:
@@ -367,7 +508,7 @@ class NeuralDiffusionModel(nn.Module):
             sigma_s_sq = self.sigma_sq[s].view(1, 1)  # (1, 1)
             sigma_t_val = self.sigma[t].view(1, 1)  # (1, 1)
             alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)  # (1, 1)
-            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).mean().view(1, 1)  # scalar → (1,1)
+            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)  # scalar → (1,1)
 
             # Mean of q_phi(z_s | z_t, x_hat) — Eq. 7
             coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)

@@ -29,7 +29,7 @@ UNET_CONFIG_PATH = "Master_Thesis/src/results/ndm/experiments/ndm_unet_Final_10-
 # =============================================================================
 
 N_IMAGES = 8
-OUT_DIR = "src/results/general"
+OUT_DIR = "src/results/ndm/samples"
 
 
 def load_config(path: str) -> dict:
@@ -73,8 +73,18 @@ def get_mnist_samples(n: int) -> torch.Tensor:
             transforms.Lambda(lambda x: x.flatten()),
         ]
     )
+
     dataset = datasets.MNIST("data/", train=False, download=True, transform=transform)
     indices = torch.randperm(len(dataset))[:n]
+
+    single_class = 1  # set to an int 0-9 to filter to that digit only
+    if single_class is not None:
+        targets = torch.tensor(dataset.targets)
+        class_indices = torch.where(targets == single_class)[0]
+        indices = class_indices[torch.randperm(len(class_indices))[:n]]
+    else:
+        indices = torch.randperm(len(dataset))[:n]
+
     images = torch.stack([dataset[i][0] for i in indices])  # (n, 784)
     return images
 
@@ -105,12 +115,22 @@ def make_plot(config: dict, out_dir: str):
     # ── Row 2: F_phi transformation across t=0 → t=1 ─────────────────────────
     print("Running data transformation F_phi across time...")
     # Each of the 8 images is transformed at a different t, evenly spaced 0→1,
-    # so the row reads as a timeline: identity on the left, full transform on the right.
+
+    print("=======================================")
+    # --- Sample random time step ---
+    t_idx = torch.randint(1, config["T"] + 1, (64,), device=device) - 1  # 0-indexed
+    t_norm = t_idx.float() / (config["T"] - 1)
+    t_norm.unsqueeze(1)
+    print(f"Random t indices: {t_idx.cpu().numpy()}")
+    print(f"Normalized t values: {t_norm.cpu().numpy()}")
+    print(t_norm.unsqueeze(1).shape)
+    print(t_norm.unsqueeze(1))
+    print("=======================================")
+    # Show transformation at t = 0, T/4, T/2, 3T/4, T for the first image only
     t_values = torch.linspace(0, 1, N_IMAGES, device=device).unsqueeze(1)  # (8, 1)
+    first_img = real[0:1].expand(N_IMAGES, -1)  # repeat same image 8 times
     with torch.no_grad():
-        transformed = torch.stack(
-            [model.F_phi(real[i].unsqueeze(0), t_values[i].unsqueeze(0)).squeeze(0) for i in range(N_IMAGES)]
-        )  # (8, 784)
+        transformed = model.F_phi(first_img, t_values)  # (8, 784)
 
     # ── Row 3: full NDM samples ────────────────────────────────────────────────
     print("Sampling from full NDM...")
@@ -128,7 +148,7 @@ def make_plot(config: dict, out_dir: str):
 
     rows = [
         (strip_real, f"Real MNIST images"),  # noqa: F541
-        (strip_transformed, f"F_phi transformation  t=0 → t=1  [{f_phi_type}]"),
+        (strip_transformed, f"F_phi transformation  t=T  [{f_phi_type}]"),
         (strip_samples, f"Full NDM samples  [{f_phi_type}]"),
     ]
 

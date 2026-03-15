@@ -35,11 +35,11 @@ python src/train.py \
 ############################## NDM Training ####################################
 python src/train.py \
     --model ndm \
-    --name ndm_mlp_FINAL \
-    --epochs 100 \
-    --batch_size 64 \
-    --lr 2e-4 \
-    --T 1000 \
+    --name ndm_mlp_1.2 \
+    --epochs 500 \
+    --batch_size 128 \
+    --lr 4e-4 \
+    --T 100 \
     --device mps \
     --subset_frac 1.0 \
     --f_phi_type mlp \
@@ -50,13 +50,13 @@ python src/train.py \
 
 python src/train.py \
     --model ndm \
-    --name ndm_unet_run \
-    --epochs 2 \
+    --name ndm_unet \
+    --epochs 400 \
     --batch_size 128 \
     --lr 2e-4 \
-    --T 1000 \
+    --T 100 \
     --device mps \
-    --subset_frac 0.01 \
+    --subset_frac 1.0 \
     --f_phi_type unet \
     --sigma_tilde 1.0 \
     --log_every_n_steps 20
@@ -77,13 +77,13 @@ python src/train.py \
 ######################### VAE Hypernet INR Training #############################
 python src/train.py \
     --model vae_inr_hypernet \
-    --name inr_vae_mog \
+    --name inr_vae_quick \
     --epochs 5 \
     --prior gaussian \
     --batch_size 64 \
     --lr 1e-3 \
     --latent_dim 128\
-    --inr_hidden_dim 64 \
+    --inr_hidden_dim 20 \
     --inr_layers 3 \
     --inr_out_dim 1 \
     --vae_enc_dim 512 \

@@ -1,6 +1,5 @@
 import os
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -238,50 +237,83 @@ def train_ndm(
     name: str = "ndm",
     graph_dir: str = "src/results/ndm/training_graphs",
     log_every_n_steps: int = 20,
+    warmup_steps: int = 5000,  # paper uses 45k for CIFAR, 20k for ImageNet
+    peak_lr: float = 4e-4,  # must match the lr used to construct optimizer
 ):
-    """
-    Training loop for NeuralDiffusionModel.
-    Identical structure to train_ddpm — model.loss(x) already returns the
-    full NDM ELBO (L_diff + L_prior + L_rec).
-    """
-    from src.utils.training_utils import plot_vae_training  # reuse your existing plotter
-
     model.train()
 
     total_steps = len(data_loader) * epochs
+
+    def lr_lambda(current_step: int) -> float:
+        """
+        Linear warmup then linear decay back to ~0, matching the paper's
+        polynomial decay schedule (Appendix C).
+        Returns a multiplier on the base lr set in the optimizer.
+        """
+        if current_step < warmup_steps:
+            # Ramp from 1e-8/peak_lr up to 1.0 (i.e. peak_lr)
+            return max(1e-8 / peak_lr, current_step / max(warmup_steps, 1))
+        else:
+            # Linear decay from 1.0 down to 1e-8/peak_lr
+            progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
+            floor = 1e-8 / peak_lr
+            return max(floor, 1.0 - progress * (1.0 - floor))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
     progress_bar = tqdm(range(total_steps), desc="Training NDM")
-    history: dict = {"train_elbo": [], "steps": []}
+    history: dict = {"train_elbo": [], "steps": [], "lr": []}
     global_step = 0
     running_loss = 0.0
     running_count = 0
-
-    for epoch in range(epochs):
-        data_iter = iter(data_loader)
-        for x in data_iter:
+    """
+    alpha_T = model.sqrt_alpha_cumprod[-1].item()
+    sigma_T = model.sigma[-1].item()
+    alpha_1 = model.sqrt_alpha_cumprod[0].item()
+    print(f"\n── Schedule diagnostics ──────────────────────────────")
+    print(f"  T={model.T}")
+    print(f"  a_T (sqrt_ᾱ_T)  = {alpha_T:.6f}  (should be ~0 for signal to be gone)")
+    print(f"  a_T              = {sigma_T:.6f}  (should be ~1)")
+    print(f"  a_1 (sqrt_ᾱ_1)  = {alpha_1:.6f}  (should be ~1)")
+    print(f"  a_T² contribution to L_prior will be ~{alpha_T**2:.2e}")
+    print(f"  Total steps: {total_steps},  Warmup: {warmup_steps} ({100*warmup_steps/total_steps:.1f}%)")
+    print(f"─────────────────────────────────────────────────────\n")
+    """
+    for _ in range(epochs):
+        for x in data_loader:
             if isinstance(x, list | tuple):
                 x = x[0]
             x = x.to(device)
 
             optimizer.zero_grad()
-            loss = model.loss(x)
+            loss, diff, prior = model.loss(x)
             loss.backward()
+
+            # Gradient clipping helps stabilise joint F_phi + network training
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()
+            scheduler.step()  # step every iteration, not every epoch
 
             running_loss += loss.item()
             running_count += 1
             global_step += 1
 
+            current_lr = scheduler.get_last_lr()[0]
             progress_bar.set_postfix(
-                loss=f"⠀{loss.item():12.4f}",
-                epoch=f"{epoch + 1}/{epochs}",
+                loss=f"{loss.item():.4f}",
+                kl=f"{prior.item():.4f}",
+                diff=f"{diff.item():.4f}",
+                lr=f"{current_lr:.2e}",
             )
             progress_bar.update()
 
             if global_step % log_every_n_steps == 0:
                 avg_loss = running_loss / running_count
                 fractional_epoch = global_step / len(data_loader)
-                history["train_elbo"].append(float(np.log(max(avg_loss, 1e-8))))
+                history["train_elbo"].append(avg_loss)
                 history["steps"].append(fractional_epoch)
+                history["lr"].append(current_lr)
                 running_loss = 0.0
                 running_count = 0
 
