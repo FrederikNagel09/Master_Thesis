@@ -35,12 +35,12 @@ python src/train.py \
 ############################## NDM Training ####################################
 python src/train.py \
     --model ndm \
-    --name ndm_mlp_1.2 \
-    --epochs 500 \
+    --name ndm_mlp \
+    --epochs 100 \
     --batch_size 128 \
-    --lr 4e-4 \
-    --T 100 \
-    --device mps \
+    --lr 2e-4 \
+    --T 1000 \
+    --device cuda \
     --subset_frac 1.0 \
     --f_phi_type mlp \
     --f_phi_hidden 512 512 512 \

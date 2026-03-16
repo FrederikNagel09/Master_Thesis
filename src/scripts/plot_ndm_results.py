@@ -24,7 +24,7 @@ from torchvision import datasets, transforms
 # =============================================================================
 # HARDCODE YOUR CONFIG PATHS HERE
 # =============================================================================
-MLP_CONFIG_PATH = "Master_Thesis/src/results/ndm/experiments/ndm_mlp_Final_10-03-19:13.json"
+MLP_CONFIG_PATH = "/zhome/66/4/156534/Master_Thesis/src/results/ndm/experiments/ndm_mlp_16-03-12:51.json"
 
 UNET_CONFIG_PATH = "/zhome/66/4/156534/Master_Thesis/src/results/ndm/experiments/ndm_unet_full_final_smallT_15-03-20:50.json"
 # =============================================================================
@@ -159,7 +159,7 @@ def make_plot(config: dict, out_dir: str):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    for label, config_path in [(("UNet", UNET_CONFIG_PATH))]:  # "MLP", MLP_CONFIG_PATH,
+    for label, config_path in [(("MLP", MLP_CONFIG_PATH,))]:  # "UNet", UNET_CONFIG_PATH
         if not os.path.exists(config_path):
             print(f"[SKIP] {label} config not found at: {config_path}")
             continue

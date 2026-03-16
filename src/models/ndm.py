@@ -456,7 +456,7 @@ class NeuralDiffusionModel(nn.Module):
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
         l_prior = self._l_prior(x)  # (batch,)
 
-        prior_mask = 0.10*(t_idx == self.T - 1).float()
+        prior_mask = 0.20*(t_idx == self.T - 1).float()
         elbo = l_diff + prior_mask * l_prior
         return elbo.mean(), l_diff.mean(), l_prior.mean()
 
