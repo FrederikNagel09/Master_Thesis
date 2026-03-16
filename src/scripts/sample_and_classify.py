@@ -11,7 +11,6 @@ import sys
 
 sys.path.append(".")
 
-import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
@@ -26,14 +25,15 @@ from src.models.mnist_classifier import UNetClassifier
 
 VAE_CONFIG_PATH = "src/results/vae_inr_hypernet/experiments/inr_vae_gauss_06-03-13:58.json"
 DDPM_CONFIG_PATH = "src/results/ddpm/experiments/ddpm_full_run_09-03-17:00.json"
+NDM_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_one_fifth_prior.json"
+
 CLASSIFIER_WEIGHTS = "src/results/classifier/weights.pth"
 CLASSIFIER_CONFIG = "src/results/classifier/config.json"
-OUT_PATH = "src/results/general/vae_vs_ddpm.png"
+OUT_PATH = "src/results/general/vae_vs_ddpm_vs_ndm.png"
 
 UNKNOWN_THRESHOLD = 0.9
-N_SAMPLES = 256  # how many to sample before picking best/worst
-TOP_K = 10  # images per row
-
+N_SAMPLES = 512  # how many to sample before picking best/worst
+TOP_K = 6  # images per row
 # ─────────────────────────────────────────────────────────────
 
 
@@ -156,7 +156,37 @@ def sample_ddpm(config, n, device):
     model.eval()
 
     all_imgs = []
-    batch = 256
+    batch = N_SAMPLES
+    with torch.no_grad():
+        for i in range(0, n, batch):
+            k = min(batch, n - i)
+            s = model.sample((k, 28 * 28)).view(k, 1, 28, 28)
+            all_imgs.append((s * 0.5 + 0.5).clamp(0, 1).cpu())
+    return torch.cat(all_imgs)
+
+
+def sample_ndm(config, n, device):
+    from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation
+
+    if config.get("f_phi_type", "mlp") == "mlp":
+        F_phi = MLPTransformation(  # noqa: N806
+            data_dim=28 * 28,
+            hidden_dims=config.get("f_phi_hidden", [512, 512, 512]),
+            t_embed_dim=config.get("f_phi_t_embed", 32),
+        )
+    else:
+        F_phi = UNetTransformation()  # noqa: N806
+    network = UnetNDM()
+    model = NeuralDiffusionModel(
+        network=network,
+        F_phi=F_phi,
+        T=config["T"],
+        sigma_tilde_factor=config.get("sigma_tilde", 1.0),
+    ).to(device)
+    model.load_state_dict(torch.load(config["weights_path"], map_location=device))
+    model.eval()
+    all_imgs = []
+    batch = N_SAMPLES
     with torch.no_grad():
         for i in range(0, n, batch):
             k = min(batch, n - i)
@@ -170,27 +200,23 @@ def sample_ddpm(config, n, device):
 # ══════════════════════════════════════════════════════════════
 
 
-def draw_image_row(fig, gs, row_idx, images, labels, confs, row_color):
-    """Draw one row of TOP_K images into the given GridSpec row."""
+def draw_image_row(fig, gs, row_idx, col_offset, images, labels, confs, row_color):
     KNOWN = "#2a9d3a"  # noqa: N806
     UNKNOWN = "#cc2222"  # noqa: N806
-
     for col_idx in range(TOP_K):
-        ax = fig.add_subplot(gs[row_idx, col_idx])
+        ax = fig.add_subplot(gs[row_idx, col_offset + col_idx])
         ax.set_facecolor("white")
         ax.imshow(images[col_idx, 0].numpy(), cmap="gray", vmin=0, vmax=1, interpolation="nearest")
         ax.axis("off")
-
         label = labels[col_idx]
         conf = confs[col_idx].item()
         is_unknown = label == "?"
-
         ax.set_title(
-            f"{'?' if is_unknown else label}\n{conf * 100:.0f}%",
+            f"{'?' if is_unknown else label}  {conf * 100:.0f}%",
             color=UNKNOWN if is_unknown else KNOWN,
-            fontsize=10,
+            fontsize=8,
             fontweight="bold",
-            pad=3,
+            pad=2,
         )
         for spine in ax.spines.values():
             spine.set_visible(True)
@@ -198,47 +224,78 @@ def draw_image_row(fig, gs, row_idx, images, labels, confs, row_color):
             spine.set_linewidth(1.8)
 
 
-def plot_results(vae_data, ddpm_data):
-    """
-    vae_data / ddpm_data: tuples of
-        (top_imgs, top_labels, top_confs, bot_imgs, bot_labels, bot_confs)
-    """
+def plot_results(vae_data, ddpm_data, ndm_data):
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
-    COL_VAE = "#000000"  # noqa: N806
-    COL_DDPM = "#000000"  # noqa: N806
-    TEXT = "#111111"  # noqa: N806
-
-    fig = plt.figure(figsize=(TOP_K * 1.9, 13))
+    NCOLS = TOP_K * 2 + 1  # 4 best | divider | 4 worst  # noqa: N806
+    fig, axes = plt.subplots(
+        3,
+        NCOLS,
+        figsize=(NCOLS * 1.1, 6),
+        gridspec_kw={
+            "wspace": 0.05,
+            "hspace": 0.45,
+            "width_ratios": [1] * TOP_K + [0.3] + [1] * TOP_K,  # narrow middle column
+        },
+    )
     fig.patch.set_facecolor("white")
 
-    # 5 rows: VAE-best, VAE-worst, spacer, DDPM-best, DDPM-worst
-    gs = gridspec.GridSpec(
-        5,
-        TOP_K,
-        figure=fig,
-        height_ratios=[1, 1, 0.18, 1, 1],
-        hspace=0.75,
-        wspace=0.08,
-    )
+    MODELS = [  # noqa: N806
+        ("INR-VAE Samples", vae_data, "#000000"),
+        ("DDPM Samples", ddpm_data, "#000000"),
+        ("NDM Samples", ndm_data, "#000000"),
+    ]
+    KNOWN = "#2a9d3a"  # noqa: N806
+    UNKNOWN = "#cc2222"  # noqa: N806
 
-    # ── VAE block ─────────────────────────────────────────────
-    fig.text(0.5, 0.965, "INR-VAE Samples", ha="center", color=COL_VAE, fontsize=15, fontweight="bold")
-    fig.text(0.5, 0.910, f"Best {TOP_K}  —  highest classifier confidence", ha="center", color=TEXT, fontsize=10)
-    draw_image_row(fig, gs, 0, *vae_data[:3], COL_VAE)
+    for row_idx, (name, data, color) in enumerate(MODELS):
+        top_imgs, top_labels, top_confs, bot_imgs, bot_labels, bot_confs = data
 
-    fig.text(0.5, 0.720, f"Worst {TOP_K}  —  lowest classifier confidence", ha="center", color=TEXT, fontsize=10)
-    draw_image_row(fig, gs, 1, *vae_data[3:], COL_VAE)
+        # ── title spanning the whole row ──────────────────────
+        axes[row_idx, NCOLS // 2].set_visible(False)  # hide divider cell
+        fig.text(
+            0.5,
+            axes[row_idx, 0].get_position().y1 + 0.025,
+            name,
+            ha="center",
+            va="bottom",
+            color=color,
+            fontsize=12,
+            fontweight="bold",
+        )
 
-    # ── spacer row (gs row 2) — intentionally empty ───────────
+        # ── best 4 (left half) ────────────────────────────────
+        for i in range(TOP_K):
+            ax = axes[row_idx, i]
+            ax.imshow(top_imgs[i, 0].numpy(), cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.axis("off")
+            lbl, conf = top_labels[i], top_confs[i].item()
+            is_unk = lbl == "?"
+            ax.set_title(
+                f"{'?' if is_unk else lbl}  {conf*100:.0f}%", color=UNKNOWN if is_unk else KNOWN, fontsize=8, fontweight="bold", pad=2
+            )
+            for sp in ax.spines.values():
+                sp.set_visible(True)
+                sp.set_edgecolor(UNKNOWN if is_unk else color)
+                sp.set_linewidth(1.5)
 
-    # ── DDPM block ────────────────────────────────────────────
-    fig.text(0.5, 0.490, "DDPM Samples", ha="center", color=COL_DDPM, fontsize=15, fontweight="bold")
-    fig.text(0.5, 0.450, f"Best {TOP_K}  —  highest classifier confidence", ha="center", color=TEXT, fontsize=10)
-    draw_image_row(fig, gs, 3, *ddpm_data[:3], COL_DDPM)
-
-    fig.text(0.5, 0.255, f"Worst {TOP_K}  —  lowest classifier confidence", ha="center", color=TEXT, fontsize=10)
-    draw_image_row(fig, gs, 4, *ddpm_data[3:], COL_DDPM)
+        # ── divider column ────────────────────────────────────
+        div_ax = axes[row_idx, TOP_K]
+        div_ax.set_visible(False)
+        # ── worst 4 (right half) ──────────────────────────────
+        for i in range(TOP_K):
+            ax = axes[row_idx, TOP_K + 1 + i]
+            ax.imshow(bot_imgs[i, 0].numpy(), cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.axis("off")
+            lbl, conf = bot_labels[i], bot_confs[i].item()
+            is_unk = lbl == "?"
+            ax.set_title(
+                f"{'?' if is_unk else lbl}  {conf*100:.0f}%", color=UNKNOWN if is_unk else KNOWN, fontsize=8, fontweight="bold", pad=2
+            )
+            for sp in ax.spines.values():
+                sp.set_visible(True)
+                sp.set_edgecolor(UNKNOWN if is_unk else color)
+                sp.set_linewidth(1.5)
 
     plt.savefig(OUT_PATH, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
@@ -248,8 +305,6 @@ def plot_results(vae_data, ddpm_data):
 # ══════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════
-
-
 def main():
     device = "cuda" if torch.cuda.is_available() else "mps"
     print(f"  Device: {device}\n")
@@ -258,7 +313,10 @@ def main():
         vae_cfg = json.load(f)
     with open(DDPM_CONFIG_PATH) as f:
         ddpm_cfg = json.load(f)
-    vae_cfg["device"] = ddpm_cfg["device"] = device
+    with open(NDM_CONFIG_PATH) as f:
+        ndm_cfg = json.load(f)
+
+    vae_cfg["device"] = ddpm_cfg["device"] = ndm_cfg["device"] = device
 
     classifier = load_classifier(device)
     print("  Classifier ready\n")
@@ -277,8 +335,15 @@ def main():
     ddpm_data = top_and_bottom(ddpm_images, ddpm_labels, ddpm_confs)
     print(f"  DDPM best conf: {ddpm_data[2].max() * 100:.1f}%  worst conf: {ddpm_data[5].min() * 100:.1f}%")
 
+    # ── NDM ───────────────────────────────────────────────────
+    print(f"  Sampling {N_SAMPLES} images from NDM...")
+    ndm_images = sample_ndm(ndm_cfg, N_SAMPLES, device)
+    ndm_labels, ndm_confs = classify(classifier, ndm_images, device)
+    ndm_data = top_and_bottom(ndm_images, ndm_labels, ndm_confs)
+    print(f"  NDM  best conf: {ndm_data[2].max() * 100:.1f}%  worst conf: {ndm_data[5].min() * 100:.1f}%")
+
     print("\n  Building plot...")
-    plot_results(vae_data, ddpm_data)
+    plot_results(vae_data, ddpm_data, ndm_data)
 
 
 if __name__ == "__main__":

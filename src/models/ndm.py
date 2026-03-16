@@ -151,7 +151,7 @@ class UNetTransformation(nn.Module):
 
         # ── Output ────────────────────────────────────────────────────────────
         f_bar = self.out_conv(d)  # (batch, 1, 28, 28)
-        f_bar = torch.tanh(f_bar) 
+        f_bar = torch.tanh(f_bar)
         f_bar = f_bar.view(batch, -1)  # (batch, 784)
 
         # Enforce F_phi(x, 0) = x exactly (Appendix C.2)
@@ -456,7 +456,7 @@ class NeuralDiffusionModel(nn.Module):
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
         l_prior = self._l_prior(x)  # (batch,)
 
-        prior_mask = 0.20*(t_idx == self.T - 1).float()
+        prior_mask = 0.20 * (t_idx == self.T - 1).float()
         elbo = l_diff + prior_mask * l_prior
         return elbo.mean(), l_diff.mean(), l_prior.mean()
 
@@ -481,7 +481,7 @@ class NeuralDiffusionModel(nn.Module):
         device = self.sqrt_alpha_cumprod.device
         z_t = torch.randn(shape, device=device)
 
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T, disable=True):
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
             t_idx = torch.full((shape[0],), t, dtype=torch.long, device=device)
             t_norm = torch.full((shape[0], 1), t / max(self.T - 1, 1), device=device)
 

@@ -33,7 +33,7 @@ sys.path.append(".")
 
 VAE_CONFIG_PATH = "src/results/vae_inr_hypernet/experiments/inr_vae_gauss_06-03-13:58.json"
 DDPM_CONFIG_PATH = "src/results/ddpm/experiments/ddpm_full_run_09-03-17:00.json"
-NDM_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_15-03-07:37.json"
+NDM_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_one_fifth_prior.json"
 
 # Number of samples for FID
 N_SAMPLES = 5000
