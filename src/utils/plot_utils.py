@@ -231,7 +231,7 @@ class VisualCheckpointer:
         """Grab one MNIST image and keep it fixed for the whole run."""
         from torchvision import datasets, transforms
 
-        single_class = True  # set to False for all classes
+        single_class = False  # set to False for all classes
 
         dataset = datasets.MNIST(
             root="data",
@@ -243,7 +243,8 @@ class VisualCheckpointer:
         indices = [i for i, (_, label) in enumerate(dataset) if label == 1] if single_class else list(range(len(dataset)))
 
         img, _ = dataset[indices[0]]  # (1, 28, 28)
-        img = img.view(1, -1).to(self.device)  # (1, 784)
+        img = img.view(1, -1).to(self.device)
+        img = (img - 0.5) * 2.0  # [-1, 1] to match training distribution
         return img
 
     def maybe_checkpoint(self, global_step: int):
@@ -270,8 +271,8 @@ class VisualCheckpointer:
     # ── helpers ────────────────────────────────────────────────────────────────
 
     def _to_img(self, tensor: torch.Tensor) -> np.ndarray:
-        """(1, 784) tensor → (28, 28) numpy float array clipped to [0, 1]."""
-        return tensor.squeeze(0).cpu().numpy().reshape(self.image_size, self.image_size).clip(0.0, 1.0)
+        arr = (tensor * 0.5 + 0.5).clamp(0, 1)
+        return arr.squeeze(0).cpu().numpy().reshape(self.image_size, self.image_size)
 
     def _save_f_net_strip(self):
         n = len(self.f_net_panels)

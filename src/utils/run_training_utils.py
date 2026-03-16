@@ -181,7 +181,7 @@ def run_training_ndm(args):
 
     train_data = datasets.MNIST("data/", train=True, download=True, transform=transform)
 
-    single_class = True
+    single_class = False
 
     if single_class:
         indices = [i for i, (_, label) in enumerate(train_data) if label == 1]

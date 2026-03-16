@@ -151,6 +151,7 @@ class UNetTransformation(nn.Module):
 
         # ── Output ────────────────────────────────────────────────────────────
         f_bar = self.out_conv(d)  # (batch, 1, 28, 28)
+        f_bar = torch.tanh(f_bar) 
         f_bar = f_bar.view(batch, -1)  # (batch, 784)
 
         # Enforce F_phi(x, 0) = x exactly (Appendix C.2)
@@ -455,7 +456,8 @@ class NeuralDiffusionModel(nn.Module):
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
         l_prior = self._l_prior(x)  # (batch,)
 
-        elbo = l_diff
+        prior_mask = 0.10*(t_idx == self.T - 1).float()
+        elbo = l_diff + prior_mask * l_prior
         return elbo.mean(), l_diff.mean(), l_prior.mean()
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:

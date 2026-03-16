@@ -26,7 +26,7 @@ from torchvision import datasets, transforms
 # =============================================================================
 MLP_CONFIG_PATH = "Master_Thesis/src/results/ndm/experiments/ndm_mlp_Final_10-03-19:13.json"
 
-UNET_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_no_prior_15-03-15:06.json"
+UNET_CONFIG_PATH = "/zhome/66/4/156534/Master_Thesis/src/results/ndm/experiments/ndm_unet_full_final_smallT_15-03-20:50.json"
 # =============================================================================
 
 N_IMAGES = 8
@@ -73,6 +73,7 @@ def get_mnist_samples(n: int, single_class: bool = True) -> torch.Tensor:
             transforms.Lambda(lambda x: x.flatten()),
         ]
     )
+    single_class = False  # set to False for all classes
     dataset = datasets.MNIST("data/", train=False, download=True, transform=transform)
 
     indices = [i for i, (_, label) in enumerate(dataset) if label == 1] if single_class else list(range(len(dataset)))
@@ -104,7 +105,8 @@ def make_plot(config: dict, out_dir: str):
     # ── Row 1: real MNIST images ──────────────────────────────────────────────
     print("Sampling MNIST images...")
     real = get_mnist_samples(N_IMAGES).to(device)  # (8, 784)
-
+    print(f"real.min(): {real.min()}")
+    print(f"real.max(): {real.max()}")
     # ── Row 2: F_phi transformation across t=0 → t=1 ─────────────────────────
     print("Running data transformation F_phi across time...")
     # Each of the 8 images is transformed at a different t, evenly spaced 0→1,
@@ -117,11 +119,15 @@ def make_plot(config: dict, out_dir: str):
     with torch.no_grad():
         transformed = model.F_phi(real, t_T)  # (8, 784)
 
+    print(f"transformed.min(): {transformed.min()}")
+    print(f"transformed.max(): {transformed.max()}")
     # ── Row 3: full NDM samples ────────────────────────────────────────────────
     print("Sampling from full NDM...")
     with torch.no_grad():
         samples = model.sample((N_IMAGES, 28 * 28))  # (8, 784)
 
+    print(f"samples.min(): {samples.min()}")
+    print(f"samples.max(): {samples.max()}")
     # ── Build strips ──────────────────────────────────────────────────────────
     strip_real = to_grid(real)
     strip_transformed = to_grid(transformed)
