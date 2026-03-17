@@ -239,6 +239,7 @@ def train_ndm(
     log_every_n_steps: int = 20,
     warmup_steps: int = 5000,  # paper uses 45k for CIFAR, 20k for ImageNet
     peak_lr: float = 4e-4,  # must match the lr used to construct optimizer
+    dataset: str = "mnist",
 ):
     model.train()
 
@@ -272,6 +273,9 @@ def train_ndm(
         graph_dir=graph_dir,
         total_steps=total_steps,
         n_checkpoints=5,
+        image_size=32 if dataset == "cifar10" else 28,
+        dataset=dataset,
+        channels=3 if dataset == "cifar10" else 1,
     )
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -294,7 +298,7 @@ def train_ndm(
     print(f"─────────────────────────────────────────────────────\n")
 
     """
-    print(f"  Total steps: {total_steps},  Warmup: {warmup_steps} ({100*warmup_steps/total_steps:.1f}%)")
+    print(f"  Total steps: {total_steps},  Warmup: {warmup_steps} ({100 * warmup_steps / total_steps:.1f}%)")
     for _ in range(epochs):
         for x in data_loader:
             if isinstance(x, list | tuple):

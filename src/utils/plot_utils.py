@@ -207,7 +207,11 @@ class VisualCheckpointer:
         total_steps: int,
         n_checkpoints: int = 5,
         image_size: int = 28,
+        dataset: str = "mnist",  # <-- add
+        channels: int = 1,  # <-- add
     ):
+        self.dataset = dataset
+        self.channels = channels
         self.model = model
         self.device = device
         self.name = name
@@ -231,20 +235,13 @@ class VisualCheckpointer:
         """Grab one MNIST image and keep it fixed for the whole run."""
         from torchvision import datasets, transforms
 
-        single_class = False  # set to False for all classes
-
-        dataset = datasets.MNIST(
-            root="data",
-            train=True,
-            download=True,
-            transform=transforms.ToTensor(),
-        )
-
-        indices = [i for i, (_, label) in enumerate(dataset) if label == 1] if single_class else list(range(len(dataset)))
-
-        img, _ = dataset[indices[0]]  # (1, 28, 28)
+        if self.dataset == "cifar10":
+            dataset = datasets.CIFAR10(root="data", train=True, download=False, transform=transforms.ToTensor())
+        else:
+            dataset = datasets.MNIST(root="data", train=True, download=True, transform=transforms.ToTensor())
+        img, _ = dataset[0]
         img = img.view(1, -1).to(self.device)
-        img = (img - 0.5) * 2.0  # [-1, 1] to match training distribution
+        img = (img - 0.5) * 2.0
         return img
 
     def maybe_checkpoint(self, global_step: int):
@@ -257,7 +254,7 @@ class VisualCheckpointer:
             transformed = self.model.F_phi(self.fixed_image, t_T)
             f_img = self._to_img(transformed)
 
-            sample = self.model.sample((1, self.n_pixels))
+            sample = self.model.sample(1)
             s_img = self._to_img(sample)
 
         self.model.train()
@@ -272,7 +269,10 @@ class VisualCheckpointer:
 
     def _to_img(self, tensor: torch.Tensor) -> np.ndarray:
         arr = (tensor * 0.5 + 0.5).clamp(0, 1)
-        return arr.squeeze(0).cpu().numpy().reshape(self.image_size, self.image_size)
+        if self.channels == 3:
+            return np.transpose(arr.squeeze(0).cpu().numpy().reshape(3, self.image_size, self.image_size), (1, 2, 0))
+        else:
+            return arr.squeeze(0).cpu().numpy().reshape(self.image_size, self.image_size)
 
     def _save_f_net_strip(self):
         n = len(self.f_net_panels)
@@ -283,7 +283,7 @@ class VisualCheckpointer:
 
         # ── Column 0: original image (shown once, static) ──────────────────────
         orig_img = self._to_img(self.fixed_image)
-        axes[0].imshow(orig_img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+        axes[0].imshow(orig_img, vmin=0, vmax=1, interpolation="nearest")
         axes[0].set_title("original", fontsize=9, color="#444444")
         axes[0].axis("off")
         # Subtle box to visually separate original from checkpoints
@@ -293,7 +293,7 @@ class VisualCheckpointer:
 
         # ── Columns 1..n: F_net outputs at each checkpoint ─────────────────────
         for ax, (step, img) in zip(axes[1:], self.f_net_panels, strict=False):
-            ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.imshow(img, vmin=0, vmax=1, interpolation="nearest")
             ax.set_title(f"step {step:,}", fontsize=9, color="#444444")
             ax.axis("off")
 
@@ -316,7 +316,7 @@ class VisualCheckpointer:
             axes = [axes]
 
         for ax, (step, img) in zip(axes, panels, strict=False):
-            ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.imshow(img, vmin=0, vmax=1, interpolation="nearest")
             ax.set_title(f"step {step:,}", fontsize=9, color="#444444")
             ax.axis("off")
 

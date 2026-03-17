@@ -65,6 +65,7 @@ MODEL_SAVE_KEYS = {
         "f_phi_hidden",
         "f_phi_t_embed",
         "sigma_tilde",
+        "dataset",
     ],
     # add more model types here as needed
 }
@@ -107,7 +108,6 @@ def parse_args_training():
     parser.add_argument("--h1", type=int, default=20, help="Size of first hidden layer (default: 20).")
     parser.add_argument("--h2", type=int, default=20, help="Size of second hidden layer (default: 20).")
     parser.add_argument("--h3", type=int, default=20, help="Size of third hidden layer (default: 20).")
-    parser.add_argument("--dataset", type=str, default="mnist", help="Dataset to use (default: 'mnist').")
     parser.add_argument("--omega_0", type=float, default=20.0, help="Omega_0 parameter for SIREN layers (default: 20.0).")
     parser.add_argument("--hyper_h", type=int, default=256, help="Size of hidden layer in hypernetwork (default: 256).")
     parser.add_argument("--subset_frac", type=float, default=1.0, help="Fraction of the dataset to use (default: 1.0, i.e. 100%).")
@@ -148,6 +148,7 @@ def parse_args_training():
         default=20,
         help="How often (in optimizer steps) to log the running average loss.",
     )
+    parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "cifar10"])
 
     # ---- NDM training ----
     parser.add_argument("--grad_clip", type=float, default=1.0)

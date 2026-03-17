@@ -73,9 +73,15 @@ class UNetTransformation(nn.Module):
         F_phi(x, 0) = x  exactly,  via  (1-t)*x + t*f_bar
     """
 
-    def __init__(self, t_dim: int = 64):
+    def __init__(self, t_dim: int = 64, data_dim: int = 784):
         super().__init__()
-        chs = [16, 32, 64, 128, 128]
+        if data_dim == 784:  # MNIST
+            self.C, self.H, self.W = 1, 28, 28
+        elif data_dim == 3072:  # CIFAR-10
+            self.C, self.H, self.W = 3, 32, 32
+        else:
+            raise ValueError(f"Unsupported data_dim: {data_dim}")
+        chs = [32, 64, 128, 128, 256]
 
         # ── Time embedding ────────────────────────────────────────────────────
         self.t_embed = nn.Sequential(
@@ -87,7 +93,7 @@ class UNetTransformation(nn.Module):
 
         # ── Encoder ───────────────────────────────────────────────────────────
         # Each level: ResBlock (with time conditioning) + optional downsample
-        self.enc0 = TimeConditionedResBlock(1, chs[0], t_dim)
+        self.enc0 = TimeConditionedResBlock(self.C, chs[0], t_dim)
         self.enc1 = TimeConditionedResBlock(chs[0], chs[1], t_dim)
         self.enc2 = TimeConditionedResBlock(chs[1], chs[2], t_dim)
         self.enc3 = TimeConditionedResBlock(chs[2], chs[3], t_dim)
@@ -95,7 +101,7 @@ class UNetTransformation(nn.Module):
 
         self.down0 = nn.MaxPool2d(2)  # 28 -> 14
         self.down1 = nn.MaxPool2d(2)  # 14 ->  7
-        self.down2 = nn.MaxPool2d(2, padding=1)  #  7 ->  4
+        self.down2 = nn.MaxPool2d(2, padding=0 if data_dim == 3072 else 1)
         self.down3 = nn.MaxPool2d(2)  #  4 ->  2
 
         # ── Decoder ───────────────────────────────────────────────────────────
@@ -111,16 +117,16 @@ class UNetTransformation(nn.Module):
         self.up0 = nn.ConvTranspose2d(chs[1], chs[1], kernel_size=2, stride=2)  # 14 -> 28
 
         # ── Output projection ─────────────────────────────────────────────────
-        self.out_conv = nn.Conv2d(chs[0], 1, kernel_size=3, padding=1)
+        self.out_conv = nn.Conv2d(chs[0], self.C, kernel_size=3, padding=1)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
-        x: (batch, 784)
+        x: (batch, data_dim)
         t: (batch, 1)   normalised time in [0, 1]
         returns: (batch, 784)
         """
         batch = x.shape[0]
-        h = x.view(batch, 1, 28, 28)  # (batch, 1, 28, 28)
+        h = x.view(batch, self.C, self.H, self.W)  # (batch, C, H, W)
 
         t_emb = self.t_embed(t)  # (batch, t_dim)
 
@@ -138,7 +144,7 @@ class UNetTransformation(nn.Module):
 
         # up2: 4->8, but s2 is 7x7 — crop to match
         d = self.up2(d)  # (batch, 128, 8, 8)
-        d = d[:, :, :7, :7]  # (batch, 128, 7, 7)
+        d = d[:, :, : s2.shape[2], : s2.shape[3]]  # crop to match skip connection size
         d = self.dec2(torch.cat([d, s2], dim=1), t_emb)  # (batch, 128, 7, 7)
 
         # up1: 7->14, matches s1 exactly
@@ -150,9 +156,9 @@ class UNetTransformation(nn.Module):
         d = self.dec0(torch.cat([d, s0], dim=1), t_emb)  # (batch, 32, 28, 28)
 
         # ── Output ────────────────────────────────────────────────────────────
-        f_bar = self.out_conv(d)  # (batch, 1, 28, 28)
+        f_bar = self.out_conv(d)  # (batch, C, H, W)
         f_bar = torch.tanh(f_bar)
-        f_bar = f_bar.view(batch, -1)  # (batch, 784)
+        f_bar = f_bar.view(batch, -1)  # (batch, data_dim)
 
         # Enforce F_phi(x, 0) = x exactly (Appendix C.2)
         return (1 - t) * x + t * f_bar
@@ -175,9 +181,15 @@ class UnetNDM(nn.Module):
         - UnetNDM returns the raw predicted noise epsilon_hat  (no constraint)
     """
 
-    def __init__(self, t_dim: int = 64):
+    def __init__(self, t_dim: int = 64, data_dim: int = 784):
         super().__init__()
-        chs = [16, 32, 64, 128, 128]
+        if data_dim == 784:  # MNIST
+            self.C, self.H, self.W = 1, 28, 28
+        elif data_dim == 3072:  # CIFAR-10
+            self.C, self.H, self.W = 3, 32, 32
+        else:
+            raise ValueError(f"Unsupported data_dim: {data_dim}")
+        chs = [32, 64, 128, 128, 256]
 
         # ── Time embedding ────────────────────────────────────────────────────
         self.t_embed = nn.Sequential(
@@ -188,7 +200,7 @@ class UnetNDM(nn.Module):
         )
 
         # ── Encoder ───────────────────────────────────────────────────────────
-        self.enc0 = TimeConditionedResBlock(1, chs[0], t_dim)
+        self.enc0 = TimeConditionedResBlock(self.C, chs[0], t_dim)
         self.enc1 = TimeConditionedResBlock(chs[0], chs[1], t_dim)
         self.enc2 = TimeConditionedResBlock(chs[1], chs[2], t_dim)
         self.enc3 = TimeConditionedResBlock(chs[2], chs[3], t_dim)
@@ -196,7 +208,7 @@ class UnetNDM(nn.Module):
 
         self.down0 = nn.MaxPool2d(2)  # 28 -> 14
         self.down1 = nn.MaxPool2d(2)  # 14 ->  7
-        self.down2 = nn.MaxPool2d(2, padding=1)  #  7 ->  4
+        self.down2 = nn.MaxPool2d(2, padding=0 if data_dim == 3072 else 1)
         self.down3 = nn.MaxPool2d(2)  #  4 ->  2
 
         # ── Decoder ───────────────────────────────────────────────────────────
@@ -211,16 +223,16 @@ class UnetNDM(nn.Module):
         self.up0 = nn.ConvTranspose2d(chs[1], chs[1], kernel_size=2, stride=2)  # 14 -> 28
 
         # ── Output projection ─────────────────────────────────────────────────
-        self.out_conv = nn.Conv2d(chs[0], 1, kernel_size=3, padding=1)
+        self.out_conv = nn.Conv2d(chs[0], self.C, kernel_size=3, padding=1)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
-        x: (batch, 784)   noisy latent z_t
+        x: (batch, data_dim)   noisy latent z_t
         t: (batch, 1)     normalised time in [0, 1]
-        returns: (batch, 784)  predicted noise epsilon_hat
+        returns: (batch, data_dim)  predicted noise epsilon_hat
         """
         batch = x.shape[0]
-        h = x.view(batch, 1, 28, 28)
+        h = x.view(batch, self.C, self.H, self.W)
 
         t_emb = self.t_embed(t)  # (batch, t_dim)
 
@@ -236,7 +248,7 @@ class UnetNDM(nn.Module):
         d = self.dec3(torch.cat([d, s3], dim=1), t_emb)  # (batch, 256, 4, 4)
 
         d = self.up2(d)  # (batch, 128, 8, 8)
-        d = d[:, :, :7, :7]  # (batch, 128, 7, 7)
+        d = d[:, :, : s2.shape[2], : s2.shape[3]]  # crop to match skip connection size
         d = self.dec2(torch.cat([d, s2], dim=1), t_emb)  # (batch, 128, 7, 7)
 
         d = self.up1(d)  # (batch, 64, 14, 14)
@@ -325,8 +337,10 @@ class NeuralDiffusionModel(nn.Module):
         beta_T: float = 2e-2,  # noqa: N803
         T: int = 100,  # noqa: N803
         sigma_tilde_factor: float = 1.0,
+        data_dim: int = 784,
     ):
         super().__init__()
+        self.data_dim = data_dim
 
         # epsilon_theta: noise predictor network
         self.network = network
@@ -464,58 +478,45 @@ class NeuralDiffusionModel(nn.Module):
         return self.negative_elbo(x)
 
     @torch.no_grad()
-    def sample(self, shape: tuple) -> torch.Tensor:
+    def sample(self, n_samples: int = 1) -> torch.Tensor:
         """
         Ancestral sampling from the NDM.
-
         Algorithm 2:
             z_T ~ N(0, I)
             for t = T, ..., 1:
                 x_hat = x_hat_theta(z_t, t)          [noise -> x_hat]
                 z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat)
             x ~ p(x | z_0)  [identity at t=0, so return z_0]
-
         Parameters:
-            shape: (n_samples, 784)
+            n_samples: number of samples to generate
         """
+        shape = (n_samples, self.data_dim)
         device = self.sqrt_alpha_cumprod.device
         z_t = torch.randn(shape, device=device)
-
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            t_idx = torch.full((shape[0],), t, dtype=torch.long, device=device)
-            t_norm = torch.full((shape[0], 1), t / max(self.T - 1, 1), device=device)
-
+            t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
+            t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
             # --- Predict x_hat from z_t (Eq. 34, Appendix C) ---
             eps_hat = self.network(z_t, t_norm)
             alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
             sigma_t = self.sigma[t].unsqueeze(0)
             x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-
             if t == 0:
-                # p(x|z_0) = identity (F_phi constrained to identity at t=0)
                 z_t = x_hat
                 break
-
             # --- Sample z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat) (Eq. 7/15) ---
             s = t - 1
-            s_idx = torch.full((shape[0],), s, dtype=torch.long, device=device)
-            s_norm = torch.full((shape[0], 1), s / max(self.T - 1, 1), device=device)
-
-            Fx_hat_s = self.F_phi(x_hat, s_norm)  # F_phi(x_hat, s)  # noqa: N806
-            Fx_hat_t = self.F_phi(x_hat, t_norm)  # F_phi(x_hat, t)  # noqa: N806
-
-            # All scalars kept as (1, 1) so they broadcast cleanly with (batch, 784)
-            alpha_s = self.sqrt_alpha_cumprod[s].view(1, 1)  # (1, 1)
-            sigma_s_sq = self.sigma_sq[s].view(1, 1)  # (1, 1)
-            sigma_t_val = self.sigma[t].view(1, 1)  # (1, 1)
-            alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)  # (1, 1)
-            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)  # scalar → (1,1)
-
-            # Mean of q_phi(z_s | z_t, x_hat) — Eq. 7
+            s_idx = torch.full((n_samples,), s, dtype=torch.long, device=device)
+            s_norm = torch.full((n_samples, 1), s / max(self.T - 1, 1), device=device)
+            Fx_hat_s = self.F_phi(x_hat, s_norm)  # noqa: N806
+            Fx_hat_t = self.F_phi(x_hat, t_norm)  # noqa: N806
+            alpha_s = self.sqrt_alpha_cumprod[s].view(1, 1)
+            sigma_s_sq = self.sigma_sq[s].view(1, 1)
+            sigma_t_val = self.sigma[t].view(1, 1)
+            alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)
+            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)
             coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)
             mu = alpha_s * Fx_hat_s + coeff * (z_t - alpha_t_val * Fx_hat_t)
-
             noise = torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(z_t)
             z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
-
         return z_t

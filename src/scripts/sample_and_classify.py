@@ -272,7 +272,7 @@ def plot_results(vae_data, ddpm_data, ndm_data):
             lbl, conf = top_labels[i], top_confs[i].item()
             is_unk = lbl == "?"
             ax.set_title(
-                f"{'?' if is_unk else lbl}  {conf*100:.0f}%", color=UNKNOWN if is_unk else KNOWN, fontsize=8, fontweight="bold", pad=2
+                f"{'?' if is_unk else lbl}  {conf * 100:.0f}%", color=UNKNOWN if is_unk else KNOWN, fontsize=8, fontweight="bold", pad=2
             )
             for sp in ax.spines.values():
                 sp.set_visible(True)
@@ -290,7 +290,7 @@ def plot_results(vae_data, ddpm_data, ndm_data):
             lbl, conf = bot_labels[i], bot_confs[i].item()
             is_unk = lbl == "?"
             ax.set_title(
-                f"{'?' if is_unk else lbl}  {conf*100:.0f}%", color=UNKNOWN if is_unk else KNOWN, fontsize=8, fontweight="bold", pad=2
+                f"{'?' if is_unk else lbl}  {conf * 100:.0f}%", color=UNKNOWN if is_unk else KNOWN, fontsize=8, fontweight="bold", pad=2
             )
             for sp in ax.spines.values():
                 sp.set_visible(True)

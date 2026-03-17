@@ -87,7 +87,7 @@ class FilteredMNISTDataset(torch.utils.data.Dataset):
             indices = rng.choice(indices, size=n, replace=False).tolist()
 
         self.indices = indices
-        print(f"  [{split}] classes={classes} | " f"subset_fraction={subset_fraction} | " f"n_samples={len(self.indices)}")
+        print(f"  [{split}] classes={classes} | subset_fraction={subset_fraction} | n_samples={len(self.indices)}")
 
     @staticmethod
     def _load_labels(raw_dir: str, split: str) -> np.ndarray:

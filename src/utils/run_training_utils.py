@@ -1,7 +1,9 @@
 import os
 import sys
 
+import numpy as np
 import torch
+from matplotlib import pyplot as plt
 from torch.utils.data import Subset
 
 sys.path.append(".")
@@ -170,16 +172,43 @@ def run_training_ndm(args):
     from src.utils.training_utils import train_ndm
 
     # ---- Data ----
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Lambda(lambda x: x + torch.rand(x.shape) / 255),
-            transforms.Lambda(lambda x: (x - 0.5) * 2.0),
-            transforms.Lambda(lambda x: x.flatten()),
-        ]
-    )
+    if args.dataset == "cifar10":
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: x + torch.rand(x.shape) / 255),
+                transforms.Lambda(lambda x: (x - 0.5) * 2.0),
+                transforms.Lambda(lambda x: x.flatten()),
+            ]
+        )
+        train_data = datasets.CIFAR10("data/", train=True, download=True, transform=transform)
+        data_dim = 32 * 32 * 3  # 3072
+        fig, axes = plt.subplots(4, 4, figsize=(8, 8))
+        for i, ax in enumerate(axes.flat):
+            img, _ = train_data[i]
+            img = (img * 0.5 + 0.5).clamp(0, 1).numpy().reshape(3, 32, 32)  # back to (C, H, W)
+            img = np.transpose(img, (1, 2, 0))  # to (H, W, C) for imshow
+            ax.imshow(img)
+            ax.axis("off")
 
-    train_data = datasets.MNIST("data/", train=True, download=True, transform=transform)
+        fig.tight_layout()
+        os.makedirs("src/results", exist_ok=True)
+        fig.savefig("src/results/samples_CIFAR.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print("Saved to src/results/samples_CIFAR.png")
+        print("##### DATASET: CIFAR-10 #####")
+    else:  # mnist
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: x + torch.rand(x.shape) / 255),
+                transforms.Lambda(lambda x: (x - 0.5) * 2.0),
+                transforms.Lambda(lambda x: x.flatten()),
+            ]
+        )
+        train_data = datasets.MNIST("data/", train=True, download=True, transform=transform)
+        data_dim = 28 * 28  # 784
+        print("##### DATASET: MNIST #####")
 
     single_class = False
 
@@ -197,19 +226,19 @@ def run_training_ndm(args):
     # ---- Transformation network F_phi ----
     if args.f_phi_type == "mlp":
         F_phi = MLPTransformation(  # noqa: N806
-            data_dim=28 * 28,
+            data_dim=data_dim,
             hidden_dims=args.f_phi_hidden,
             t_embed_dim=args.f_phi_t_embed,
         )
         print(f"F_phi: MLP  hidden={args.f_phi_hidden}  t_embed={args.f_phi_t_embed}")
     elif args.f_phi_type == "unet":
-        F_phi = UNetTransformation()  # noqa: N806
+        F_phi = UNetTransformation(data_dim=data_dim)  # noqa: N806
         print("F_phi: UNet")
     else:
         raise ValueError(f"Unknown f_phi_type: {args.f_phi_type!r}. Choose 'mlp' or 'unet'.")
 
     # ---- Noise-prediction network (same Unet as DDPM) ----
-    network = UnetNDM()
+    network = UnetNDM(data_dim=data_dim)
 
     # ---- Model ----
     model = NeuralDiffusionModel(
@@ -217,6 +246,7 @@ def run_training_ndm(args):
         F_phi=F_phi,
         T=args.T,
         sigma_tilde_factor=args.sigma_tilde,
+        data_dim=data_dim,
     ).to(args.device)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -245,8 +275,9 @@ def run_training_ndm(args):
         device=args.device,
         name=run_name,
         log_every_n_steps=args.log_every_n_steps,
-        warmup_steps=200,  # add to your args
+        warmup_steps=45000,  # add to your args
         peak_lr=args.lr,
+        dataset=args.dataset,
     )
     print("NDM training completed.")
 

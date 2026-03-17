@@ -50,16 +50,17 @@ python src/train.py \
 
 python src/train.py \
     --model ndm \
-    --name ndm_unet_no_prior_only_class_1 \
-    --epochs 50 \
-    --batch_size 64 \
-    --lr 2e-4 \
-    --T 100 \
+    --name ndm_unet_cifar\
+    --epochs 1000 \
+    --batch_size 128 \
+    --lr 4e-4 \
+    --T 1000 \
     --device mps \
     --subset_frac 1.0 \
     --f_phi_type unet \
     --sigma_tilde 1.0 \
-    --log_every_n_steps 20
+    --log_every_n_steps 20 \
+    --dataset cifar10
 
 ############################## VAE Training #######################################
 python src/train.py \
