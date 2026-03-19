@@ -275,7 +275,7 @@ def run_training_ndm(args):
         device=args.device,
         name=run_name,
         log_every_n_steps=args.log_every_n_steps,
-        warmup_steps=45000,  # add to your args
+        warmup_steps=args.warmup_steps,  # add to your args
         peak_lr=args.lr,
         dataset=args.dataset,
     )
@@ -285,9 +285,16 @@ def run_training_ndm(args):
     weights_dir = os.path.join(RES_DIR, f"{args.model}/weights")
     os.makedirs(weights_dir, exist_ok=True)
     weights_path = os.path.join(weights_dir, f"{run_name}.pth")
-    torch.save(model.state_dict(), weights_path)
-    print(f"Weights saved to: {weights_path}")
 
+    # Save full checkpoint instead of just state_dict
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "epoch": args.epochs,
+        "run_name": run_name,
+    }
+    torch.save(checkpoint, weights_path)
+    print(f"Checkpoint saved to: {weights_path}")
     save_dir = os.path.join(RES_DIR, f"{args.model}/experiments", f"{run_name}.json")
     save_config(args, save_dir, weights_path)
 

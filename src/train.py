@@ -60,7 +60,8 @@ python src/train.py \
     --f_phi_type unet \
     --sigma_tilde 1.0 \
     --log_every_n_steps 20 \
-    --dataset cifar10
+    --dataset cifar10 \
+    --warmup_steps 1000
 
 ############################## VAE Training #######################################
 python src/train.py \

@@ -114,6 +114,7 @@ def parse_args_training():
 
     # ---- NDM architecture ----
     parser.add_argument("--T", type=int, default=1000, help="Diffusion timesteps")
+    parser.add_argument("--warmup_steps", type=int, default=1000, help="lr warm up")
     parser.add_argument(
         "--f_phi_type",
         type=str,
