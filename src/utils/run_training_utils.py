@@ -264,6 +264,22 @@ def run_training_ndm(args):
         eps=1e-8,
         weight_decay=0.0,
     )
+    # ---- Resume from checkpoint (optional) ----
+    start_epoch = 0
+    if args.resume is not None:
+        print(f"Resuming from checkpoint: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=args.device)
+
+        # Handle both old-style (bare state_dict) and new-style (full checkpoint)
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            start_epoch = checkpoint.get("epoch", args.resume_epoch)
+        else:
+            model.load_state_dict(checkpoint)
+            start_epoch = args.resume_epoch
+
+    print(f"Resumed from epoch {start_epoch}. Training for {args.epochs} more epochs.")
 
     # ---- Train ----
     print("\nStarting NDM training...")
@@ -275,9 +291,10 @@ def run_training_ndm(args):
         device=args.device,
         name=run_name,
         log_every_n_steps=args.log_every_n_steps,
-        warmup_steps=args.warmup_steps,  # add to your args
+        warmup_steps=45000,
         peak_lr=args.lr,
         dataset=args.dataset,
+        start_epoch=start_epoch,
     )
     print("NDM training completed.")
 

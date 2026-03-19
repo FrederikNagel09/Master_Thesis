@@ -115,6 +115,10 @@ def parse_args_training():
     # ---- NDM architecture ----
     parser.add_argument("--T", type=int, default=1000, help="Diffusion timesteps")
     parser.add_argument("--warmup_steps", type=int, default=1000, help="lr warm up")
+
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint .pth file to resume from")
+    parser.add_argument("--resume_epoch", type=int, default=0, help="Epoch number the checkpoint was saved at")
+
     parser.add_argument(
         "--f_phi_type",
         type=str,

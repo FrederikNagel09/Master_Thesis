@@ -240,10 +240,12 @@ def train_ndm(
     warmup_steps: int = 5000,  # paper uses 45k for CIFAR, 20k for ImageNet
     peak_lr: float = 4e-4,  # must match the lr used to construct optimizer
     dataset: str = "mnist",
+    start_epoch: int = 0,
 ):
     model.train()
 
-    total_steps = len(data_loader) * epochs
+    total_steps = len(data_loader) * (epochs + start_epoch)
+    completed_steps = len(data_loader) * start_epoch
 
     def lr_lambda(current_step: int) -> float:
         """
@@ -260,9 +262,9 @@ def train_ndm(
             floor = 1e-8 / peak_lr
             return max(floor, 1.0 - progress * (1.0 - floor))
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch=max(completed_steps - 1, -1))
 
-    progress_bar = tqdm(range(total_steps), desc="Training NDM")
+    progress_bar = tqdm(range(len(data_loader) * epochs), desc="Training NDM")
     history: dict = {"train_elbo": [], "diff": [], "prior": [], "steps": [], "lr": []}
 
     # ── visual checkpointer ────────────────────────────────────────────────────
@@ -279,7 +281,7 @@ def train_ndm(
     )
     # ──────────────────────────────────────────────────────────────────────────
 
-    global_step = 0
+    global_step = completed_steps
     running_loss = 0.0
     running_count = 0
     running_diff = 0.0

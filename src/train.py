@@ -50,18 +50,21 @@ python src/train.py \
 
 python src/train.py \
     --model ndm \
-    --name ndm_unet_cifar\
-    --epochs 1000 \
+    --name ndm_unet_testing\
+    --epochs 10 \
     --batch_size 128 \
     --lr 4e-4 \
-    --T 1000 \
+    --T 100 \
     --device mps \
     --subset_frac 1.0 \
     --f_phi_type unet \
     --sigma_tilde 1.0 \
     --log_every_n_steps 20 \
     --dataset cifar10 \
-    --warmup_steps 1000
+    --warmup_steps 1000 
+    
+    --resume <path_to_checkpoint.pth> \
+    --resume_epoch <epoch_number>
 
 ############################## VAE Training #######################################
 python src/train.py \
