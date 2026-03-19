@@ -209,6 +209,7 @@ class VisualCheckpointer:
         image_size: int = 28,
         dataset: str = "mnist",  # <-- add
         channels: int = 1,  # <-- add
+        start_step: int = 0,  # <-- add
     ):
         self.dataset = dataset
         self.channels = channels
@@ -219,8 +220,9 @@ class VisualCheckpointer:
         self.image_size = image_size
         self.n_pixels = image_size * image_size
 
-        # Evenly spaced checkpoint steps (never step 0)
-        self.checkpoint_steps = set(int(round(total_steps * i / n_checkpoints)) for i in range(1, n_checkpoints + 1))  # noqa: C401
+        self.checkpoint_steps = set(  # noqa: C401
+            int(round(start_step + (total_steps - start_step) * i / n_checkpoints)) for i in range(1, n_checkpoints + 1)
+        )
 
         # Fix a single image for F_net evaluation throughout training
         self.fixed_image = self._get_fixed_image()
@@ -283,7 +285,10 @@ class VisualCheckpointer:
 
         # ── Column 0: original image (shown once, static) ──────────────────────
         orig_img = self._to_img(self.fixed_image)
-        axes[0].imshow(orig_img, vmin=0, vmax=1, interpolation="nearest")
+        if self.dataset == "cifar10":
+            axes[0].imshow(orig_img, vmin=0, vmax=1, interpolation="nearest")
+        else:
+            axes[0].imshow(orig_img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
         axes[0].set_title("original", fontsize=9, color="#444444")
         axes[0].axis("off")
         # Subtle box to visually separate original from checkpoints
@@ -293,7 +298,10 @@ class VisualCheckpointer:
 
         # ── Columns 1..n: F_net outputs at each checkpoint ─────────────────────
         for ax, (step, img) in zip(axes[1:], self.f_net_panels, strict=False):
-            ax.imshow(img, vmin=0, vmax=1, interpolation="nearest")
+            if self.dataset == "cifar10":
+                ax.imshow(img, vmin=0, vmax=1, interpolation="nearest")
+            else:
+                ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
             ax.set_title(f"step {step:,}", fontsize=9, color="#444444")
             ax.axis("off")
 
@@ -316,7 +324,10 @@ class VisualCheckpointer:
             axes = [axes]
 
         for ax, (step, img) in zip(axes, panels, strict=False):
-            ax.imshow(img, vmin=0, vmax=1, interpolation="nearest")
+            if self.dataset == "cifar10":
+                ax.imshow(img, vmin=0, vmax=1, interpolation="nearest")
+            else:
+                ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
             ax.set_title(f"step {step:,}", fontsize=9, color="#444444")
             ax.axis("off")
 

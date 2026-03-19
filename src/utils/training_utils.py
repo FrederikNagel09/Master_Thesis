@@ -278,6 +278,7 @@ def train_ndm(
         image_size=32 if dataset == "cifar10" else 28,
         dataset=dataset,
         channels=3 if dataset == "cifar10" else 1,
+        start_step=completed_steps,
     )
     # ──────────────────────────────────────────────────────────────────────────
 

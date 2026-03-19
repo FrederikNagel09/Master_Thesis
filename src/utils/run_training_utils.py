@@ -210,9 +210,10 @@ def run_training_ndm(args):
         data_dim = 28 * 28  # 784
         print("##### DATASET: MNIST #####")
 
-    single_class = False
+    single_class = args.single_class
 
     if single_class:
+        print("##### Using only class 1 for training #####.")
         indices = [i for i, (_, label) in enumerate(train_data) if label == 1]
         train_data = Subset(train_data, indices)
 
@@ -232,13 +233,13 @@ def run_training_ndm(args):
         )
         print(f"F_phi: MLP  hidden={args.f_phi_hidden}  t_embed={args.f_phi_t_embed}")
     elif args.f_phi_type == "unet":
-        F_phi = UNetTransformation(data_dim=data_dim)  # noqa: N806
+        F_phi = UNetTransformation(data_dim=data_dim, base_channels=args.base_channels)  # noqa: N806
         print("F_phi: UNet")
     else:
         raise ValueError(f"Unknown f_phi_type: {args.f_phi_type!r}. Choose 'mlp' or 'unet'.")
 
     # ---- Noise-prediction network (same Unet as DDPM) ----
-    network = UnetNDM(data_dim=data_dim)
+    network = UnetNDM(data_dim=data_dim, base_channels=args.base_channels)
 
     # ---- Model ----
     model = NeuralDiffusionModel(
@@ -291,7 +292,7 @@ def run_training_ndm(args):
         device=args.device,
         name=run_name,
         log_every_n_steps=args.log_every_n_steps,
-        warmup_steps=45000,
+        warmup_steps=args.warmup_steps,
         peak_lr=args.lr,
         dataset=args.dataset,
         start_epoch=start_epoch,

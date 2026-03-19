@@ -73,7 +73,7 @@ class UNetTransformation(nn.Module):
         F_phi(x, 0) = x  exactly,  via  (1-t)*x + t*f_bar
     """
 
-    def __init__(self, t_dim: int = 64, data_dim: int = 784):
+    def __init__(self, t_dim: int = 64, data_dim: int = 784, base_channels: int = 32):
         super().__init__()
         if data_dim == 784:  # MNIST
             self.C, self.H, self.W = 1, 28, 28
@@ -81,7 +81,9 @@ class UNetTransformation(nn.Module):
             self.C, self.H, self.W = 3, 32, 32
         else:
             raise ValueError(f"Unsupported data_dim: {data_dim}")
-        chs = [32, 64, 128, 128, 256]
+
+        b = base_channels
+        chs = [b, b * 2, b * 4, b * 4, b * 8]
 
         # ── Time embedding ────────────────────────────────────────────────────
         self.t_embed = nn.Sequential(
@@ -181,7 +183,7 @@ class UnetNDM(nn.Module):
         - UnetNDM returns the raw predicted noise epsilon_hat  (no constraint)
     """
 
-    def __init__(self, t_dim: int = 64, data_dim: int = 784):
+    def __init__(self, t_dim: int = 64, data_dim: int = 784, base_channels: int = 32):
         super().__init__()
         if data_dim == 784:  # MNIST
             self.C, self.H, self.W = 1, 28, 28
@@ -189,7 +191,9 @@ class UnetNDM(nn.Module):
             self.C, self.H, self.W = 3, 32, 32
         else:
             raise ValueError(f"Unsupported data_dim: {data_dim}")
-        chs = [32, 64, 128, 128, 256]
+
+        b = base_channels
+        chs = [b, b * 2, b * 4, b * 4, b * 8]
 
         # ── Time embedding ────────────────────────────────────────────────────
         self.t_embed = nn.Sequential(

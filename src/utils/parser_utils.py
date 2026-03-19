@@ -66,6 +66,7 @@ MODEL_SAVE_KEYS = {
         "f_phi_t_embed",
         "sigma_tilde",
         "dataset",
+        "base_channels",
     ],
     # add more model types here as needed
 }
@@ -115,6 +116,9 @@ def parse_args_training():
     # ---- NDM architecture ----
     parser.add_argument("--T", type=int, default=1000, help="Diffusion timesteps")
     parser.add_argument("--warmup_steps", type=int, default=1000, help="lr warm up")
+    parser.add_argument("--single_class", type=bool, default=False, help="Train on a single class")
+
+    parser.add_argument("--base_channels", type=int, default=32, help="Base number of channels in the U-Net")
 
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint .pth file to resume from")
     parser.add_argument("--resume_epoch", type=int, default=0, help="Epoch number the checkpoint was saved at")

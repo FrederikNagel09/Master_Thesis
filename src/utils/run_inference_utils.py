@@ -203,6 +203,11 @@ def run_inference_ndm(args, config):
     from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation
 
     device = config.get("device", "cpu")
+    if config["dataset"] == "mnist":
+        data_dim = 28 * 28
+        print("##### DATASET: MNIST #####")
+    else:
+        data_dim = 32 * 32
 
     # ---- Re-build the same architecture that was saved ----
     if config.get("f_phi_type", "mlp") == "mlp":
@@ -212,25 +217,35 @@ def run_inference_ndm(args, config):
             t_embed_dim=config.get("f_phi_t_embed", 32),
         )
     else:
-        F_phi = UNetTransformation()  # noqa: N806
+        F_phi = UNetTransformation(data_dim=data_dim, base_channels=config["base_channels"])  # noqa: N806
 
-    network = UnetNDM()
+    network = UnetNDM(data_dim=data_dim, base_channels=config["base_channels"])
 
     model = NeuralDiffusionModel(
         network=network,
         F_phi=F_phi,
         T=config["T"],
         sigma_tilde_factor=config.get("sigma_tilde", 1.0),
+        data_dim=data_dim,
     ).to(device)
 
-    model.load_state_dict(torch.load(config["weights_path"], map_location=device))
+    checkpoint = torch.load(config["weights_path"], map_location=device)
+
+    # Handle both bare state_dict and full checkpoint
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        model.load_state_dict(checkpoint)
+
     model.eval()
 
     n = args.grid_size**2
 
+    dim = 28 if config["dataset"] == "mnist" else 32
+
     with torch.no_grad():
-        samples = model.sample((n, 28 * 28))
-        samples = samples.view(n, 1, 28, 28)
+        samples = model.sample(n)
+        samples = samples.view(n, 1, dim, dim)
 
     # ---- Build grid and save ----
     imgs = ((samples * 0.5 + 0.5).clamp(0, 1) * 255).byte().cpu().numpy()
@@ -239,7 +254,10 @@ def run_inference_ndm(args, config):
     grid = np.concatenate(rows, axis=0)
 
     fig, ax = plt.subplots()
-    ax.imshow(grid, cmap="gray", vmin=0, vmax=255)
+    if config["dataset"] == "mnist":
+        ax.imshow(grid, cmap="gray", vmin=0, vmax=255)
+    else:
+        ax.imshow(grid, vmin=0, vmax=255)
     ax.axis("off")
     ax.set_title(f"NDM Samples — {n} images", fontsize=12)
 

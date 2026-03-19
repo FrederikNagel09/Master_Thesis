@@ -50,21 +50,22 @@ python src/train.py \
 
 python src/train.py \
     --model ndm \
-    --name ndm_unet_testing\
-    --epochs 10 \
-    --batch_size 128 \
-    --lr 4e-4 \
+    --name TEST_CHECKPOINT_TRAIN_2\
+    --epochs 2 \
+    --batch_size 64 \
+    --base_channels 32 \
+    --lr 2e-4 \
     --T 100 \
     --device mps \
     --subset_frac 1.0 \
+    --single_class True \
     --f_phi_type unet \
     --sigma_tilde 1.0 \
     --log_every_n_steps 20 \
-    --dataset cifar10 \
-    --warmup_steps 1000 
-    
-    --resume <path_to_checkpoint.pth> \
-    --resume_epoch <epoch_number>
+    --dataset mnist \
+    --warmup_steps 100 \
+    --resume src/results/ndm/weights/TEST_CHECKPOINT_TRAIN_1_19-03-09:47.pth \
+    --resume_epoch 15
 
 ############################## VAE Training #######################################
 python src/train.py \
