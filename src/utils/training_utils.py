@@ -262,6 +262,11 @@ def train_ndm(
             floor = 1e-8 / peak_lr
             return max(floor, 1.0 - progress * (1.0 - floor))
 
+    # When resuming without optimizer state, inject initial_lr manually
+    if completed_steps > 0:
+        for group in optimizer.param_groups:
+            group.setdefault("initial_lr", group["lr"])
+
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch=max(completed_steps - 1, -1))
 
     progress_bar = tqdm(range(len(data_loader) * epochs), desc="Training NDM")
