@@ -42,7 +42,7 @@ SINGLE_CLASS = False  # True  → train on digit "1" only
 TARGET_CLASS = 1  # which digit to keep when SINGLE_CLASS=True
 SUBSET_FRAC = 1.0  # fraction of (filtered) dataset to use; 1.0 = all
 BATCH_SIZE = 128
-REC_WARMUP = True  # If True, l_rec is weighted by a warmup factor that starts at 0 and ramps up to 1 over the first 33% of training. This can help early training stability when the untrained model's reconstructions are very poor.
+REC_WARMUP = True
 REC_WARMUP_FRAC = 0.40  # Fraction of epochs before l_rec starts decaying
 
 # --- Diffusion schedule ---
@@ -393,10 +393,7 @@ for epoch in range(1, EPOCHS + 1):
 
         if REC_WARMUP:
             warmup_epochs = int(EPOCHS * REC_WARMUP_FRAC)
-            if epoch <= warmup_epochs:
-                rec_scale = 1.0
-            else:
-                rec_scale = 1.0 - (epoch - warmup_epochs) / (EPOCHS - warmup_epochs)
+            rec_scale = 1.0 if epoch <= warmup_epochs else 1.0 - (epoch - warmup_epochs) / (EPOCHS - warmup_epochs)
 
         loss, l_diff, l_prior, l_rec = model.loss(x, rec_scale=rec_scale)
         loss.backward()

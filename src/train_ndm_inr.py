@@ -81,7 +81,7 @@ class FilteredMNISTDataset(torch.utils.data.Dataset):
         print(f"  [{split}] classes={classes} | subset_fraction={subset_fraction} | n_samples={len(self.indices)}")
 
         # Sanity-check normalisation on first sample
-        image_flat, coords, pixels = self.base[self.indices[0]]
+        image_flat, _, pixels = self.base[self.indices[0]]
         assert (
             image_flat.max() <= 1.0
         ), f"Expected image values in [0, 1], got max={image_flat.max():.3f}. Normalise in MNISTHyperDataset or here."
