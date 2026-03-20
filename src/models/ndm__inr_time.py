@@ -431,7 +431,7 @@ class NeuralDiffusionModel(nn.Module):
     # ELBO
     # -------------------------------------------------------------------------
 
-    def negative_elbo(self, x: torch.Tensor):
+    def negative_elbo(self, x: torch.Tensor, rec_scale: float = 1.0):
         """
         Estimates the negative ELBO:
             L = E[ l_diff ] + prior_mask * l_prior + l_rec
@@ -458,13 +458,13 @@ class NeuralDiffusionModel(nn.Module):
         l_prior = self._l_prior(x)  # (batch,)
         l_rec = self._l_rec(x)  # (batch,)
 
-        prior_mask = 0.25 * (t_idx == self.T - 1).float()
-        elbo = l_diff + prior_mask * l_prior + l_rec
+        prior_mask = (t_idx == self.T - 1).float()
+        elbo = l_diff + prior_mask * l_prior + rec_scale * l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
-    def loss(self, x: torch.Tensor):
-        return self.negative_elbo(x)
+    def loss(self, x: torch.Tensor, rec_scale: float = 1.0):
+        return self.negative_elbo(x, rec_scale=rec_scale)
 
     # -------------------------------------------------------------------------
     # Sampling

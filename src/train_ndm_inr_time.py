@@ -27,7 +27,7 @@ from src.models.ndm__inr_time import INR, NeuralDiffusionModel, NoisePredictor, 
 # Run identity & output paths
 # =============================================================================
 
-run_name = "test_run"
+run_name = "ndm_inr_rec_scaling"
 LOSS_PLOT_PATH = f"src/results/ndm_inr/training_graphs/loss_{run_name}.png"
 SAMPLES_PATH = f"src/results/ndm_inr/samples/samples_{run_name}.png"
 SCALED_SAMPLES_PATH = f"src/results/ndm_inr/samples/scaled_samples_{run_name}.png"
@@ -40,13 +40,15 @@ WEIGHTS_PATH = f"src/results/ndm_inr/weights/weights_{run_name}.pt"
 # --- Data ---
 SINGLE_CLASS = False  # True  → train on digit "1" only
 TARGET_CLASS = 1  # which digit to keep when SINGLE_CLASS=True
-SUBSET_FRAC = 0.01  # fraction of (filtered) dataset to use; 1.0 = all
+SUBSET_FRAC = 1.0  # fraction of (filtered) dataset to use; 1.0 = all
 BATCH_SIZE = 128
+REC_WARMUP = True  # If True, l_rec is weighted by a warmup factor that starts at 0 and ramps up to 1 over the first 33% of training. This can help early training stability when the untrained model's reconstructions are very poor.
+REC_WARMUP_FRAC = 0.40  # Fraction of epochs before l_rec starts decaying
 
 # --- Diffusion schedule ---
 BETA_1 = 1e-4
 BETA_T = 2e-2
-T = 100
+T = 1000
 SIGMA_TILDE_FACTOR = 1.0  # 1.0 = stochastic DDPM; 0.0 = deterministic DDIM
 
 # --- INR architecture ---
@@ -70,7 +72,7 @@ WEIGHT_DECAY = 1e-5
 GRAD_CLIP = 1.0  # max gradient norm; set to 0 to disable
 
 # --- Training ---
-EPOCHS = 10
+EPOCHS = 300
 IMG_SIZE = 28
 DATA_DIM = IMG_SIZE * IMG_SIZE  # 784
 
@@ -388,7 +390,15 @@ for epoch in range(1, EPOCHS + 1):
         x = x.to(device)
 
         optimiser.zero_grad()
-        loss, l_diff, l_prior, l_rec = model.loss(x)
+
+        if REC_WARMUP:
+            warmup_epochs = int(EPOCHS * REC_WARMUP_FRAC)
+            if epoch <= warmup_epochs:
+                rec_scale = 1.0
+            else:
+                rec_scale = 1.0 - (epoch - warmup_epochs) / (EPOCHS - warmup_epochs)
+
+        loss, l_diff, l_prior, l_rec = model.loss(x, rec_scale=rec_scale)
         loss.backward()
 
         if GRAD_CLIP > 0:
