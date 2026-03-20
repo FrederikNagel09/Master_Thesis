@@ -83,19 +83,19 @@ python src/train.py \
 ######################### VAE Hypernet INR Training #############################
 python src/train.py \
     --model vae_inr_hypernet \
-    --name inr_vae_quick \
+    --name inr_vae_test \
     --epochs 5 \
     --prior mog \
     --batch_size 128 \
     --lr 1e-3 \
     --latent_dim 128\
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 64 \
     --inr_layers 3 \
     --inr_out_dim 1 \
     --vae_enc_dim 512 \
     --vae_dec_dim 512 \
     --device mps \
-    --subset_frac 0.1 
+    --subset_frac 1.0 
 
 ###############################. DDPM Training  ################################
 python src/train.py \

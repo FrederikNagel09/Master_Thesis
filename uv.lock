@@ -475,6 +475,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pre-commit" },
+    { name = "pytorch-fid" },
     { name = "ruff" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -492,6 +493,7 @@ requires-dist = [
     { name = "numpy", specifier = "<2" },
     { name = "pandas", specifier = "<3" },
     { name = "pre-commit", specifier = ">=4.5.1" },
+    { name = "pytorch-fid", specifier = ">=0.3.0" },
     { name = "ruff", specifier = ">=0.15.1" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "scipy", specifier = ">=1.17.1" },
@@ -975,6 +977,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
+]
+
+[[package]]
+name = "pytorch-fid"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/72/0b/09c4ac404e57b91688c97120b4194205c9813b0b9c263469cf28e3d74569/pytorch-fid-0.3.0.tar.gz", hash = "sha256:1c80d112c9cf5ebcbcc428a0b7ea615c302805ad6780ec29e8e2955ba31571c8", size = 16071, upload-time = "2023-01-05T17:29:15.594Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/2b/e8c875b9380f34c70d4b5d98deaaa8bcac4922388efad08a72cf129118ee/pytorch_fid-0.3.0-py3-none-any.whl", hash = "sha256:0e1d4fe66441a8dff2a2aca31394e9389fb197dfeff046f2f971f271d4137767", size = 15488, upload-time = "2023-01-05T17:29:13.649Z" },
 ]
 
 [[package]]
