@@ -85,11 +85,11 @@ python src/train.py \
     --model vae_inr_hypernet \
     --name inr_vae_quick \
     --epochs 5 \
-    --prior gaussian \
-    --batch_size 64 \
+    --prior mog \
+    --batch_size 128 \
     --lr 1e-3 \
     --latent_dim 128\
-    --inr_hidden_dim 20 \
+    --inr_hidden_dim 32 \
     --inr_layers 3 \
     --inr_out_dim 1 \
     --vae_enc_dim 512 \

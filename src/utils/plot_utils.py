@@ -1,3 +1,4 @@
+import math
 import os
 
 import numpy as np
@@ -141,19 +142,85 @@ def plot_ndm_training(history: dict, name: str, graph_dir: str):
     print(f"Training graph saved to: {save_path}")
 
 
-def plot_vae_training(history: dict, name: str, graph_dir: str):
+def moving_average(values: list[float], window: int) -> list[float]:
+    """Simple centred-ish moving average (causal  uses past `window` points)."""
+    out = []
+    for i, _ in enumerate(values):
+        start = max(0, i - window + 1)
+        out.append(sum(values[start : i + 1]) / (i - start + 1))
+    return out
+
+
+def plot_vae_training(history: dict, name: str, graph_dir: str, steps_per_epoch: int):
     os.makedirs(graph_dir, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(history["steps"], history["train_elbo"], label="Train ELBO loss")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.set_title(f"VAE Training — {name}")
-    ax.legend()
+
+    steps = history["steps"]
+    window = max(1, len(steps) // 50)
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    fig.suptitle(f"VAE Training — {name}", fontsize=13)
+
+    panels = [
+        ("total_loss", "Total Loss", "Total Loss", "tab:blue"),
+        ("recon_loss", "Reconstruction", "Reconstruction", "tab:orange"),
+        ("kl_loss", "Prior", "KL Divergence", "tab:green"),
+    ]
+
+    for ax, (key, title, ylabel, colour) in zip(axes, panels, strict=False):
+        raw = history[key]
+        ma = moving_average(raw, window)
+
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.plot(steps, raw, alpha=0.25, linewidth=0.8, color=colour, label="per-step")
+        ax.plot(steps, ma, linewidth=1.8, color=colour, label=f"moving avg (w={window})")
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_xlabel("Epoch")
+        ax.legend(fontsize=8, loc="upper right")
+        ax.grid(True, alpha=0.3)
+
+        # Replace step-index ticks with epoch numbers
+        total_steps = len(steps)
+        n_epochs = max(1, total_steps // steps_per_epoch)
+        tick_steps = [i * steps_per_epoch for i in range(n_epochs + 1)]
+        tick_labels = [str(i) for i in range(n_epochs + 1)]
+        ax.set_xticks(tick_steps)
+        ax.set_xticklabels(tick_labels)
+
     fig.tight_layout()
     save_path = os.path.join(graph_dir, f"{name}.png")
-    fig.savefig(save_path)
+    fig.savefig(save_path, dpi=120)
     plt.close(fig)
-    print(f"Training graph saved to: {save_path}")
+    print(f"  ↳ training graph saved → {save_path}")
+
+
+def save_vae_inr_sample_grid(model, coords_sample, samples_dir: str, name: str, device, grid: int = 4):  # noqa: ARG001
+    """
+    Draw gridxgrid samples from the VAE prior, render them, and save a PNG.
+    coords_sample : (784, 2) canonical pixel-coordinate grid on the correct device.
+    """
+    os.makedirs(samples_dir, exist_ok=True)
+    model.eval()
+    n = grid * grid
+
+    with torch.no_grad():
+        pixels = model.sample(coords_sample, n_samples=n)  # (n, 784, 1)
+
+    pixels = pixels.squeeze(-1).cpu()  # (n, 784)
+    side = int(math.isqrt(pixels.shape[1]))  # 28 for MNIST
+
+    fig, axes = plt.subplots(grid, grid, figsize=(grid * 1.5, grid * 1.5))
+    fig.suptitle(f"Prior samples — {name}", fontsize=10)
+
+    for idx, ax in enumerate(axes.flat):
+        img = pixels[idx].reshape(side, side).numpy()
+        ax.imshow(img, cmap="gray", vmin=0.0, vmax=1.0)
+        ax.axis("off")
+
+    fig.tight_layout()
+    save_path = os.path.join(samples_dir, f"{name}_samples.png")
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"  ↳ sample grid saved    → {save_path}")
 
 
 def _save_plot_vae_hypernet(history: dict, name: str, graph_dir: str, epoch: int, num_epochs: int):  # noqa: ARG001

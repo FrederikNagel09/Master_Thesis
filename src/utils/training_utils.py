@@ -5,7 +5,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.utils.plot_utils import VisualCheckpointer, plot_ndm_training, plot_training_and_reconstruction, plot_vae_training
+from src.utils.plot_utils import (
+    VisualCheckpointer,
+    plot_ndm_training,
+    plot_training_and_reconstruction,
+    plot_vae_training,
+    save_vae_inr_sample_grid,
+)
 
 
 def train_inr_siren(
@@ -410,53 +416,73 @@ def train_vae(
 def train_inr_vae(
     model,
     mnist_train_loader,
-    epochs,
+    epochs: int,
     name: str,
     lr: float = 1e-4,
     device: str | None = None,
     graph_dir: str = "src/results/vae_inr_hypernet/training_graphs",
+    samples_dir: str = "src/results/vae_inr_hypernet/samples",
 ):
-    # --- Training ---
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
     total_steps = len(mnist_train_loader) * epochs
     progress_bar = tqdm(range(total_steps), desc="Training")
 
-    history: dict = {"train_elbo": [], "steps": []}
+    # Per-step history
+    history: dict = {
+        "steps": [],
+        "total_loss": [],
+        "recon_loss": [],
+        "kl_loss": [],
+    }
+
+    global_step = 0
+    coords_sample = None  # will capture one coord tensor for sampling
 
     for epoch in range(1, epochs + 1):
         model.train()
-        total_loss = 0.0
-
-        # beta = max(0.0, min(beta_max, beta_max * (epoch - warmup_start) / warmup_epochs))
         model.beta = 0.001
 
+        epoch_total = epoch_recon = epoch_kl = 0.0
+
         for image_flat, coords, pixels in mnist_train_loader:
-            image_flat = image_flat.to(device)  # (B, 784)
-            coords = coords.to(device)  # (B, 784, 2)
-            pixels = pixels.to(device)  # (B, 784, 1)
+            image_flat = image_flat.to(device)
+            coords = coords.to(device)
+            pixels = pixels.to(device)
+
+            # Keep one coords tensor around for the final sampling call
+            if coords_sample is None:
+                coords_sample = coords[0].detach()
 
             optimizer.zero_grad()
             loss, recon_loss, kl = model(image_flat, coords, pixels)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
 
-            # Update progress bar
+            # ── record every step ──────────────────────────────────────────
+            global_step += 1
+            history["steps"].append(global_step)
+            history["total_loss"].append(loss.item())
+            history["recon_loss"].append(recon_loss.item())
+            history["kl_loss"].append(kl.item())
+
+            epoch_total += loss.item()
+            epoch_recon += recon_loss.item()
+            epoch_kl += kl.item()
+
             progress_bar.set_postfix(
-                epoch=f"{epoch + 1}/{epochs}",
+                epoch=f"{epoch}/{epochs}",
                 loss=f"{loss.item():.4f}",
                 recon=f"{recon_loss.item():.4f}",
-                kl=f"{kl.item():.2f}",
+                kl=f"{kl.item():.4f}",
                 beta=f"{model.beta:.4f}",
             )
             progress_bar.update()
 
-        # Record average loss once per epoch, after all batches
-        avg_loss = total_loss / len(mnist_train_loader)
-        history["train_elbo"].append(avg_loss)
-        history["steps"].append(epoch)
+        # ── end of epoch: print averages & save graph ──────────────────────
+        plot_vae_training(history, name, graph_dir, steps_per_epoch=len(mnist_train_loader))
 
-    print("Last Loss: ", loss)
-    plot_vae_training(history, name, graph_dir)
+    # ── final sample grid ─────────────────────────────────────────────────
+    print("\nRunning final sampling …")
+    save_vae_inr_sample_grid(model, coords_sample, samples_dir, name, device, grid=4)
+
     return model
