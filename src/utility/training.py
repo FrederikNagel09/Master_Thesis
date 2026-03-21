@@ -159,7 +159,12 @@ def train(
                 image_flat = image_flat.to(device)  # (B, data_dim)
                 b = image_flat.shape[0]
                 coords = _coords.unsqueeze(0).expand(b, -1, -1)  # (B, img_size^2, 2)
-                pixels = ((image_flat * 0.5 + 0.5).clamp(0, 1)).unsqueeze(-1)  # (B, img_size^2, 1) in [0, 1]
+
+                if data_config["channels"] == 1:
+                    pixels = ((image_flat * 0.5 + 0.5).clamp(0, 1)).unsqueeze(-1)  # (B, H*W, 1)
+                else:
+                    pixels = ((image_flat * 0.5 + 0.5).clamp(0, 1)).reshape(b, -1, data_config["channels"])  # (B, H*W, C)
+
                 loss, l_diff, l_prior, l_rec = model(image_flat, coords, pixels)
             else:
                 x = batch[0] if isinstance(batch, list | tuple) else batch

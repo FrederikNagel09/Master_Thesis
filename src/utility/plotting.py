@@ -206,6 +206,14 @@ def _model_to_grid(
             pixels = model.inr(coords_batch, flat_weights)  # (N, H*W, C)
             samples = pixels.permute(0, 2, 1).reshape(n_samples, channels, img_size, img_size).clamp(0, 1)
 
+            print(f"  [PLOT DEBUG] pixels shape: {pixels.shape}")
+            print(f"  [PLOT DEBUG] pixels range: [{pixels.min():.3f}, {pixels.max():.3f}]")
+            print(f"  [PLOT DEBUG] samples shape: {samples.shape}")
+            print(f"  [PLOT DEBUG] samples range: [{samples.min():.3f}, {samples.max():.3f}]")
+            print(f"  [PLOT DEBUG] z range: [{z.min():.3f}, {z.max():.3f}]")
+            print(f"  [PLOT DEBUG] flat_weights range: [{flat_weights.min():.3f}, {flat_weights.max():.3f}]")
+            print(f"  [PLOT DEBUG] channels: {channels}")
+
         elif model_type == "ndm_inr":
             samples = model.sample(n_samples)  # (N, H*W) in [0, 1]
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)

@@ -51,12 +51,12 @@ class VAEINR(nn.Module):
         # Run INR: coords + weights = pixel predictions
         pixel_preds = self.inr(coords, flat_weights)  # (batch, 784, 1)
 
-        # print(f"  [DEBUG] pixel_preds range: [{pixel_preds.min():.3f}, {pixel_preds.max():.3f}]")
-        ##print(f"  [DEBUG] z range          : [{z.min():.3f}, {z.max():.3f}]")
-        # print(f"  [DEBUG] flat_weights range: [{flat_weights.min():.3f}, {flat_weights.max():.3f}]")
+        print(f"  [DEBUG] pixel_preds range: [{pixel_preds.min():.3f}, {pixel_preds.max():.3f}]")
+        print(f"  [DEBUG] z range          : [{z.min():.3f}, {z.max():.3f}]")
+        print(f"  [DEBUG] flat_weights range: [{flat_weights.min():.3f}, {flat_weights.max():.3f}]")
 
         # Use MSE for reconstruction loss
-        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="sum") / image_flat.shape[0]
+        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="sum") / image_flat.size(0)
 
         # Compute KL divergence between q(z|x) and p(z)
         kl = td.kl_divergence(q, self.prior()).mean()
@@ -100,7 +100,7 @@ class VAEINR(nn.Module):
         pixel_preds = self.inr(coords, flat_weights)  # (batch, 784, 1)
 
         # 3. Reconstruction loss
-        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="sum") / image_flat.shape[0]
+        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="sum") / image_flat.size(0)
 
         # 4. MC estimation of KL divergence
         kl_divergence = 0

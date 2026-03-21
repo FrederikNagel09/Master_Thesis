@@ -50,20 +50,20 @@ python main.py \
 
 ######################### INR-VAE Training ####################################
 python main.py \
-    --run_name inr_vae_MoG_mnist \
+    --run_name inr_vae_cifar10 \
     --model inr_vae \
     --dataset mnist \
     --epochs 10 \
     --batch_size 128 \
     --lr 1e-3 \
-    --latent_dim 128 \
-    --prior mog \
-    --inr_hidden_dim 64 \
+    --latent_dim 64 \
+    --prior gaussian \
+    --inr_hidden_dim 32 \
     --inr_layers 3 \
     --vae_enc_dim 512 \
-    --vae_dec_dim 512 \
     --weight_decay 1e-4 \
-    --subset_frac 1.0
+    --vae_dec_dim 512 \
+    --subset_frac 0.25
 
 python main.py \
     --run_name inr_vae_mog_mnist \
