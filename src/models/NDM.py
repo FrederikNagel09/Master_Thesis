@@ -1,70 +1,12 @@
-import math
+import sys
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
-# =============================================================================
-# Time embedding modules
-# =============================================================================
+sys.path.append(".")
 
-
-class SinusoidalTimeEmbedding(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, t: torch.Tensor) -> torch.Tensor:
-        # t: (batch, 1) normalised to [0, 1]
-        device = t.device
-        half = self.dim // 2
-        freqs = torch.exp(-math.log(10000) * torch.arange(half, device=device) / (half - 1))
-        args = t * freqs.unsqueeze(0) * 1000  # scale t to [0, 1000] range
-        return torch.cat([args.sin(), args.cos()], dim=-1)  # (batch, dim)
-
-
-class TimeConditionedResBlock(nn.Module):
-    """
-    Conv -> GroupNorm -> SiLU -> Conv -> GroupNorm,
-    with time embedding injected as a scale+shift into the first GroupNorm
-    (AdaGN style, as used in ADM/Dhariwal & Nichol 2021).
-    Includes a residual connection with a 1x1 conv if channel dims differ.
-    """
-
-    def __init__(self, in_ch: int, out_ch: int, t_dim: int):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1)
-        self.gn1 = nn.GroupNorm(min(8, out_ch), out_ch)
-        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1)
-        self.gn2 = nn.GroupNorm(min(8, out_ch), out_ch)
-
-        # Projects time embedding to scale and shift for AdaGN on gn1
-        self.t_proj = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(t_dim, out_ch * 2),  # split into scale + shift
-        )
-
-        # Residual projection if channel count changes
-        self.res_conv = nn.Conv2d(in_ch, out_ch, kernel_size=1) if in_ch != out_ch else nn.Identity()
-
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-        # t_emb: (batch, t_dim)
-        h = self.conv1(x)
-        h = self.gn1(h)
-
-        # AdaGN: modulate normalised features with time-derived scale/shift
-        t_out = self.t_proj(t_emb)  # (batch, out_ch*2)
-        scale, shift = t_out.chunk(2, dim=1)  # each (batch, out_ch)
-        h = h * (1 + scale[:, :, None, None]) + shift[:, :, None, None]
-
-        h = F.silu(h)
-        h = self.conv2(h)
-        h = self.gn2(h)
-        h = F.silu(h)
-
-        return h + self.res_conv(x)
-
+from src.models.helper_modules import SinusoidalLearnableTimeEmbedding, TimeConditionedResBlock
 
 # =============================================================================
 # Data Transformation Networks F_phi(x, t)
@@ -87,12 +29,7 @@ class MLPTransformation(nn.Module):
             hidden_dims = [512, 512, 512]
 
         # Small MLP to embed scalar time t into a richer representation
-        self.t_embed = nn.Sequential(
-            nn.Linear(1, t_embed_dim),
-            nn.SiLU(),
-            nn.Linear(t_embed_dim, t_embed_dim),
-            nn.SiLU(),
-        )
+        self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
 
         layers = []
         in_dim = data_dim + t_embed_dim
@@ -110,7 +47,7 @@ class MLPTransformation(nn.Module):
         Returns:
             (batch, 784) - transformed image, same shape as input
         """
-        t_emb = self.t_embed(t)
+        t_emb = self.time_embed(t)
         xt = torch.cat([x, t_emb], dim=-1)
         f_bar = self.net(xt)  # raw network output F_bar_phi
         return (1 - t) * x + t * f_bar
@@ -147,8 +84,8 @@ class UNetTransformation(nn.Module):
         chs = [b, b * 2, b * 4, b * 4, b * 8]
 
         # ── Time embedding ────────────────────────────────────────────────────
-        self.t_embed = nn.Sequential(
-            SinusoidalTimeEmbedding(t_dim),
+        self.time_embed = nn.Sequential(
+            SinusoidalLearnableTimeEmbedding(t_dim),
             nn.Linear(t_dim, t_dim * 2),
             nn.SiLU(),
             nn.Linear(t_dim * 2, t_dim),
@@ -191,7 +128,7 @@ class UNetTransformation(nn.Module):
         batch = x.shape[0]
         h = x.view(batch, self.C, self.H, self.W)  # (batch, C, H, W)
 
-        t_emb = self.t_embed(t)  # (batch, t_dim)
+        t_emb = self.time_embed(t)  # (batch, t_dim)
 
         # ── Encoder ───────────────────────────────────────────────────────────
         s0 = self.enc0(h, t_emb)  # (batch, 32,  28, 28)
@@ -262,8 +199,8 @@ class UnetNDM(nn.Module):
         chs = [b, b * 2, b * 4, b * 4, b * 8]
 
         # ── Time embedding ────────────────────────────────────────────────────
-        self.t_embed = nn.Sequential(
-            SinusoidalTimeEmbedding(t_dim),
+        self.time_embed = nn.Sequential(
+            SinusoidalLearnableTimeEmbedding(t_dim),
             nn.Linear(t_dim, t_dim * 2),
             nn.SiLU(),
             nn.Linear(t_dim * 2, t_dim),
@@ -304,7 +241,7 @@ class UnetNDM(nn.Module):
         batch = x.shape[0]
         h = x.view(batch, self.C, self.H, self.W)
 
-        t_emb = self.t_embed(t)  # (batch, t_dim)
+        t_emb = self.time_embed(t)  # (batch, t_dim)
 
         # ── Encoder ───────────────────────────────────────────────────────────
         s0 = self.enc0(h, t_emb)  # (batch, 32,  28, 28)
@@ -449,16 +386,13 @@ class NeuralDiffusionModel(nn.Module):
         kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (Fx_T**2).sum(dim=-1))
         return kl  # (batch,)
 
-    def _l_rec(self, x: torch.Tensor) -> torch.Tensor:
+    def _l_rec(self, x: torch.Tensor, z_t: torch.Tensor, t_idx: torch.Tensor) -> torch.Tensor:
         """
         Reconstruction loss at t=0.
         """
-        t0_idx = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
-        t0_norm = torch.zeros(x.shape[0], 1, device=x.device)
-        z0, _, _ = self._sample_zt(x, t0_idx, t0_norm)
-
-        # Gaussian reconstruction: -log N(x; z0, I) ∝ 0.5 ||x - z0||^2
-        l_rec = 0.5 * ((x - z0) ** 2).sum(dim=-1)  # (batch,)
+        rec_mask = (t_idx == 0).float()
+        l_rec = 0.5 * ((x - z_t) ** 2).sum(dim=-1)  # (batch,)
+        l_rec = (rec_mask * l_rec).mean()
         return l_rec
 
     def negative_elbo(self, x: torch.Tensor) -> torch.Tensor:
@@ -485,10 +419,11 @@ class NeuralDiffusionModel(nn.Module):
         # --- Three terms of the objective ---
         l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
         l_prior = self._l_prior(x)  # (batch,)
+        l_rec = self._l_rec(x, z_t, t_idx)  # scalar
 
         prior_mask = 0.20 * (t_idx == self.T - 1).float()
         elbo = l_diff + prior_mask * l_prior
-        return elbo.mean(), l_diff.mean(), l_prior.mean()
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:
         return self.negative_elbo(x)

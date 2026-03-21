@@ -15,8 +15,9 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
-from src.models.mnist_classifier import UNetClassifier
 from torchvision import transforms
+
+from src.models.mnist_classifier import UNetClassifier
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG PATHS

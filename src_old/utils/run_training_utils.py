@@ -60,9 +60,10 @@ def run_training_siren_inr(args):
 
 def run_training_ddpm(args):
     # Imports
+    from torchvision import datasets, transforms
+
     from src.models.ddpm import DDPM, Unet
     from src.utils.training_utils import train_ddpm
-    from torchvision import datasets, transforms
 
     transform = transforms.Compose(
         [
@@ -160,6 +161,8 @@ def run_training_inr_mlp_hypernet(args):
 
 
 def run_training_ndm(args):
+    from torchvision import datasets, transforms
+
     from src.models.ndm import (
         MLPTransformation,  # <-- your ndm.py
         NeuralDiffusionModel,
@@ -167,7 +170,6 @@ def run_training_ndm(args):
         UNetTransformation,
     )
     from src.utils.training_utils import train_ndm
-    from torchvision import datasets, transforms
 
     # ---- Data ----
     if args.dataset == "cifar10":
@@ -316,13 +318,14 @@ def run_training_ndm(args):
 
 
 def run_vae_training(args):
+    from torchvision import datasets, transforms
+
     from src.models.prior import GaussianPrior, MoGPrior, VAMPPrior
     from src.models.vae import VAE
     from src.models.vae_coders import BernoulliFullDecoder, GaussianFullEncoder
 
     # Imports for encoder, decoder, and prior
     from src.utils.training_utils import train_vae
-    from torchvision import datasets, transforms
 
     # Load MNIST as binarized at 'thresshold' and create data loaders
     threshold = 0.5
@@ -389,11 +392,12 @@ def run_inr_vae_training(args):
     The INR reconstructs pixels from coordinates using those weights.
     """
     import torch.nn as nn
+    from torch.utils.data import Subset
+
     from src.dataloaders.BinaryMNISTHyper import BinaryMNISTHyperDataset
     from src.models.inr_vae_hypernet import INR, VAEINR
     from src.models.prior import GaussianPrior, MoGPrior
     from src.utils.training_utils import train_inr_vae
-    from torch.utils.data import Subset
 
     # ------------------------------------------------------------------
     # 1. Dataset

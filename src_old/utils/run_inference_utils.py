@@ -199,6 +199,7 @@ def run_inference_ddpm(args, config):
 def run_inference_ndm(args, config):
     import matplotlib.pyplot as plt
     import numpy as np
+
     from src.models.ndm import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation
 
     device = config.get("device", "cpu")
@@ -348,6 +349,7 @@ def run_inference_inr_vae(args, config):
     """
     import matplotlib.pyplot as plt
     import torch.nn as nn
+
     from src.models.inr_vae_hypernet import INR, VAEINR
     from src.models.prior import GaussianPrior, MoGPrior
     from src.models.vae_coders import GaussianEncoder

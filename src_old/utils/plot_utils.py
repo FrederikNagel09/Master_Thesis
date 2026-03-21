@@ -206,7 +206,7 @@ def save_vae_inr_sample_grid(model, coords_sample, samples_dir: str, name: str, 
         pixels = model.sample(coords_sample, n_samples=n)  # (n, 784, 1)
 
     pixels = pixels.squeeze(-1).cpu()  # (n, 784)
-    side = int(math.isqrt(pixels.shape[1]))  # 28 for MNIST
+    side = math.isqrt(pixels.shape[1])  # 28 for MNIST
 
     fig, axes = plt.subplots(grid, grid, figsize=(grid * 1.5, grid * 1.5))
     fig.suptitle(f"Prior samples — {name}", fontsize=10)
