@@ -1,0 +1,21 @@
+{
+  "model": "ndm",
+  "epochs": 1000,
+  "batch_size": 128,
+  "lr": 0.0002,
+  "T": 1000,
+  "name": "ndm_unet_cifar_test",
+  "subset_frac": 0.001,
+  "device": "mps",
+  "f_phi_type": "unet",
+  "f_phi_hidden": [
+    512,
+    512,
+    512
+  ],
+  "f_phi_t_embed": 32,
+  "sigma_tilde": 1.0,
+  "dataset": "cifar10",
+  "weights_path": "src/results/ndm/weights/ndm_unet_cifar_test_17-03-19:36.pth",
+  "model_type": "ndm"
+}

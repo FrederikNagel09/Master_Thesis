@@ -1,0 +1,16 @@
+{
+  "model": "basic_inr",
+  "index": 5,
+  "name": "test",
+  "epochs": 30,
+  "batch_size": 32,
+  "lr": 0.0001,
+  "h1": 32,
+  "h2": 32,
+  "h3": 32,
+  "dataset": "mnist",
+  "omega_0": 20.0,
+  "hyper_h": 256,
+  "subset_frac": 1.0,
+  "weights_path": "src/results/basic_inr/weights/test_02-03-21:49.pth"
+}

@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "run_name": "ndm_inr_no_prior_scaling",
+    "saved_at": "2026-03-20T10:46:43",
+    "epochs_trained": 300
+  },
+  "paths": {
+    "weights": "src/results/ndm_inr/weights/weights_ndm_inr_no_prior_scaling.pt",
+    "loss_plot": "src/results/ndm_inr/training_graphs/loss_ndm_inr_no_prior_scaling.png",
+    "samples": "src/results/ndm_inr/samples/samples_ndm_inr_no_prior_scaling.png",
+    "experiment_dir": "src/results/ndm_inr/experiments/ndm_inr_no_prior_scaling"
+  },
+  "data": {
+    "single_class": false,
+    "target_class": 1,
+    "subset_frac": 1.0,
+    "batch_size": 128,
+    "img_size": 28,
+    "data_dim": 784
+  },
+  "diffusion": {
+    "T": 1000,
+    "beta_1": 0.0001,
+    "beta_T": 0.02,
+    "sigma_tilde_factor": 1.0
+  },
+  "inr": {
+    "coord_dim": 2,
+    "hidden_dim": 32,
+    "n_hidden": 3,
+    "out_dim": 1,
+    "num_weights": 2241
+  },
+  "f_phi": {
+    "hidden_dims": [
+      512,
+      512,
+      512
+    ],
+    "t_embed_dim": 64
+  },
+  "noise_predictor": {
+    "hidden_dim": 512,
+    "n_blocks": 4,
+    "t_embed_dim": 128
+  },
+  "optimiser": {
+    "type": "AdamW",
+    "lr": 0.0003,
+    "weight_decay": 1e-05,
+    "grad_clip": 1.0
+  },
+  "training": {
+    "epochs": 300,
+    "plot_epochs": [
+      60,
+      120,
+      180,
+      240,
+      300
+    ]
+  }
+}

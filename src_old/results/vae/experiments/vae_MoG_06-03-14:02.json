@@ -1,0 +1,18 @@
+{
+  "model": "vae",
+  "epochs": 75,
+  "batch_size": 128,
+  "lr": 0.001,
+  "latent_dim": 16,
+  "prior": "mog",
+  "device": "cpu",
+  "name": "vae_MoG",
+  "subset_frac": 1.0,
+  "hidden_dims": [
+    256,
+    512,
+    256
+  ],
+  "weights_path": "src/results/vae/weights/vae_MoG_06-03-14:02.pth",
+  "model_type": "vae"
+}

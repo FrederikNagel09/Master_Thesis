@@ -1,0 +1,12 @@
+{
+  "model": "ddpm",
+  "epochs": 100,
+  "batch_size": 128,
+  "lr": 0.0002,
+  "T": 1000,
+  "name": "ddpm_full_run",
+  "subset_frac": 1.0,
+  "device": "cpu",
+  "weights_path": "src/results/ddpm/weights/ddpm_full_run_09-03-17:00.pth",
+  "model_type": "ddpm"
+}

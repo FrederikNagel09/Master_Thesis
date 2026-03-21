@@ -1,0 +1,20 @@
+{
+  "model": "ndm",
+  "epochs": 100,
+  "batch_size": 128,
+  "lr": 0.0002,
+  "T": 500,
+  "name": "ndm_unet_full_final_smallT",
+  "subset_frac": 1.0,
+  "device": "mps",
+  "f_phi_type": "unet",
+  "f_phi_hidden": [
+    512,
+    512,
+    512
+  ],
+  "f_phi_t_embed": 32,
+  "sigma_tilde": 1.0,
+  "weights_path": "src/results/ndm/weights/ndm_unet_full_final_smallT_15-03-20:50.pth",
+  "model_type": "ndm"
+}

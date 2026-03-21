@@ -1,0 +1,18 @@
+{
+  "model": "vae",
+  "epochs": 75,
+  "batch_size": 128,
+  "lr": 0.001,
+  "latent_dim": 16,
+  "prior": "gaussian",
+  "device": "mps",
+  "name": "vae_gauss",
+  "subset_frac": 1.0,
+  "hidden_dims": [
+    256,
+    512,
+    256
+  ],
+  "weights_path": "src/results/vae/weights/vae_gauss_06-03-13:34.pth",
+  "model_type": "vae"
+}
