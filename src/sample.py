@@ -6,8 +6,8 @@ python src/sample.py \
 
         
 python src/sample.py \
-    --config_path src/results/ndm/experiments/TEST_CHECKPOINT_TRAIN_2_19-03-09:58.json \
-    --grid_size 6 
+    --config_path src/results/vae_inr_hypernet/experiments/vae_inr_MoG_Final_20-03-15:15.json \
+    --grid_size 8 
 """
 
 import sys

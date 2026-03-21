@@ -31,7 +31,7 @@ sys.path.append(".")
 # CONFIGURE YOUR MODEL CONFIG PATHS HERE
 # ─────────────────────────────────────────────────────────────
 
-VAE_CONFIG_PATH = "src/results/vae_inr_hypernet/experiments/inr_vae_gauss_06-03-13:58.json"
+VAE_CONFIG_PATH = "src/results/vae_inr_hypernet/experiments/vae_inr_MoG_Final_20-03-15:15.json"
 DDPM_CONFIG_PATH = "src/results/ddpm/experiments/ddpm_full_run_09-03-17:00.json"
 NDM_CONFIG_PATH = "src/results/ndm/experiments/ndm_unet_one_fifth_prior.json"
 

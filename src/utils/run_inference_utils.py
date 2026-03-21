@@ -403,7 +403,7 @@ def run_inference_inr_vae(args, config):
 
     model.load_state_dict(torch.load(config["weights_path"], map_location=device))
     model.eval()
-    resolutions = [64, 128, 256]
+    resolutions = [28, 64, 512]
     n_samples = args.grid_size  # n_samples x n_samples grid
 
     def make_coord_grid(size, device):
