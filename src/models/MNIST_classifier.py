@@ -105,8 +105,8 @@ class UNetClassifier(nn.Module):
     def get_features(self, x):
         """Return bottleneck features for FID computation."""
         x = F.pad(x, (2, 2, 2, 2))
-        x, s1 = self.down1(x)
-        x, s2 = self.down2(x)
-        x, s3 = self.down3(x)
+        x, _ = self.down1(x)
+        x, _ = self.down2(x)
+        x, _ = self.down3(x)
         x = self.bottleneck(x)
         return F.adaptive_avg_pool2d(x, 1).flatten(1)  # (B, base_ch*8)

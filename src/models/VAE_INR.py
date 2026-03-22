@@ -4,56 +4,6 @@ import torch.nn as nn
 from torch.nn import functional as F  # noqa: N812
 
 
-class INR(nn.Module):
-    """
-    A small MLP that predicts pixel values from (x,y) coordinates.
-    Weights are supplied externally by the hypernetwork (VAE decoder).
-    """
-
-    def __init__(self, coord_dim=2, hidden_dim=20, n_hidden=2, out_dim=1):
-        super().__init__()
-        self.coord_dim = coord_dim
-        self.hidden_dim = hidden_dim
-        self.n_hidden = n_hidden
-        self.out_dim = out_dim
-
-        # Compute the total number of weights this INR needs
-        dims = [coord_dim] + [hidden_dim] * n_hidden + [out_dim]
-        self.weight_shapes = []
-        self.bias_shapes = []
-        total = 0
-        for i in range(len(dims) - 1):
-            self.weight_shapes.append((dims[i + 1], dims[i]))
-            self.bias_shapes.append((dims[i + 1],))
-            total += dims[i + 1] * dims[i] + dims[i + 1]
-        self.num_weights = total
-
-    def forward(self, coords, flat_weights):
-        """
-        coords:       (batch, n_pixels, 2)
-        flat_weights: (batch, num_weights)
-        returns:      (batch, n_pixels, 1)  — logits
-        """
-        batch = coords.shape[0]
-        idx = 0
-        x = coords  # (batch, n_pixels, coord_dim)
-
-        for i, (ws, _bs) in enumerate(zip(self.weight_shapes, self.bias_shapes)):  # noqa: B905
-            out_f, in_f = ws
-            W = flat_weights[:, idx : idx + out_f * in_f].view(batch, out_f, in_f)  # noqa: N806
-            idx += out_f * in_f
-            b = flat_weights[:, idx : idx + out_f].view(batch, 1, out_f)
-            idx += out_f
-
-            # (batch, n_pixels, out_f)
-            x = torch.bmm(x, W.transpose(1, 2)) + b
-
-            # ReLU on hidden layers, sigmoid on last
-            x = torch.relu(x) if i < len(self.weight_shapes) - 1 else torch.sigmoid(x)
-
-        return x  # (batch, n_pixels, 1)
-
-
 class VAEINR(nn.Module):
     """
     VAE whose decoder produces INR weights instead of pixel values directly.
@@ -89,6 +39,8 @@ class VAEINR(nn.Module):
         coords:     (batch, 784, 2)   — pixel coordinates
         pixels:     (batch, 784, 1)   — binary target values
         """
+        # print(f"  [DEBUG] image_flat range : [{image_flat.min():.3f}, {image_flat.max():.3f}]")
+        # print(f"  [DEBUG] pixels range     : [{pixels.min():.3f}, {pixels.max():.3f}]")
         # Encode image  ( posterior q(z|x) )
         q = self.encoder(image_flat)
         z = q.rsample()  # (batch, latent_dim)
@@ -99,11 +51,17 @@ class VAEINR(nn.Module):
         # Run INR: coords + weights = pixel predictions
         pixel_preds = self.inr(coords, flat_weights)  # (batch, 784, 1)
 
-        # Use binary cross-entropy for reconstruction loss
-        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="mean")
+        print(f"  [DEBUG] pixel_preds range: [{pixel_preds.min():.3f}, {pixel_preds.max():.3f}]")
+        print(f"  [DEBUG] z range          : [{z.min():.3f}, {z.max():.3f}]")
+        print(f"  [DEBUG] flat_weights range: [{flat_weights.min():.3f}, {flat_weights.max():.3f}]")
+
+        # Use MSE for reconstruction loss
+        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="sum") / image_flat.size(0)
 
         # Compute KL divergence between q(z|x) and p(z)
         kl = td.kl_divergence(q, self.prior()).mean()
+
+        # print(f"  [DEBUG] recon_loss: {recon_loss.item():.4f}  kl: {kl.item():.4f}")
 
         elbo = -(recon_loss + self.beta * kl)
         return elbo, recon_loss, kl
@@ -142,7 +100,7 @@ class VAEINR(nn.Module):
         pixel_preds = self.inr(coords, flat_weights)  # (batch, 784, 1)
 
         # 3. Reconstruction loss
-        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="mean")
+        recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="sum") / image_flat.size(0)
 
         # 4. MC estimation of KL divergence
         kl_divergence = 0
@@ -163,4 +121,7 @@ class VAEINR(nn.Module):
             loss, recon, kl = self.elbo_mog(image_flat, coords, pixels)
         else:
             loss, recon, kl = self.elbo(image_flat, coords, pixels)
-        return -loss, recon, kl
+
+        # torch.tensor(0.0) - because theres no l_diff term in this model, but we want to return 4 values
+        # for consistency with NDM and NDM-INR
+        return -loss, torch.tensor(0.0), kl, recon

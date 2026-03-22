@@ -1,4 +1,3 @@
-import math
 import sys
 
 import torch
@@ -8,91 +7,12 @@ from tqdm import tqdm
 
 sys.path.append(".")
 
-
-class INR(nn.Module):
-    """
-    A small MLP that predicts pixel values from (x,y) coordinates.
-    Weights are supplied externally by the hypernetwork (VAE decoder).
-    """
-
-    def __init__(self, coord_dim=2, hidden_dim=20, n_hidden=2, out_dim=1):
-        super().__init__()
-        self.coord_dim = coord_dim
-        self.hidden_dim = hidden_dim
-        self.n_hidden = n_hidden
-        self.out_dim = out_dim
-
-        # Compute the total number of weights this INR needs
-        dims = [coord_dim] + [hidden_dim] * n_hidden + [out_dim]
-        self.weight_shapes = []
-        self.bias_shapes = []
-        total = 0
-        for i in range(len(dims) - 1):
-            self.weight_shapes.append((dims[i + 1], dims[i]))
-            self.bias_shapes.append((dims[i + 1],))
-            total += dims[i + 1] * dims[i] + dims[i + 1]
-        self.num_weights = total
-
-    def forward(self, coords, flat_weights):
-        """
-        coords:       (batch, n_pixels, 2)
-        flat_weights: (batch, num_weights)
-        returns:      (batch, n_pixels, 1)  — logits
-        """
-        batch = coords.shape[0]
-        idx = 0
-        x = coords  # (batch, n_pixels, coord_dim)
-
-        for i, (ws, _bs) in enumerate(zip(self.weight_shapes, self.bias_shapes)):  # noqa: B905
-            out_f, in_f = ws
-            W = flat_weights[:, idx : idx + out_f * in_f].view(batch, out_f, in_f)  # noqa: N806
-            idx += out_f * in_f
-            b = flat_weights[:, idx : idx + out_f].view(batch, 1, out_f)
-            idx += out_f
-
-            # (batch, n_pixels, out_f)
-            x = torch.bmm(x, W.transpose(1, 2)) + b
-
-            # ReLU on hidden layers, sigmoid on last
-            x = torch.relu(x) if i < len(self.weight_shapes) - 1 else torch.tanh(x)
-
-        return x  # (batch, n_pixels, 1)
-
+from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
+from src.models.INR import INR
 
 # =============================================================================
 # Noise Predictor Network  epsilon_theta(z_t, t)
 # =============================================================================
-
-
-class SinusoidalTimeEmbedding(nn.Module):
-    """
-    Maps scalar t in [0,1] to a rich sinusoidal embedding, then projects it.
-    Identical in spirit to the positional encoding used in DDPM / transformer
-    models, but operating on continuous normalised time rather than integer steps.
-    """
-
-    def __init__(self, embed_dim: int = 128):
-        super().__init__()
-        assert embed_dim % 2 == 0, "embed_dim must be even"
-        self.embed_dim = embed_dim
-        # Learnable projection on top of the fixed sinusoidal features
-        self.proj = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim),
-            nn.SiLU(),
-            nn.Linear(embed_dim, embed_dim),
-        )
-
-    def forward(self, t: torch.Tensor) -> torch.Tensor:
-        """
-        t: (batch, 1)  normalised time in [0, 1]
-        returns: (batch, embed_dim)
-        """
-        half = self.embed_dim // 2
-        # frequencies: 10000^(2i/D) for i=0..half-1
-        freqs = torch.exp(-math.log(10000.0) * torch.arange(half, device=t.device, dtype=t.dtype) / half)  # (half,)
-        args = t * freqs.unsqueeze(0)  # (batch, half)
-        emb = torch.cat([args.sin(), args.cos()], dim=-1)  # (batch, embed_dim)
-        return self.proj(emb)  # (batch, embed_dim)
 
 
 class NoisePredictor(nn.Module):
@@ -131,7 +51,8 @@ class NoisePredictor(nn.Module):
         self.n_blocks = n_blocks
 
         # --- Time embedding ---
-        self.time_embed = SinusoidalTimeEmbedding(t_embed_dim)
+        self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
+
         # Project time embedding to hidden_dim so we can add it inside each block
         self.time_proj = nn.Linear(t_embed_dim, hidden_dim)
 
@@ -222,7 +143,7 @@ class WeightEncoder(nn.Module):
         if hidden_dims is None:
             hidden_dims = [512, 512, 512]
 
-        self.time_embed = SinusoidalTimeEmbedding(t_embed_dim)
+        self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
 
         layers = []
         in_dim = data_dim + t_embed_dim
@@ -253,7 +174,7 @@ class WeightEncoder(nn.Module):
 # =============================================================================
 
 
-class NeuralDiffusionModel(nn.Module):
+class NeuralDiffusionModelINR(nn.Module):
     """
     Neural Diffusion Model (NDM) with INR-based reconstruction.
 
@@ -346,7 +267,7 @@ class NeuralDiffusionModel(nn.Module):
         z_t = alpha_t * Fx + sigma_t * epsilon
         return z_t, epsilon, Fx
 
-    def _inr_decode(self, flat_weights: torch.Tensor) -> torch.Tensor:
+    def _inr_decode(self, flat_weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
         """
         Decode a batch of flat weight vectors to pixel images.
 
@@ -359,9 +280,11 @@ class NeuralDiffusionModel(nn.Module):
         pixels : (batch, 784)   values in [0, 1]  (sigmoid output from INR)
         """
         batch = flat_weights.shape[0]
-        coords = self.coords.expand(batch, -1, -1)  # (batch, 784, 2)
-        pixels = self.inr(coords, flat_weights)  # (batch, 784, 1)
-        return pixels.squeeze(-1)  # (batch, 784)
+        if coords is None:
+            coords = self.coords  # fall back to hardcoded 28x28
+        coords = coords.expand(batch, -1, -1)
+        pixels = self.inr(coords, flat_weights)
+        return pixels.squeeze(-1)  # (batch, n_pixels)
 
     # -------------------------------------------------------------------------
     # Loss terms
@@ -431,7 +354,7 @@ class NeuralDiffusionModel(nn.Module):
     # ELBO
     # -------------------------------------------------------------------------
 
-    def negative_elbo(self, x: torch.Tensor, rec_scale: float = 1.0):
+    def negative_elbo(self, x: torch.Tensor):
         """
         Estimates the negative ELBO:
             L = E[ l_diff ] + prior_mask * l_prior + l_rec
@@ -459,19 +382,19 @@ class NeuralDiffusionModel(nn.Module):
         l_rec = self._l_rec(x)  # (batch,)
 
         prior_mask = (t_idx == self.T - 1).float()
-        elbo = l_diff + prior_mask * l_prior + rec_scale * l_rec
+        elbo = l_diff + prior_mask * l_prior + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
-    def loss(self, x: torch.Tensor, rec_scale: float = 1.0):
-        return self.negative_elbo(x, rec_scale=rec_scale)
+    def loss(self, x: torch.Tensor):
+        return self.negative_elbo(x)
 
     # -------------------------------------------------------------------------
     # Sampling
     # -------------------------------------------------------------------------
 
     @torch.no_grad()
-    def sample(self, n_samples: int = 1) -> torch.Tensor:
+    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None) -> torch.Tensor:
         """
         Ancestral sampling from the NDM, with INR decoding at t=0.
 
@@ -496,7 +419,7 @@ class NeuralDiffusionModel(nn.Module):
 
             if t == 0:
                 # x_hat is now a clean weight vector — decode through INR
-                images = self._inr_decode(x_hat)  # (n_samples, 784)
+                images = self._inr_decode(x_hat, coords)
                 return images
 
             # Sample z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat)
@@ -522,61 +445,3 @@ class NeuralDiffusionModel(nn.Module):
 
         # Should not reach here, but safety fallback
         return self._inr_decode(z_t)
-
-
-# =============================================================================
-# Convenience factory
-# =============================================================================
-
-
-def build_ndm(
-    inr: INR,
-    img_size: int = 28,
-    f_phi_hidden: list = None,  # noqa: RUF013
-    noise_hidden: int = 512,
-    noise_blocks: int = 4,
-    t_embed_dim: int = 128,
-    beta_1: float = 1e-4,
-    beta_T: float = 2e-2,  # noqa: N803
-    T: int = 100,  # noqa: N803
-    sigma_tilde_factor: float = 1.0,
-) -> NeuralDiffusionModel:
-    """
-    Build a NeuralDiffusionModel from an already-constructed INR.
-
-    Example
-    -------
-    >>> inr = INR(coord_dim=2, hidden_dim=20, n_hidden=2, out_dim=1)
-    >>> model = build_ndm(inr)
-    """
-    if f_phi_hidden is None:
-        f_phi_hidden = [512, 512, 512]
-
-    data_dim = img_size * img_size  # 784
-    weight_dim = inr.num_weights  # e.g. 501 for default INR
-
-    f_phi = WeightEncoder(
-        data_dim=data_dim,
-        weight_dim=weight_dim,
-        hidden_dims=f_phi_hidden,
-        t_embed_dim=t_embed_dim // 2,  # lighter embedding for encoder
-    )
-
-    network = NoisePredictor(
-        weight_dim=weight_dim,
-        hidden_dim=noise_hidden,
-        n_blocks=noise_blocks,
-        t_embed_dim=t_embed_dim,
-    )
-
-    return NeuralDiffusionModel(
-        network=network,
-        F_phi=f_phi,
-        inr=inr,
-        beta_1=beta_1,
-        beta_T=beta_T,
-        T=T,
-        sigma_tilde_factor=sigma_tilde_factor,
-        data_dim=data_dim,
-        img_size=img_size,
-    )
