@@ -42,3 +42,6 @@ src/inr_ddpm_hypernetwork/results/
 
 src/results/
 src/outputs/
+
+src_old/
+src/train_results/
