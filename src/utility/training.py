@@ -217,7 +217,10 @@ def train(
             if sample_fn is not None and global_step in _sample_steps:
                 model.eval()
                 with torch.no_grad():
-                    sample_fn(model, global_step, device)
+                    if model_type == "ndm":
+                        sample_fn(model, global_step, device, batch=batch)
+                    else:
+                        sample_fn(model, global_step, device)
                 model.train()
 
         # ── End of epoch: update training plot ───────────────────────────────

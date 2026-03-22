@@ -103,6 +103,7 @@ def _build_inr_vae(args, data_config: dict) -> nn.Module:
         hidden_dim=args.inr_hidden_dim,
         n_hidden=args.inr_layers,
         out_dim=channels,  # 1 for greyscale, 3 for RGB
+        output_activation="sigmoid",
     )
     print(f"    INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={inr.num_weights}")
 
@@ -151,12 +152,7 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
     data_dim = data_config["data_dim"]
 
     # ── INR ───────────────────────────────────────────────────────────────────
-    inr = INR(
-        coord_dim=2,
-        hidden_dim=args.inr_hidden_dim,
-        n_hidden=args.inr_layers,
-        out_dim=channels,
-    )
+    inr = INR(coord_dim=2, hidden_dim=args.inr_hidden_dim, n_hidden=args.inr_layers, out_dim=channels, output_activation="tanh")
     weight_dim = inr.num_weights
     print(f"    INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={weight_dim}")
 

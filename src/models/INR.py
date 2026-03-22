@@ -8,12 +8,13 @@ class INR(nn.Module):
     Weights are supplied externally by the hypernetwork (VAE decoder).
     """
 
-    def __init__(self, coord_dim=2, hidden_dim=20, n_hidden=2, out_dim=1):
+    def __init__(self, coord_dim=2, hidden_dim=20, n_hidden=2, out_dim=1, output_activation="sigmoid"):
         super().__init__()
         self.coord_dim = coord_dim
         self.hidden_dim = hidden_dim
         self.n_hidden = n_hidden
         self.out_dim = out_dim
+        self.output_activation = output_activation
 
         # Compute the total number of weights this INR needs
         dims = [coord_dim] + [hidden_dim] * n_hidden + [out_dim]
@@ -47,6 +48,9 @@ class INR(nn.Module):
             x = torch.bmm(x, W.transpose(1, 2)) + b
 
             # ReLU on hidden layers, sigmoid on last
-            x = torch.relu(x) if i < len(self.weight_shapes) - 1 else torch.sigmoid(x)
+            if i < len(self.weight_shapes) - 1:
+                x = torch.relu(x)
+            else:
+                x = torch.sigmoid(x) if self.output_activation == "sigmoid" else torch.tanh(x)
 
         return x  # (batch, n_pixels, 1)

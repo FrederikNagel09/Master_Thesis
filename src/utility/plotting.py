@@ -17,11 +17,13 @@ use_scheduler=True.
 
 from __future__ import annotations
 
+import json
 import os
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
+import torch
 
 # =============================================================================
 # Colour palette
@@ -375,6 +377,146 @@ def plot_sample_progression(
         )
 
     fig.suptitle("Sample Progression", fontsize=11, fontweight="bold", y=0.99)
+
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+def plot_fphi_progression(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,
+    filename: str = "fphi_progression",
+) -> None:
+    """
+    Append a row showing one image passed through F_phi at 6 evenly spaced
+    timesteps (t=0 to t=T) to the progression figure.
+
+    Always renders 5 rows — empty rows shown as white until filled.
+    First row has t-labels along the top. Each row is labelled with its
+    epoch on the left.
+
+    Parameters
+    ----------
+    model       : Trained NDM model with F_phi, already on device.
+    batch       : Current training batch (N, data_dim), used to pick one image.
+    epoch       : Current epoch, used as the row label.
+    run_dir     : Run results directory (src/train_results/{run_name}).
+    device      : Device string.
+    data_config : Dict with "channels", "img_size", "data_dim".
+    filename    : Base name for the saved png and metadata files.
+    """
+
+    os.makedirs(run_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    n_cols = 6
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+    T = model.T  # noqa: N806
+
+    # ── Timesteps: 6 evenly spaced from 0 to T ───────────────────────────────
+    timesteps = [round(T * i / (n_cols - 1)) for i in range(n_cols)]
+    timesteps[-1] = T - 1  # clamp to valid index
+
+    # ── Pick one image from the batch ────────────────────────────────────────
+    x = batch[0][0:1].to(device)  # batch[0] gets the images tensor, [0:1] gets first image
+
+    # ── Run F_phi at each timestep ────────────────────────────────────────────
+    model.eval()
+    row_images = []
+    with torch.no_grad():
+        for t in timesteps:
+            t_norm = torch.full((1, 1), t / max(T - 1, 1), device=device)
+            z_t = model.F_phi(x, t_norm)  # (1, data_dim)
+            img = (z_t * 0.5 + 0.5).clamp(0, 1)  # [-1,1] → [0,1]
+            img = img.reshape(channels, img_size, img_size).cpu().numpy()
+            if channels == 1:  # noqa: SIM108
+                img = img[0]  # (H, W)
+            else:
+                img = img.transpose(1, 2, 0)  # (H, W, C)
+            row_images.append(img)
+    model.train()
+
+    new_row = np.stack(row_images, axis=0)  # (6, H, W) or (6, H, W, C)
+
+    # ── Load existing rows from disk if available ─────────────────────────────
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(rows_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        existing_rows = np.load(rows_path)
+        all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_rows = new_row[None]
+        all_epochs = [epoch]
+
+    # ── Persist updated rows ──────────────────────────────────────────────────
+    np.save(rows_path, all_rows)
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs, "timesteps": timesteps}, f)
+
+    # ── Pad to always have N_ROWS_TOTAL rows ──────────────────────────────────
+    n_existing = len(all_epochs)
+    blank_shape = (n_cols,) + new_row.shape[1:]
+    blank = np.ones(blank_shape)
+    padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
+    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
+
+    # ── Build figure ──────────────────────────────────────────────────────────
+    label_width = 0.5
+    img_inches = 1.2
+    row_gap = 0.15
+    title_pad = 0.35
+    t_label_pad = 0.25  # extra space for t labels on first row
+
+    fig_w = label_width + n_cols * img_inches
+    fig_h = title_pad + t_label_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("white")
+
+    # t= labels along the top (above first row only)
+    for c, t in enumerate(timesteps):
+        label_x = (label_width + (c + 0.5) * img_inches) / fig_w
+        label_y = 1.0 - (title_pad / fig_h) - (t_label_pad * 0.5 / fig_h)
+        fig.text(label_x, label_y, f"t={t}", ha="center", va="center", fontsize=7, color="#555555")
+
+    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+        for c in range(n_cols):
+            left = (label_width + c * img_inches) / fig_w
+            bottom = 1.0 - (title_pad / fig_h) - (t_label_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            width = img_inches / fig_w
+            height = img_inches / fig_h
+
+            ax = fig.add_axes([left, bottom, width, height])
+            if channels == 1:
+                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            else:
+                ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
+            ax.axis("off")
+
+        # Epoch label on the left
+        fig.text(
+            (label_width * 0.5) / fig_w,
+            (1.0 - (title_pad / fig_h) - (t_label_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h)),
+            f"ep {ep}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    fig.suptitle("F_phi Corruption Progression", fontsize=11, fontweight="bold", y=0.99)
 
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")

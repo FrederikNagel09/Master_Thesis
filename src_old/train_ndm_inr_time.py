@@ -72,7 +72,7 @@ WEIGHT_DECAY = 1e-5
 GRAD_CLIP = 1.0  # max gradient norm; set to 0 to disable
 
 # --- Training ---
-EPOCHS = 300
+EPOCHS = 10
 IMG_SIZE = 28
 DATA_DIM = IMG_SIZE * IMG_SIZE  # 784
 

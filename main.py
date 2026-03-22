@@ -7,33 +7,35 @@ python main.py \
     --run_name ndm_mlp_mnist \
     --model ndm \
     --dataset mnist \
-    --epochs 100 \
+    --epochs 10 \
     --batch_size 128 \
     --lr 2e-4 \
     --T 1000 \
     --f_phi_type mlp \
-    --f_phi_hidden 512 512 512 \
-    --f_phi_t_embed 64 \
+    --f_phi_hidden 256 512 256 \
+    --base_channels 32 \
+    --f_phi_t_embed 16 \
     --sigma_tilde 1.0 \
     --use_scheduler \
-    --warmup_steps 5000 \
+    --warmup_steps 50 \
     --log_every_n_steps 20 \
-    --subset_frac 1.0
+    --subset_frac 0.1
 
 python main.py \
-    --run_name ndm_unet_cifar \
+    --run_name ndm_unet_mnist \
     --model ndm \
-    --dataset cifar10 \
-    --epochs 200 \
+    --dataset mnist \
+    --epochs 10 \
     --batch_size 128 \
     --lr 2e-4 \
     --T 1000 \
     --f_phi_type unet \
-    --base_channels 64 \
+    --base_channels 32 \
     --sigma_tilde 1.0 \
     --use_scheduler \
-    --warmup_steps 10000 \
-    --log_every_n_steps 20
+    --warmup_steps 100 \
+    --log_every_n_steps 20 \
+    --subset_frac 0.1
 
 # Resume a previous run
 python main.py \
@@ -81,10 +83,10 @@ python main.py \
 
 ######################### NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_inr_mnist \
+    --run_name ndm_inr_mlp_mnist \
     --model ndm_inr \
     --dataset mnist \
-    --epochs 300 \
+    --epochs 10 \
     --batch_size 128 \
     --lr 3e-4 \
     --T 1000 \
@@ -98,11 +100,11 @@ python main.py \
     --noise_hidden_dim 512 \
     --noise_n_blocks 4 \
     --noise_t_embed 128 \
-    --use_scheduler \
-    --warmup_steps 5000 \
+    --warmup_steps 50 \
     --grad_clip 1.0 \
+    --weight_decay 1e-5 \
     --log_every_n_steps 20 \
-    --subset_frac 1.0
+    --subset_frac 0.1
 """
 
 import sys

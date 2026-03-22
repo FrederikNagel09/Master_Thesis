@@ -41,7 +41,7 @@ from src.utility.general import (
     _save_graph_data,
 )
 from src.utility.model_builders import build_model
-from src.utility.plotting import plot_final_samples, plot_sample_progression, plot_training
+from src.utility.plotting import plot_final_samples, plot_fphi_progression, plot_sample_progression, plot_training
 from src.utility.training import train
 
 # =============================================================================
@@ -87,6 +87,7 @@ def run_training(
             "training_graph.png",
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
+            "fphi_progression_ep*.png",
             "metadata/training_graph_data.json",
             "metadata/sample_progression_*.json",
             "metadata/sample_progression_*.npy",
@@ -119,11 +120,15 @@ def run_training(
 
     # ── 3. Optimiser & optional resume ───────────────────────────────────────
     print("\n[ 3 / 4 ]  Setting up optimiser …")
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=getattr(args, "weight_decay", 0.0),
-    )
+    if False:
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=getattr(args, "weight_decay", 0.0),
+        )
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=getattr(args, "weight_decay", 0.0))
+
     start_epoch = 0
     if resume_path is not None:
         print(f"  Resuming from checkpoint: {resume_path}")
@@ -138,9 +143,13 @@ def run_training(
 
     progression_filename = f"sample_progression_ep{start_epoch + 1}-{end_epoch}"
 
-    def _sample_fn(model, step, device):
+    def _sample_fn(model, step, device, batch=None):
         epoch = step // len(data_loader)
         plot_sample_progression(model, args.model, epoch, run_dir, device, data_config, filename=progression_filename)
+        if batch is not None:
+            plot_fphi_progression(
+                model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
+            )
 
     # Load existing history for resumed runs; fresh dict otherwise
     history = _load_graph_data(run_dir)

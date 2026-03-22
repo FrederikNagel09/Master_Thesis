@@ -444,7 +444,7 @@ class NeuralDiffusionModel(nn.Module):
         shape = (n_samples, self.data_dim)
         device = self.sqrt_alpha_cumprod.device
         z_t = torch.randn(shape, device=device)
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T, leave=False):
             t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
             t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
             # --- Predict x_hat from z_t (Eq. 34, Appendix C) ---
