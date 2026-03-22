@@ -39,8 +39,6 @@ class VAEINR(nn.Module):
         coords:     (batch, 784, 2)   — pixel coordinates
         pixels:     (batch, 784, 1)   — binary target values
         """
-        # print(f"  [DEBUG] image_flat range : [{image_flat.min():.3f}, {image_flat.max():.3f}]")
-        # print(f"  [DEBUG] pixels range     : [{pixels.min():.3f}, {pixels.max():.3f}]")
         # Encode image  ( posterior q(z|x) )
         q = self.encoder(image_flat)
         z = q.rsample()  # (batch, latent_dim)
@@ -50,10 +48,6 @@ class VAEINR(nn.Module):
 
         # Run INR: coords + weights = pixel predictions
         pixel_preds = self.inr(coords, flat_weights)  # (batch, 784, 1)
-
-        print(f"  [DEBUG] pixel_preds range: [{pixel_preds.min():.3f}, {pixel_preds.max():.3f}]")
-        print(f"  [DEBUG] z range          : [{z.min():.3f}, {z.max():.3f}]")
-        print(f"  [DEBUG] flat_weights range: [{flat_weights.min():.3f}, {flat_weights.max():.3f}]")
 
         # Use MSE for reconstruction loss
         recon_loss = F.binary_cross_entropy(pixel_preds, pixels, reduction="sum") / image_flat.size(0)
