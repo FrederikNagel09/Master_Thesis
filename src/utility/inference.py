@@ -19,6 +19,7 @@ For models that support multi-resolution (inr_vae, ndm_inr) pass:
 
 import sys
 
+import numpy as np
 import torch
 
 sys.path.append(".")
@@ -40,6 +41,7 @@ def _sample_ndm(
     model: torch.nn.Module,
     n_samples: int,
     data_config: dict,
+    **kwargs,  # noqa: ARG001
 ) -> torch.Tensor:
     """
     Sample from NeuralDiffusionModel.
@@ -109,6 +111,76 @@ def _sample_ndm_inr(
         pixels = model.sample(n_samples, coords=coords)  # (N, img_size^2)
 
     return _flat_to_image(pixels, n_samples, channels, img_size)
+
+
+def _sample_at_resolutions_inr_vae(
+    model,
+    n_rows: int,
+    resolutions: list[int],
+    channels: int,
+    device: str,
+) -> np.ndarray:
+    """
+    Sample n_rows latent codes and render each at all resolutions.
+    Returns array of shape (n_rows, n_res, H_max, W_max, C) — images are
+    stored at their native resolution, returned as a list of lists.
+    Returns: list of lists — rows[i][j] is numpy array for row i, resolution j.
+    """
+    dev = torch.device(device)
+    rows = []
+
+    with torch.no_grad():
+        # Sample n_rows latent codes once
+        z = model.prior().sample(torch.Size([n_rows])).to(dev)  # (n_rows, latent_dim)
+        flat_weights = model.decode_to_weights(z)  # (n_rows, num_weights)
+
+        for i in range(n_rows):
+            row_imgs = []
+            w = flat_weights[i : i + 1]  # (1, num_weights)
+            for res in resolutions:
+                coords = _make_coord_grid(res, dev)  # (res^2, 2)
+                coords_batch = coords.unsqueeze(0)  # (1, res^2, 2)
+                pixels = model.inr(coords_batch, w)  # (1, res^2, C)
+                pixels = pixels.permute(0, 2, 1).reshape(1, channels, res, res)
+                pixels = pixels.clamp(0, 1).squeeze(0).cpu()  # (C, res, res)
+                if channels == 1:  # noqa: SIM108
+                    img = pixels.squeeze(0).numpy()  # (res, res)
+                else:
+                    img = pixels.permute(1, 2, 0).numpy()  # (res, res, C)
+                row_imgs.append(img)
+            rows.append(row_imgs)
+
+    return rows
+
+
+def _sample_at_resolutions_ndm_inr(
+    model,
+    n_rows: int,
+    resolutions: list[int],
+    channels: int,
+    device: str,
+) -> list:
+    """
+    Run full diffusion sampling n_rows times, then decode each at all resolutions.
+    Returns list of lists — rows[i][j] is numpy array for row i, resolution j.
+    """
+    dev = torch.device(device)
+    rows = []
+
+    with torch.no_grad():
+        for i in range(n_rows):
+            print(f"    Sampling row {i + 1}/{n_rows} …")
+            row_imgs = []
+            for res in resolutions:
+                coords = _make_coord_grid(res, dev) if res != resolutions[0] else None
+                pixels = model.sample(1, coords=coords)  # (1, res^2)
+                pixels = pixels.clamp(0, 1).reshape(1, channels, res, res)
+                pixels = pixels.squeeze(0).cpu()  # (C, res, res)
+                img = pixels.squeeze(0).numpy() if channels == 1 else pixels.permute(1, 2, 0).numpy()
+                row_imgs.append(img)
+            rows.append(row_imgs)
+
+    return rows
 
 
 # =============================================================================

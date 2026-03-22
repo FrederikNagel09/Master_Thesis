@@ -52,6 +52,7 @@ SECTIONS: dict[str, list[str]] = {
         "f_phi_type",
         "f_phi_hidden",
         "f_phi_t_embed",
+        "base_channels",
     ],
     "noise_predictor": [
         "noise_hidden_dim",

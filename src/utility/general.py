@@ -7,11 +7,80 @@ from datetime import datetime
 import torch
 from torch import nn
 
+from src.utility.model_builders import build_model
+
 _RESULTS_ROOT = "src/train_results"
 
 # =============================================================================
 # Scheduler
 # =============================================================================
+
+
+def _get_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _load_config(config_path: str) -> dict:
+    with open(config_path) as f:
+        return json.load(f)
+
+
+def _config_to_namespace(config: dict) -> types.SimpleNamespace:
+    flat = {}
+    for key in ("model", "dataset", "run_name"):
+        if key in config:
+            flat[key] = config[key]
+    for value in config.values():
+        if isinstance(value, dict):
+            flat.update(value)
+    return types.SimpleNamespace(**flat)
+
+
+def _make_coord_grid(resolution: int, device: torch.device) -> torch.Tensor:
+    """Build (resolution*resolution, 2) coordinate grid in [-1, 1]."""
+    lin = torch.linspace(-1, 1, resolution, device=device)
+    gr, gc = torch.meshgrid(lin, lin, indexing="ij")
+    return torch.stack([gr.flatten(), gc.flatten()], dim=-1)
+
+
+def _load_model(config_path: str, device: str):
+    """Load model from config, return (model, data_config)."""
+    config = _load_config(config_path)
+    args = _config_to_namespace(config)
+    data_config = config["data"]
+    weights_path = config["paths"]["weights"]
+
+    model = build_model(args, data_config).to(device)
+    checkpoint = torch.load(weights_path, map_location=device)
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        model.load_state_dict(checkpoint)
+    model.eval()
+    return model, data_config
+
+
+def _draw_grid(
+    axes: list,
+    images: torch.Tensor,
+    channels: int,
+) -> None:
+    """
+    Draw a GRID_SIZE x GRID_SIZE image grid onto a list of axes.
+    axes  : flat list of GRID_SIZE*GRID_SIZE axes
+    images: (N, C, H, W) tensor in [0, 1]
+    """
+    for i, ax in enumerate(axes):
+        img = images[i]
+        if channels == 1:
+            ax.imshow(img.squeeze(0).numpy(), cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+        else:
+            ax.imshow(img.permute(1, 2, 0).numpy(), vmin=0, vmax=1, interpolation="nearest")
+        ax.axis("off")
 
 
 def _build_scheduler(

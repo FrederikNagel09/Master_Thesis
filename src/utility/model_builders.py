@@ -66,7 +66,10 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
         )
         print(f"    F_phi : MLP  hidden={args.f_phi_hidden}  t_embed={args.f_phi_t_embed}")
     elif args.f_phi_type == "unet":
-        f_phi = UNetTransformation(data_dim=data_dim, base_channels=args.base_channels)
+        f_phi = UNetTransformation(
+            data_dim=data_dim,
+            base_channels=getattr(args, "base_channels", 32),  # default if not in config
+        )
         print("    F_phi : UNet")
     else:
         raise ValueError(f"Unknown f_phi_type '{args.f_phi_type}'. Choose 'mlp' or 'unet'.")

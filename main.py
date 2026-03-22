@@ -42,72 +42,72 @@ python main.py \
 
 ######################### NDM Training ########################################
 python main.py \
-    --run_name ndm_unet_mnist \          # required, unique name for this run
-    --model ndm \                        # ndm | inr_vae | ndm_inr
-    --dataset mnist \                    # mnist | cifar10 | celeba
-    --epochs 300 \                       # number of epochs to train
-    --batch_size 128 \                   # batch size
-    --lr 1e-3 \                          # learning rate
-    --weight_decay 0.0 \                 # L2 regularisation (0 = disabled)
-    --grad_clip 1.0 \                    # max gradient norm (0 = disabled)
-    --log_every_n_steps 50 \             # how often to log to history
-    --subset_frac 1.0 \                  # fraction of dataset to use (1.0 = all)
-    --use_scheduler \                    # flag: enable warmup+decay LR schedule
-    --warmup_steps 30000 \                # steps for linear LR warmup
-    --peak_lr 2e-4 \                     # LR at top of warmup (defaults to lr)
-    --T 1000 \                           # diffusion timesteps
-    --beta_1 1e-4 \                      # noise schedule start
-    --beta_T 2e-2 \                      # noise schedule end
-    --sigma_tilde 1.0 \                  # 1.0 = stochastic DDPM | 0.0 = DDIM
-    --f_phi_type unet \                   # mlp | unet
-    --f_phi_t_embed 128 \                 # F_phi time embedding dim
-    --base_channels 64 \                 # base channels for UNet F_phi / network
+    --run_name ndm_unet_mnist \
+    --model ndm \
+    --dataset mnist \
+    --epochs 10 \
+    --batch_size 128 \
+    --lr 1e-3 \
+    --weight_decay 0.0 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 50 \
+    --subset_frac 0.5 \
+    --use_scheduler \
+    --warmup_steps 30000 \
+    --peak_lr 2e-4 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --sigma_tilde 1.0 \
+    --f_phi_type unet \
+    --f_phi_t_embed 128 \
+    --base_channels 32 
 
 ######################### INR-VAE Training ####################################
 python main.py \
-    --run_name inr_vae_mnist \           # required, unique name for this run
-    --model inr_vae \                    # ndm | inr_vae | ndm_inr
-    --dataset mnist \                    # mnist | cifar10 | celeba
-    --epochs 300 \                       # number of epochs to train
-    --batch_size 128 \                   # batch size
-    --lr 1e-3 \                          # learning rate
-    --weight_decay 0.0 \                 # L2 regularisation (0 = disabled)
-    --grad_clip 1.0 \                    # max gradient norm (0 = disabled)
-    --log_every_n_steps 50 \             # how often to log to history
-    --subset_frac 1.0 \                  # fraction of dataset to use (1.0 = all)
-    --latent_dim 128 \                   # VAE latent space dimension
-    --prior mog \                   # gaussian | mog
-    --vae_enc_dim 512 \                  # encoder hidden dim
-    --vae_dec_dim 512 \                  # decoder hidden dim
-    --inr_hidden_dim 64 \                # INR hidden layer width
-    --inr_layers 3 \                     # INR number of hidden layers
+    --run_name vae_inr_mnist \
+    --model inr_vae \
+    --dataset mnist \
+    --epochs 10 \
+    --batch_size 128 \
+    --lr 1e-3 \
+    --weight_decay 0.0 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 50 \
+    --subset_frac 0.5 \
+    --latent_dim 128 \
+    --prior mog \
+    --vae_enc_dim 512 \
+    --vae_dec_dim 512 \
+    --inr_hidden_dim 32 \
+    --inr_layers 3 
 
 ######################### NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_inr_mnist \           # required, unique name for this run
-    --model ndm_inr \                    # ndm | inr_vae | ndm_inr
-    --dataset mnist \                    # mnist | cifar10 | celeba
-    --epochs 500 \                       # number of epochs to train
-    --batch_size 128 \                   # batch size
-    --lr 1e-3 \                          # learning rate
-    --weight_decay 1e-5 \                # L2 regularisation (0 = disabled)
-    --grad_clip 1.0 \                    # max gradient norm (0 = disabled)
-    --log_every_n_steps 50 \             # how often to log to history
-    --subset_frac 1.0 \                  # fraction of dataset to use (1.0 = all)
-    --use_scheduler \                    # flag: enable warmup+decay LR schedule
-    --warmup_steps 30000 \                # steps for linear LR warmup
-    --peak_lr 1e-3 \                     # LR at top of warmup (defaults to lr)
-    --T 1000 \                           # diffusion timesteps
-    --beta_1 1e-4 \                      # noise schedule start
-    --beta_T 2e-2 \                      # noise schedule end
-    --sigma_tilde 1.0 \                  # 1.0 = stochastic DDPM | 0.0 = DDIM
-    --inr_hidden_dim 64 \                # INR hidden layer width
-    --inr_layers 3 \                     # INR number of hidden layers
-    --f_phi_hidden 256 512 512 256 \         # F_phi hidden dims
-    --f_phi_t_embed 128 \                 # F_phi time embedding dim
-    --noise_hidden_dim 512 \             # noise predictor hidden dim
-    --noise_n_blocks 4 \                 # noise predictor number of blocks
-    --noise_t_embed 128 \                # noise predictor time embedding dim
+    --run_name ndm_inr_mlp_mnist \
+    --model ndm_inr \
+    --dataset mnist \
+    --epochs 10 \
+    --batch_size 128 \
+    --lr 1e-3 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 50 \
+    --subset_frac 0.5 \
+    --use_scheduler \
+    --warmup_steps 30000 \
+    --peak_lr 1e-3 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --sigma_tilde 1.0 \
+    --inr_hidden_dim 32 \
+    --inr_layers 3 \
+    --f_phi_hidden 256 512 512 256 \
+    --f_phi_t_embed 128 \
+    --noise_hidden_dim 512 \
+    --noise_n_blocks 4 \
+    --noise_t_embed 128 
 """
 
 import sys
