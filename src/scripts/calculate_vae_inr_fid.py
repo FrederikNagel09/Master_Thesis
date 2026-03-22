@@ -137,10 +137,12 @@ def compute_fid_and_save_grid(config: dict, grid_size: int = 8):
     real_np = (mnist.data.numpy()).astype(np.uint8)  # (60000, 28, 28)
     print(f"  {len(real_np):,} real images")
     print("Computing real Inception features …")
+
+    n_samples = n_samples = len(real_np)
+
     real_feats = get_inception_features(real_np, device)
 
     # ── 3. Generated samples ─────────────────────────────────
-    n_samples = len(real_np)  # match real count for FID
     coords = make_coord_grid(28, device)  # (784, 2)
 
     print(f"Sampling {n_samples:,} images from prior …")
@@ -184,7 +186,7 @@ def compute_fid_and_save_grid(config: dict, grid_size: int = 8):
         normalize=False,
         pad_value=1.0,
     )  # (1, H, W)
-    grid_np = grid_tensor.squeeze(0).numpy()  # (H, W)  float
+    grid_np = grid_tensor[0].numpy()
 
     fig = plt.figure(figsize=(10, 10.6))
     gs = gridspec.GridSpec(
@@ -227,7 +229,7 @@ def compute_fid_and_save_grid(config: dict, grid_size: int = 8):
 
 
 if __name__ == "__main__":
-    config_path = "src/results/vae_inr_hypernet/experiments/inr_vae_test_20-03-15:17.json"
+    config_path = "src/results/vae_inr_hypernet/experiments/vae_inr_MoG_Final_20-03-15:15.json"
     GRID_SIZE = 8
 
     config = parse_config_vars(config_path)
