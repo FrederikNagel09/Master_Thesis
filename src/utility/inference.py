@@ -206,6 +206,7 @@ def sample(
     n_samples: int = 16,
     device: str | None = None,
     resolution: int | None = None,
+    batch_size: int = 512,
 ) -> torch.Tensor:
     """
     Load a trained model from a config file and sample from it.
@@ -249,14 +250,22 @@ def sample(
     if sample_fn is None:
         raise ValueError(f"Unknown model '{model_name}'. Choose from: {list(_SAMPLE_FN.keys())}")
 
-    print(f"  Sampling {n_samples} images …")
-    images = sample_fn(
-        model=model,
-        n_samples=n_samples,
-        device=device,
-        data_config=data_config,
-        resolution=resolution,
-    )
+    # ── Batched sampling ──────────────────────────────────────────────────────
+    print(f"  Sampling {n_samples} images in batches of {batch_size} …")
+    all_images = []
+    remaining = n_samples
+    while remaining > 0:
+        n = min(batch_size, remaining)
+        batch = sample_fn(
+            model=model,
+            n_samples=n,
+            device=device,
+            data_config=data_config,
+            resolution=resolution,
+        )
+        all_images.append(batch.cpu())  # move to CPU immediately to free VRAM
+        remaining -= n
 
+    images = torch.cat(all_images, dim=0)
     print(f"  Done. Output shape: {tuple(images.shape)}  range: [{images.min():.3f}, {images.max():.3f}]")
     return images

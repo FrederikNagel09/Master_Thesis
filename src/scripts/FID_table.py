@@ -39,8 +39,8 @@ from src.utility.inference import sample as model_sample
 # Constants
 # =============================================================================
 
-N_SAMPLES = 10  # 10_000
-SAMPLE_BATCH = 500
+N_SAMPLES = 10_000
+SAMPLE_BATCH = 2000
 CLASSIFIER_WEIGHTS = "src/results/classifier/weights.pth"
 CLASSIFIER_CONFIG = "src/results/classifier/config.json"
 CACHE_DIR = "src/results/cache"
@@ -465,6 +465,7 @@ def main():
             config_path=config_path,
             n_samples=N_SAMPLES,
             device=device,
+            batch_size=SAMPLE_BATCH,
         )  # (N, C, H, W) in [0,1]
         print(f"  Sampling done in {time.time() - t0:.1f}s")
 
