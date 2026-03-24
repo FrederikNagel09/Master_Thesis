@@ -394,7 +394,7 @@ class NeuralDiffusionModelINR(nn.Module):
     # -------------------------------------------------------------------------
 
     @torch.no_grad()
-    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None) -> torch.Tensor:
+    def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
         """
         Ancestral sampling from the NDM, with INR decoding at t=0.
 
@@ -405,30 +405,28 @@ class NeuralDiffusionModelINR(nn.Module):
         weight_dim = self.F_phi.net[-1].out_features  # infer from WeightEncoder output
         device = self.sqrt_alpha_cumprod.device
 
-        z_t = torch.randn(n_samples, weight_dim, device=device)  # sample in weight space
+        theta_t = torch.randn(n_samples, weight_dim, device=device)  # sample in weight space
 
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
             t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
             t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
 
             # Predict noise, recover clean weight vector
-            eps_hat = self.network(z_t, t_norm)  # (n, weight_dim)
+            eps_hat = self.network(theta_t, t_norm)  # (n, weight_dim)
             alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
             sigma_t = self.sigma[t].unsqueeze(0)
-            x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
+            theta_t_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
 
             if t == 0:
-                # x_hat is now a clean weight vector — decode through INR
-                images = self._inr_decode(x_hat, coords)
-                return images
+                return theta_t_hat
 
-            # Sample z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat)
+            # Sample theta_{t-1} ~ q_phi(theta_{t-1} | theta_t, x_hat)
             s = t - 1
             s_idx = torch.full((n_samples,), s, dtype=torch.long, device=device)
             s_norm = torch.full((n_samples, 1), s / max(self.T - 1, 1), device=device)
 
             # With:
-            x_hat_pixels = self._inr_decode(x_hat)  # weight -> pixel space
+            x_hat_pixels = self._inr_decode(theta_t_hat)  # weight -> pixel space
             Fx_hat_t = self.F_phi(x_hat_pixels, t_norm)  # noqa: N806
             Fx_hat_s = self.F_phi(x_hat_pixels, s_norm)  # noqa: N806
 
@@ -439,9 +437,24 @@ class NeuralDiffusionModelINR(nn.Module):
             sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)
 
             coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)
-            mu = alpha_s * Fx_hat_s + coeff * (z_t - alpha_t_val * Fx_hat_t)
-            noise = torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(z_t)
-            z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
+            mu = alpha_s * Fx_hat_s + coeff * (theta_t - alpha_t_val * Fx_hat_t)
+            noise = torch.randn_like(theta_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(theta_t)
+            theta_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
 
         # Should not reach here, but safety fallback
-        return self._inr_decode(z_t)
+        return theta_t_hat
+
+    @torch.no_grad()
+    def decode_weights(self, weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Decode a weight vector into pixel space at arbitrary resolution via INR.
+        weights : (n_samples, weight_dim)
+        coords  : (H*W, 2) or None for default grid
+        """
+        return self._inr_decode(weights, coords)
+
+    @torch.no_grad()
+    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None) -> torch.Tensor:
+        """Convenience wrapper"""
+        weights = self.sample_weight(n_samples)
+        return self.decode_weights(weights, coords)
