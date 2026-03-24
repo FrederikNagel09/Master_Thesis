@@ -458,7 +458,7 @@ def plot_fphi_progression(
 
     # ── Pad to always have N_ROWS_TOTAL rows ──────────────────────────────────
     n_existing = len(all_epochs)
-    blank_shape = (n_cols,) + new_row.shape[1:]
+    blank_shape = (n_cols, *new_row.shape[1:])
     blank = np.ones(blank_shape)
     padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
     padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
@@ -512,3 +512,54 @@ def plot_fphi_progression(
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
+
+
+def print_training_summary(
+    name: str,
+    history: dict,
+    global_step: int,
+    completed_steps: int,
+    start_epoch: int,
+    epochs: int,
+    lr: float,
+) -> None:
+    if not history.get("total"):
+        return
+
+    losses = history["total"]
+    steps = history["steps"]
+    n = len(losses)
+
+    first_loss = losses[0]
+    final_loss = losses[-1]
+    best_loss = min(losses)
+    best_step = steps[losses.index(best_loss)]
+    checkpoints = {pct: losses[int((pct / 100) * (n - 1))] for pct in (25, 50, 75, 100)}
+    still_improving = losses[-1] < losses[max(0, n - max(1, n // 10))]
+    total_steps_run = global_step - completed_steps
+    final_lr = history["lr"][-1] if history["lr"] else lr
+
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print(f"  TRAINING COMPLETE — {name}")
+    print(sep)
+    print(f"  Steps trained   : {total_steps_run:,}  (epochs {start_epoch + 1}-{start_epoch + epochs})")
+    print(f"  First loss      : {first_loss:.4f}")
+    print(f"  Final loss      : {final_loss:.4f}  ({'+' if final_loss > first_loss else ''}{final_loss - first_loss:.4f})")
+    print(f"  Best loss       : {best_loss:.4f}  @ step {best_step:.1f}")
+    print(f"  Final LR        : {final_lr:.2e}")
+    print(f"  Still improving : {'YES — loss still dropping at end' if still_improving else 'NO  — loss had plateaued'}")
+    print(sep)
+    print("  Loss at training milestones:")
+    for pct, val in checkpoints.items():
+        bar = "█" * int((val / (first_loss + 1e-8)) * 20)
+        print(f"    {pct:3d}%  {val:.4f}  {bar}")
+    print(sep)
+
+    if any(history["diff"]):
+        print("  Final loss components (last logged):")
+        print(f"    diff  : {history['diff'][-1]:.4f}")
+        print(f"    prior : {history['prior'][-1]:.4f}")
+        print(f"    rec   : {history['rec'][-1]:.4f}")
+        print(sep)
+    print()

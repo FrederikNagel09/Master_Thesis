@@ -20,6 +20,7 @@ sys.path.append(".")
 from typing import TYPE_CHECKING
 
 from src.utility.general import _build_scheduler
+from src.utility.plotting import print_training_summary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -228,5 +229,7 @@ def train(
             epoch_callback(history)
 
     progress_bar.close()
+    # ── End-of-training summary (visible in LSF email) ───────────────────────────
+    print_training_summary(name, history, global_step, completed_steps, start_epoch, epochs, lr)
 
     return model

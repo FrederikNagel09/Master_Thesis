@@ -437,9 +437,9 @@ def main():
         sys.exit(1)
 
     device = _get_device()
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"  FID Comparison  |  device={device}  |  n={N_SAMPLES:,}")
-    print(f"{'='*55}\n")
+    print(f"{'=' * 55}\n")
 
     # ── Load classifier and inception ─────────────────────────────────────────
     print("  Loading MNIST classifier …")
@@ -516,14 +516,14 @@ def main():
     print("  Building figure …")
     _build_figure(metrics, args.out)
 
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     for key, m in metrics.items():
         print(
             f"  {MODEL_LABELS[key]:<10} MNIST FID={m['mnist_fid']:.2f}  "
             f"Inception FID={m['inception_fid']:.2f}  "
             f"Uniformity={m['uniformity']:.2f}"
         )
-    print(f"{'='*55}\n")
+    print(f"{'=' * 55}\n")
 
 
 if __name__ == "__main__":

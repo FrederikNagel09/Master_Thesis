@@ -65,7 +65,7 @@ python main.py \
 
 ######################### INR-VAE Training ####################################
 python main.py \
-    --run_name vae_inr_mnist \
+    --run_name vae_inr_mnist_Testing \
     --model inr_vae \
     --dataset mnist \
     --epochs 10 \
@@ -74,12 +74,12 @@ python main.py \
     --weight_decay 0.0 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.5 \
-    --latent_dim 128 \
+    --subset_frac 0.25 \
+    --latent_dim 32 \
     --prior mog \
-    --vae_enc_dim 512 \
-    --vae_dec_dim 512 \
-    --inr_hidden_dim 32 \
+    --vae_enc_dim 256 \
+    --vae_dec_dim 256 \
+    --inr_hidden_dim 20 \
     --inr_layers 3 
 
 ######################### NDM-INR Training ####################################
