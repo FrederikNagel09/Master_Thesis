@@ -101,14 +101,6 @@ def _build_scheduler(
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
-def _get_device() -> str:
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def _run_dir(run_name: str) -> str:
     path = os.path.join(_RESULTS_ROOT, run_name)
     os.makedirs(path, exist_ok=True)

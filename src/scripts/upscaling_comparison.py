@@ -35,27 +35,12 @@ sys.path.append(".")
 
 import matplotlib.pyplot as plt
 
+from src.configs.results_config import MODEL_COLORS, MODEL_LABELS, NUM_UPSCALING_IMAGES, UPSCALED_RESOLUTIONS
 from src.utility.general import _get_device, _load_model
 from src.utility.inference import (
     _sample_at_resolutions_inr_vae,
     _sample_at_resolutions_ndm_inr,
 )
-
-# =============================================================================
-# Config
-# =============================================================================
-
-N_ROWS = 3
-RESOLUTIONS = [28, 64, 128, 256, 512, 1024]
-MODEL_LABELS = {
-    "inr_vae": "VAE-INR",
-    "ndm_inr": "NDM-INR",
-}
-MODEL_COLORS = {
-    "ndm": "#2a6fdb",
-    "inr_vae": "#e07b39",
-    "ndm_inr": "#2ca05a",
-}
 
 # =============================================================================
 # Main
@@ -67,8 +52,8 @@ def main():
     parser.add_argument("--inr_vae", type=str, default=None, help="Path to INR-VAE config.json")
     parser.add_argument("--ndm_inr", type=str, default=None, help="Path to NDM-INR config.json")
     parser.add_argument("--out", type=str, default="src/results/upscaling.png", help="Output path for the saved figure")
-    parser.add_argument("--n_rows", type=int, default=N_ROWS, help="Number of sample rows per model")
-    parser.add_argument("--resolutions", type=int, nargs="+", default=RESOLUTIONS, help="Resolutions to render at")
+    parser.add_argument("--n_rows", type=int, default=NUM_UPSCALING_IMAGES, help="Number of sample rows per model")
+    parser.add_argument("--resolutions", type=int, nargs="+", default=UPSCALED_RESOLUTIONS, help="Resolutions to render at")
     args = parser.parse_args()
 
     requested = {}

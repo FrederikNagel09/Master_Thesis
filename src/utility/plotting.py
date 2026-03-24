@@ -25,25 +25,8 @@ import matplotlib.ticker as ticker
 import numpy as np
 import torch
 
-# =============================================================================
-# Colour palette
-# =============================================================================
-
-_COLORS = {
-    "total": "#111111",
-    "diff": "#2a6fdb",
-    "prior": "#2ca05a",
-    "rec": "#e07b39",
-    "lr": "#cc3333",
-}
-
-_LABELS = {
-    "total": "Total Loss",
-    "diff": "Diffusion Loss",
-    "prior": "KL / Prior Loss",
-    "rec": "Reconstruction Loss",
-}
-
+from src.configs.results_config import MODEL_COLORS, MODEL_LABELS
+from src.configs.train_plot_config import _COLORS, _LABELS
 
 # =============================================================================
 # Helpers
@@ -325,7 +308,7 @@ def plot_sample_progression(
 
     # ── Pad to always have N_ROWS_TOTAL rows ──────────────────────────────────
     n_existing = len(all_epochs)
-    blank_shape = (n_cols,) + new_row.shape[1:]  # (6, H, W) or (6, H, W, C)
+    blank_shape = (n_cols, *new_row.shape[1:])
     blank = np.ones(blank_shape)
     padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
     padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
@@ -563,3 +546,126 @@ def print_training_summary(
         print(f"    rec   : {history['rec'][-1]:.4f}")
         print(sep)
     print()
+
+
+# =============================================================================
+# Plotting for FID table (per-model sample quality metrics)
+# =============================================================================
+
+
+def _build_figure(
+    metrics: dict,
+    out_path: str,
+) -> None:
+    """
+    metrics: dict keyed by model_key, each with:
+        mnist_fid, inception_fid, uniformity, dist_gen (np array len 10)
+    """
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    model_keys = list(metrics.keys())
+    n_models = len(model_keys)
+    digits = np.arange(10)
+
+    # ── Figure layout ─────────────────────────────────────────────────────────
+    fig = plt.figure(figsize=(5 * n_models, 9))
+    fig.patch.set_facecolor("white")
+
+    # Table takes top 30%, bar plots take bottom 60%, small gap in between
+    ax_table = fig.add_axes([0.05, 0.68, 0.90, 0.28])
+    ax_table.axis("off")
+
+    bar_axes = []
+    bar_w = 0.82 / n_models
+    for i in range(n_models):
+        ax = fig.add_axes([0.08 + i * (bar_w + 0.02), 0.08, bar_w, 0.52])
+        bar_axes.append(ax)
+
+    # ── Table ─────────────────────────────────────────────────────────────────
+    col_labels = ["Model", "MNIST FID ↓", "Inception FID ↓", "Uniformity ↓"]
+    table_data = []
+    for key in model_keys:
+        m = metrics[key]
+        table_data.append(
+            [
+                MODEL_LABELS[key],
+                f"{m['mnist_fid']:.2f}",
+                f"{m['inception_fid']:.2f}",
+                f"{m['uniformity']:.2f}",
+            ]
+        )
+
+    tbl = ax_table.table(
+        cellText=table_data,
+        colLabels=col_labels,
+        loc="center",
+        cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.scale(1, 2.2)
+
+    # Find best (lowest) value per metric column
+    best_mnist = min(range(n_models), key=lambda i: metrics[model_keys[i]]["mnist_fid"])
+    best_inception = min(range(n_models), key=lambda i: metrics[model_keys[i]]["inception_fid"])
+    best_uniformity = min(range(n_models), key=lambda i: metrics[model_keys[i]]["uniformity"])
+    best_cols = {1: best_mnist, 2: best_inception, 3: best_uniformity}
+
+    for (row, col), cell in tbl.get_celld().items():
+        cell.set_edgecolor("#dddddd")
+        cell.set_facecolor("#f5f5f5" if row % 2 == 0 else "white")
+        cell.set_text_props(color="#111111")
+
+        if row == 0:  # header
+            cell.set_facecolor("#eeeeee")
+            cell.set_text_props(fontweight="bold", color="#111111")
+
+        if row > 0 and col == 0:  # model name — colour coded
+            key = model_keys[row - 1]
+            cell.set_text_props(color=MODEL_COLORS[key], fontweight="bold")
+
+        if row > 0 and col in best_cols:  # best value — bold green  # noqa: SIM102
+            if best_cols[col] == row - 1:
+                cell.set_text_props(color="#2a9d3a", fontweight="bold")
+
+    ax_table.set_title(
+        "Model Comparison — MNIST Generation",
+        fontsize=13,
+        fontweight="bold",
+        pad=12,
+        color="#111111",
+    )
+
+    # ── Bar plots ─────────────────────────────────────────────────────────────
+    y_max = max(metrics[k]["dist_gen"].max() for k in model_keys) * 100 * 1.25
+
+    for i, (ax, key) in enumerate(zip(bar_axes, model_keys, strict=False)):
+        dist = metrics[key]["dist_gen"]
+        color = MODEL_COLORS[key]
+
+        ax.bar(digits, dist * 100, color=color, alpha=0.85, width=0.65)
+        ax.axhline(10, color="#999999", linewidth=1.0, linestyle="--", label="Uniform (10%)")
+
+        ax.set_xticks(digits)
+        ax.set_xticklabels([str(d) for d in digits], fontsize=10)
+        ax.set_ylim(0, y_max)
+        ax.set_xlabel("Digit", fontsize=10)
+        ax.set_title(MODEL_LABELS[key], fontsize=11, fontweight="bold", color=color, pad=6)
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_edgecolor("#cccccc")
+        ax.spines["bottom"].set_edgecolor("#cccccc")
+        ax.tick_params(colors="#555555")
+        ax.yaxis.grid(True, color="#eeeeee", linewidth=0.8, zorder=0)
+        ax.set_axisbelow(True)
+
+        if i == 0:
+            ax.set_ylabel("% of samples", fontsize=10)
+            ax.legend(fontsize=9, framealpha=0.8, loc="upper right")
+        else:
+            ax.set_yticklabels([])
+
+    fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"  Figure saved → {out_path}")
