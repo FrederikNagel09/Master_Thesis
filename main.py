@@ -84,30 +84,30 @@ python main.py \
 
 ######################### NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_inr_mlp_mnist \
+    --run_name ndm_inr_test \
     --model ndm_inr \
     --dataset mnist \
-    --epochs 10 \
-    --batch_size 128 \
+    --epochs 20 \
+    --batch_size 32 \
     --lr 1e-3 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 50 \
-    --subset_frac 0.5 \
+    --log_every_n_steps 20 \
+    --subset_frac 0.2 \
     --use_scheduler \
-    --warmup_steps 30000 \
+    --warmup_steps 30 \
     --peak_lr 1e-3 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 16 \
     --inr_layers 3 \
-    --f_phi_hidden 256 512 512 256 \
-    --f_phi_t_embed 128 \
-    --noise_hidden_dim 512 \
-    --noise_n_blocks 4 \
-    --noise_t_embed 128 
+    --f_phi_hidden 256 128 128 256 \
+    --f_phi_t_embed 32 \
+    --noise_hidden_dim 128 \
+    --noise_n_blocks 3 \
+    --noise_t_embed 32 
 """
 
 import sys

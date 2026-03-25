@@ -41,7 +41,13 @@ from src.utility.general import (
     _save_graph_data,
 )
 from src.utility.model_builders import build_model
-from src.utility.plotting import plot_final_samples, plot_fphi_progression, plot_sample_progression, plot_training
+from src.utility.plotting import (
+    plot_final_samples,
+    plot_fphi_progression,
+    plot_reconstruction_progression,
+    plot_sample_progression,
+    plot_training,
+)
 from src.utility.training import train
 
 # =============================================================================
@@ -88,9 +94,12 @@ def run_training(
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
             "fphi_progression_ep*.png",
+            "reconstruction_progression_ep*.png",
             "metadata/training_graph_data.json",
             "metadata/sample_progression_*.json",
             "metadata/sample_progression_*.npy",
+            "metadata/reconstruction_progression_*.json",
+            "metadata/reconstruction_progression_*.npy",
             "weights/weights.pt",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):
@@ -147,9 +156,20 @@ def run_training(
         epoch = step // len(data_loader)
         plot_sample_progression(model, args.model, epoch, run_dir, device, data_config, filename=progression_filename)
         if batch is not None:
-            plot_fphi_progression(
-                model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
-            )
+            if args.model == "ndm":
+                plot_fphi_progression(
+                    model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
+                )
+            elif args.model == "ndm_inr":
+                plot_reconstruction_progression(
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
+                )
 
     # Load existing history for resumed runs; fresh dict otherwise
     history = _load_graph_data(run_dir)

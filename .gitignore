@@ -45,3 +45,4 @@ src/outputs/
 
 src_old/
 src/train_results/
+src/trained_models/

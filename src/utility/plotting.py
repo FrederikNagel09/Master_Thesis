@@ -497,6 +497,163 @@ def plot_fphi_progression(
     plt.close(fig)
 
 
+def plot_reconstruction_progression(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,
+    filename: str = "reconstruction_progression",
+) -> None:
+    """
+    Append a row of 6 reconstructions to the progression figure and save to
+    <run_dir>/<filename>.png, overwriting each call.
+
+    Always renders 5 rows — empty rows are shown as blank until filled.
+    Each row is labelled with its epoch on the left. Left half shows originals,
+    right half shows reconstructions.
+
+    Reconstruction pipeline (mirrors _l_rec):
+        w = F_phi(x, t=0)
+        x_recon = INR(coords, w)
+
+    Parameters
+    ----------
+    model       : NeuralDiffusionModelINR, already on device.
+    batch       : Current training batch — list/tuple where batch[0] is images.
+    epoch       : Current epoch, used as the row label.
+    run_dir     : Run results directory.
+    device      : Device string.
+    data_config : Dict with "channels", "img_size", "data_dim".
+    filename    : Base name for the saved png and metadata files.
+    """
+    import json
+
+    os.makedirs(run_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    n_cols = 6  # 3 originals + 3 reconstructions
+    n_pairs = n_cols // 2
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+
+    # ── Get images from batch ─────────────────────────────────────────────────
+    x = batch[0][:n_pairs].to(device)  # (3, data_dim)
+
+    # ── Reconstruct via F_phi(t=0) → INR decode ───────────────────────────────
+    model.eval()
+    with torch.no_grad():
+        t0_norm = torch.zeros(x.shape[0], 1, device=device)
+        weights = model.F_phi(x, t0_norm)  # (3, weight_dim)
+        x_recon = model._inr_decode(weights)  # (3, data_dim)  in [0, 1]
+    model.train()
+
+    def _to_img(tensor_1d):
+        """Flat tensor → numpy HxW or HxWxC in [0,1]."""
+        img = tensor_1d.cpu().numpy().reshape(channels, img_size, img_size)
+        if channels == 1:
+            return img[0]
+        return img.transpose(1, 2, 0)
+
+    # ── Build new row: [orig_0, orig_1, orig_2, recon_0, recon_1, recon_2] ────
+    originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]  # [-1,1] → [0,1]
+    recons = [x_recon[i].clamp(0, 1) for i in range(n_pairs)]  # already [0,1]
+    new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)  # (6, H, W[,C])
+
+    # ── Load existing rows from disk if available ─────────────────────────────
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(rows_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        existing_rows = np.load(rows_path)
+        all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_rows = new_row[None]
+        all_epochs = [epoch]
+
+    # ── Persist updated rows ──────────────────────────────────────────────────
+    np.save(rows_path, all_rows)
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs}, f)
+
+    # ── Pad to always have N_ROWS_TOTAL rows ──────────────────────────────────
+    n_existing = len(all_epochs)
+    blank_shape = (n_cols, *new_row.shape[1:])
+    blank = np.ones(blank_shape)
+    padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
+    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
+
+    # ── Build figure ──────────────────────────────────────────────────────────
+    label_width = 0.5
+    img_inches = 1.2
+    row_gap = 0.15
+    title_pad = 0.35
+    divider_gap = 0.08  # extra horizontal gap between originals and recons
+
+    fig_w = label_width + n_cols * img_inches + divider_gap
+    fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("white")
+
+    # Column header labels (only drawn once, above the axes area)
+    for c, header in enumerate(["", "Originals", "", "", "Reconstructions", ""]):
+        extra = divider_gap if c >= n_pairs else 0.0
+        cx = (label_width + (c + 0.5) * img_inches + extra) / fig_w
+        fig.text(cx, 1.0 - (title_pad * 0.7 / fig_h), header, ha="center", va="center", fontsize=7, color="#555555")
+
+    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+        for c in range(n_cols):
+            extra = divider_gap if c >= n_pairs else 0.0
+            left = (label_width + c * img_inches + extra) / fig_w
+            bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            width = img_inches / fig_w
+            height = img_inches / fig_h
+
+            ax = fig.add_axes([left, bottom, width, height])
+            if channels == 1:
+                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            else:
+                ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
+            ax.axis("off")
+
+        # Epoch label on the left
+        fig.text(
+            (label_width * 0.5) / fig_w,
+            1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
+            f"ep {ep}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    # Vertical divider line between originals and reconstructions
+    divider_x = (label_width + n_pairs * img_inches + divider_gap * 0.5) / fig_w
+    fig.add_artist(
+        plt.Line2D(
+            [divider_x, divider_x],
+            [0.01, 1.0 - title_pad / fig_h],
+            transform=fig.transFigure,
+            color="#cccccc",
+            linewidth=0.8,
+            linestyle="--",
+        )
+    )
+
+    fig.suptitle("Reconstruction Progression", fontsize=11, fontweight="bold", y=1.02)
+
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def print_training_summary(
     name: str,
     history: dict,
