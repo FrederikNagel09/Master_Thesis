@@ -37,6 +37,12 @@ python main.py \
     --noise_hidden_dim 512 \             # noise predictor hidden dim
     --noise_n_blocks 4 \                 # noise predictor number of residual blocks
     --noise_t_embed 128 \                # noise predictor time embedding dim
+    --num_heads 4 \                      # number of attention heads (UNet)
+    --num_head_channels 64 \             # channels per attention head (UNet)
+    --num_res_blocks 2 \                 # number of residual blocks per UNet level
+    --attention_resolutions 4 \          # which UNet levels to apply attention at (e.g. 4 = 1/16 resolution)
+    --channel_mult 1 2 4 \               # channel multiplier for each UNet level (e.g. 1 2 4 = [base, 2*base, 4*base])
+    --use_attention_unet True\           # flag: use UNet architecture for F_phi in NDM (default MLP)
     --resume src/train_results/.../weights/weights.pt  # path to checkpoint (omit to train from scratch)
 
 
@@ -62,6 +68,34 @@ python main.py \
     --f_phi_type unet \
     --f_phi_t_embed 128 \
     --base_channels 32 
+
+python main.py \
+    --run_name ndm_attention_unet_mnist \
+    --model ndm \
+    --dataset mnist \
+    --epochs 10 \
+    --batch_size 16 \
+    --lr 1e-3 \
+    --weight_decay 0.0 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 10 \
+    --subset_frac 0.02 \
+    --prior_scaling 1.0 \
+    --use_scheduler \
+    --warmup_steps 30 \
+    --peak_lr 2e-4 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --sigma_tilde 1.0 \
+    --base_channels 32 \
+    --use_attention_unet \
+    --num_res_blocks 2 \
+    --channel_mult 1 2 2 \
+    --num_heads 4 \
+    --num_heads_channels 64 \
+    --attention_resolutions 4    
+
 
 ######################### INR-VAE Training ####################################
 python main.py \

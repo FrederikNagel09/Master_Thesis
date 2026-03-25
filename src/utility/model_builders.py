@@ -53,12 +53,38 @@ def build_model(args, data_config: dict) -> nn.Module:
 
 
 def _build_ndm(args, data_config: dict) -> nn.Module:
-    from src.models.NDM import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation
+    from src.models.NDM import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation, WrappedUNetModel
+    from src.models.ndm_unet_module import UNetModel  # adjust import path as needed
 
     data_dim = data_config["data_dim"]
+    use_attention_unet = getattr(args, "use_attention_unet", False)
+    shape_map = {
+        "mnist": (1, 28, 28),
+        "cifar10": (3, 32, 32),
+    }
+    dataset_name = data_config.get("dataset", "mnist").lower()
+    C, H, W = shape_map.get(dataset_name, (1, 28, 28))  # noqa: N806
+
+    def _make_attention_unet(identity_constraint: bool) -> nn.Module:
+        unet = UNetModel(
+            image_size=H,
+            in_channels=C,
+            model_channels=getattr(args, "base_channels", 32),  # 256
+            out_channels=C,
+            num_res_blocks=getattr(args, "num_res_blocks", 2),  # 3
+            attention_resolutions=getattr(args, "attention_resolutions", (4,)),  # (16,8)
+            channel_mult=getattr(args, "channel_mult", (1, 2, 4)),  # (1,2,2,2)
+            num_heads=getattr(args, "num_heads", 4),  # 4
+            num_head_channels=getattr(args, "num_head_channels", 64),  # 64
+            dims=2,
+        )
+        return WrappedUNetModel(unet, C=C, H=H, W=W, identity_constraint=identity_constraint)
 
     # ── F_phi ────────────────────────────────────────────────────────────────
-    if args.f_phi_type == "mlp":
+    if use_attention_unet:
+        f_phi = _make_attention_unet(identity_constraint=True)
+        print("    F_phi : Attention UNet (wrapped)")
+    elif args.f_phi_type == "mlp":
         f_phi = MLPTransformation(
             data_dim=data_dim,
             hidden_dims=args.f_phi_hidden,
@@ -68,14 +94,18 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
     elif args.f_phi_type == "unet":
         f_phi = UNetTransformation(
             data_dim=data_dim,
-            base_channels=getattr(args, "base_channels", 32),  # default if not in config
+            base_channels=getattr(args, "base_channels", 32),
         )
         print("    F_phi : UNet")
     else:
         raise ValueError(f"Unknown f_phi_type '{args.f_phi_type}'. Choose 'mlp' or 'unet'.")
 
     # ── Noise predictor ───────────────────────────────────────────────────────
-    network = UnetNDM(data_dim=data_dim, base_channels=args.base_channels)
+    if use_attention_unet:
+        network = _make_attention_unet(identity_constraint=False)
+        print("    ε_θ   : Attention UNet (wrapped)")
+    else:
+        network = UnetNDM(data_dim=data_dim, base_channels=args.base_channels)
 
     model = NeuralDiffusionModel(
         network=network,
@@ -83,6 +113,7 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
         T=args.T,
         sigma_tilde_factor=args.sigma_tilde,
         data_dim=data_dim,
+        prior_scaling=getattr(args, "prior_scaling", 1.0),
     )
 
     fphi_params = sum(p.numel() for p in f_phi.parameters())

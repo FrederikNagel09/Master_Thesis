@@ -7,6 +7,7 @@ from tqdm import tqdm
 sys.path.append(".")
 
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding, TimeConditionedResBlock
+from src.models.ndm_unet_module import UNetModel
 
 # =============================================================================
 # Data Transformation Networks F_phi(x, t)
@@ -291,9 +292,11 @@ class NeuralDiffusionModel(nn.Module):
         T: int = 100,  # noqa: N803
         sigma_tilde_factor: float = 1.0,
         data_dim: int = 784,
+        prior_scaling: float = 1.0,
     ):
         super().__init__()
         self.data_dim = data_dim
+        self.prior_scaling = prior_scaling
 
         # epsilon_theta: noise predictor network
         self.network = network
@@ -421,7 +424,7 @@ class NeuralDiffusionModel(nn.Module):
         l_prior = self._l_prior(x)  # (batch,)
         l_rec = self._l_rec(x, z_t, t_idx)  # scalar
 
-        prior_mask = 0.20 * (t_idx == self.T - 1).float()
+        prior_mask = self.prior_scaling * (t_idx == self.T - 1).float()
         elbo = l_diff + prior_mask * l_prior
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec
 
@@ -471,3 +474,31 @@ class NeuralDiffusionModel(nn.Module):
             noise = torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(z_t)
             z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
         return z_t
+
+
+class WrappedUNetModel(nn.Module):
+    def __init__(self, unet: UNetModel, C=1, H=28, W=28, identity_constraint=False):  # noqa: N803
+        super().__init__()
+        self.unet = unet
+        self.C, self.H, self.W = C, H, W
+        self.identity_constraint = identity_constraint
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        # x: (batch, 784), t: (batch, 1) normalized in [0,1]
+        batch = x.shape[0]
+
+        # Reshape flat -> spatial
+        h = x.view(batch, self.C, self.H, self.W)
+
+        # Convert t: (batch, 1) -> (batch,) and scale to timestep range
+        timesteps = (t.squeeze(1) * 1000).float()
+
+        out = self.unet(h, timesteps)  # (batch, C, H, W)
+        out = out.view(batch, -1)  # (batch, 784)
+
+        # Only for UNetTransformation replacement:
+        if self.identity_constraint:
+            out = torch.tanh(out)
+            out = (1 - t) * x + t * out
+
+        return out

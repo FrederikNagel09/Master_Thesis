@@ -65,4 +65,13 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_n_blocks", type=int, default=4)
     p.add_argument("--noise_t_embed", type=int, default=128)
 
+    # ── UNet NDM-specific args ───────────────────────────────────────────────
+    p.add_argument("--use_attention_unet", action="store_true")
+    p.add_argument("--num_res_blocks", type=int, default=2)
+    p.add_argument("--attention_resolutions", type=int, nargs="+", default=[4])
+    p.add_argument("--channel_mult", type=int, nargs="+", default=[1, 2, 4])
+    p.add_argument("--num_heads_channels", type=int, default=64)
+    p.add_argument("--num_heads", type=int, default=4)
+    p.add_argument("--prior_scaling", type=float, default=1.0)
+
     return p
