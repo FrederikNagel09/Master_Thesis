@@ -101,23 +101,23 @@ python main.py \
 
 ######################### INR-VAE Training ####################################
 python main.py \
-    --run_name vae_inr_mnist_test \
+    --run_name vae_inr_mnist_modulation \
     --model inr_vae \
     --dataset mnist \
-    --epochs 10 \
-    --batch_size 128 \
+    --epochs 300 \
+    --batch_size 64 \
     --lr 1e-3 \
     --weight_decay 0.0 \
     --grad_clip 1.0 \
-    --log_every_n_steps 50 \
-    --subset_frac 0.1 \
+    --log_every_n_steps 10 \
+    --subset_frac 1.0 \
     --latent_dim 128 \
-    --prior mog \
+    --prior gaussian \
     --vae_enc_dim 512 \
     --vae_dec_dim 512 \
-    --inr_hidden_dim 20 \
-    --inr_layers 3 
-    --use_modulation False
+    --inr_hidden_dim 32 \
+    --inr_layers 3 \
+    --use_modulation true
 
 ######################### NDM-INR Training ####################################
 python main.py \
