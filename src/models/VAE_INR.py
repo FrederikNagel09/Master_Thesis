@@ -30,12 +30,12 @@ class VAEINR(nn.Module):
         self.beta = beta
         self.prior_type = prior_type
         self.use_modulation = use_modulation
-        print(f"VAEINR: use_modulation={use_modulation}")
         self._theta_b: nn.Parameter | None = None
 
     def _init_theta_b(self, weight_dim: int, device: torch.device):
         if self._theta_b is None:
-            self._theta_b = nn.Parameter(torch.ones(1, weight_dim, device=device))
+            self._theta_b = nn.Parameter(torch.empty(1, weight_dim, device=device))
+            nn.init.normal_(self._theta_b, std=0.01)
 
     def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
         if not self.use_modulation:

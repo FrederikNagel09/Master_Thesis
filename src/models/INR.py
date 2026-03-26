@@ -15,7 +15,6 @@ class INR(nn.Module):
         self.n_hidden = n_hidden
         self.out_dim = out_dim
         self.output_activation = output_activation
-        print("output_activation:", output_activation)
 
         # Compute the total number of weights this INR needs
         dims = [coord_dim] + [hidden_dim] * n_hidden + [out_dim]

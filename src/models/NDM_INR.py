@@ -276,7 +276,8 @@ class NeuralDiffusionModelINR(nn.Module):
     def _init_theta_b(self, weight_dim: int, device: torch.device):
         """Lazily initialise theta_b on first use so weight_dim need not be known at __init__."""
         if self._theta_b is None:
-            self._theta_b = nn.Parameter(torch.ones(1, weight_dim, device=device))
+            self._theta_b = nn.Parameter(torch.empty(1, weight_dim, device=device))
+            nn.init.normal_(self._theta_b, std=0.01)
 
     def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
         """
@@ -302,11 +303,15 @@ class NeuralDiffusionModelINR(nn.Module):
         pixels : (batch, 784)   values in [0, 1]  (sigmoid output from INR)
         """
         batch = flat_weights.shape[0]
-        modulated = self._modulate(flat_weights)  # (batch, weight_dim) or identity
+
+        # Apply modulation if enabled (modulation is identity if disabled)
+        if self.use_modulation:
+            flat_weights = self._modulate(flat_weights)  # (batch, weight_dim) or identity
+
         if coords is None:
             coords = self.coords
         coords = coords.expand(batch, -1, -1)
-        pixels = self.inr(coords, modulated)
+        pixels = self.inr(coords, flat_weights)
         return pixels.squeeze(-1)
 
     # -------------------------------------------------------------------------
