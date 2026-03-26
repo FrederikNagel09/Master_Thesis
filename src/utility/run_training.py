@@ -75,6 +75,7 @@ def run_training(
     run_dir = _run_dir(args.run_name)
     device = _get_device()
     resume_path = getattr(args, "resume", None)
+    use_modulation = args.use_modulation
 
     print("\n" + "=" * 60)
     print(f"  Run     : {args.run_name}")
@@ -83,6 +84,7 @@ def run_training(
     print(f"  Device  : {device}")
     print(f"  Epochs  : {args.epochs}")
     print(f"  Dir     : {run_dir}")
+    print(f"  use_modulation: {use_modulation}")
     print("=" * 60)
 
     if resume_path is None:

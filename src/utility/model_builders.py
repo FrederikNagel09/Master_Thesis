@@ -174,7 +174,16 @@ def _build_inr_vae(args, data_config: dict) -> nn.Module:
     else:
         raise ValueError(f"Unknown prior '{args.prior}'. Choose 'gaussian' or 'mog'.")
 
-    model = VAEINR(prior, encoder, decoder_net, inr, beta=1.0, prior_type=args.prior)
+    model = VAEINR(
+        prior,
+        encoder,
+        decoder_net,
+        inr,
+        beta=1.0,
+        prior_type=args.prior,
+        use_modulation=getattr(args, "use_modulation", False),
+    )
+
     return model
 
 
@@ -216,6 +225,7 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         sigma_tilde_factor=args.sigma_tilde,
         data_dim=data_dim,
         img_size=img_size,
+        use_modulation=getattr(args, "use_modulation", False),
     )
 
     fphi_params = sum(p.numel() for p in f_phi.parameters())

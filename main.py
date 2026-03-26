@@ -43,6 +43,7 @@ python main.py \
     --attention_resolutions 4 \          # which UNet levels to apply attention at (e.g. 4 = 1/16 resolution)
     --channel_mult 1 2 4 \               # channel multiplier for each UNet level (e.g. 1 2 4 = [base, 2*base, 4*base])
     --use_attention_unet True\           # flag: use UNet architecture for F_phi in NDM (default MLP)
+    --use_modulation False  \            # flag: use learnable base modulation in VAE-INR decoder and NDM-INR      
     --resume src/train_results/.../weights/weights.pt  # path to checkpoint (omit to train from scratch)
 
 
@@ -99,7 +100,7 @@ python main.py \
 
 ######################### INR-VAE Training ####################################
 python main.py \
-    --run_name vae_inr_mnist_Testing \
+    --run_name vae_inr_mnist_test \
     --model inr_vae \
     --dataset mnist \
     --epochs 10 \
@@ -108,13 +109,14 @@ python main.py \
     --weight_decay 0.0 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.25 \
-    --latent_dim 32 \
+    --subset_frac 0.1 \
+    --latent_dim 128 \
     --prior mog \
-    --vae_enc_dim 256 \
-    --vae_dec_dim 256 \
+    --vae_enc_dim 512 \
+    --vae_dec_dim 512 \
     --inr_hidden_dim 20 \
     --inr_layers 3 
+    --use_modulation False
 
 ######################### NDM-INR Training ####################################
 python main.py \
@@ -141,7 +143,8 @@ python main.py \
     --f_phi_t_embed 32 \
     --noise_hidden_dim 128 \
     --noise_n_blocks 3 \
-    --noise_t_embed 32 
+    --noise_t_embed 32 \
+    --use_modulation False
 """
 
 import sys

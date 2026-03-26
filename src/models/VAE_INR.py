@@ -13,13 +13,14 @@ class VAEINR(nn.Module):
     INR:     coords + weights → pixel predictions
     """
 
-    def __init__(self, prior, encoder, decoder_net, inr, beta=1.0, prior_type="gaussian"):
+    def __init__(self, prior, encoder, decoder_net, inr, beta=1.0, prior_type="gaussian", use_modulation=False):
         """
         prior:        prior distribution p(z)
         encoder:      maps image → q(z|x)
         decoder_net:  nn.Module, maps z → flat weight vector (dim = inr.num_weights)
         inr:          INR instance (stateless forward pass)
         beta:         weight on KL term
+        use_modulation: whether to use learnable base modulation
         """
         super().__init__()
         self.prior = prior
@@ -28,9 +29,27 @@ class VAEINR(nn.Module):
         self.inr = inr
         self.beta = beta
         self.prior_type = prior_type
+        self.use_modulation = use_modulation
+        print(f"VAEINR: use_modulation={use_modulation}")
+        self._theta_b: nn.Parameter | None = None
+
+    def _init_theta_b(self, weight_dim: int, device: torch.device):
+        if self._theta_b is None:
+            self._theta_b = nn.Parameter(torch.zeros(1, weight_dim, device=device))
+
+    def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
+        if not self.use_modulation:
+            return theta
+        self._init_theta_b(theta.shape[-1], theta.device)
+        return (1.0 + theta) * self._theta_b
 
     def decode_to_weights(self, z):
         """z: (batch, latent_dim) → flat_weights: (batch, num_weights)"""
+
+        if self.use_modulation:
+            theta = self.decoder_net(z)  # (batch, num_weights)
+            return self._modulate(theta)
+
         return self.decoder_net(z)
 
     def elbo(self, image_flat, coords, pixels):

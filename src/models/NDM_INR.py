@@ -207,6 +207,7 @@ class NeuralDiffusionModelINR(nn.Module):
         sigma_tilde_factor: float = 1.0,
         data_dim: int = 784,  # pixel dimension (for coords / MSE)
         img_size: int = 28,  # spatial size (28 for MNIST)
+        use_modulation: bool = False,
     ):
         super().__init__()
 
@@ -215,6 +216,11 @@ class NeuralDiffusionModelINR(nn.Module):
         self.network = network  # epsilon_theta
         self.F_phi = F_phi  # image -> weight vector
         self.inr = inr  # weight vector + coords -> pixels
+
+        self.use_modulation = use_modulation
+        # ── Learnable base weight vector ──────────────────────────────────────
+        # Inferred lazily on first use since weight_dim may not be known at init
+        self._theta_b: nn.Parameter | None = None
 
         self.beta_1 = beta_1
         self.beta_T = beta_T
@@ -267,6 +273,22 @@ class NeuralDiffusionModelINR(nn.Module):
         z_t = alpha_t * Fx + sigma_t * epsilon
         return z_t, epsilon, Fx
 
+    def _init_theta_b(self, weight_dim: int, device: torch.device):
+        """Lazily initialise theta_b on first use so weight_dim need not be known at __init__."""
+        if self._theta_b is None:
+            self._theta_b = nn.Parameter(torch.zeros(1, weight_dim, device=device))
+
+    def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
+        """
+        Apply learnable base modulation:
+            theta_mod = (1 + theta) * theta_b
+        Only applied when use_modulation=True.
+        """
+        if not self.use_modulation:
+            return theta
+        self._init_theta_b(theta.shape[-1], theta.device)
+        return (1.0 + theta) * self._theta_b  # broadcasts over batch
+
     def _inr_decode(self, flat_weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
         """
         Decode a batch of flat weight vectors to pixel images.
@@ -280,11 +302,12 @@ class NeuralDiffusionModelINR(nn.Module):
         pixels : (batch, 784)   values in [0, 1]  (sigmoid output from INR)
         """
         batch = flat_weights.shape[0]
+        modulated = self._modulate(flat_weights)  # (batch, weight_dim) or identity
         if coords is None:
-            coords = self.coords  # fall back to hardcoded 28x28
+            coords = self.coords
         coords = coords.expand(batch, -1, -1)
-        pixels = self.inr(coords, flat_weights)
-        return pixels.squeeze(-1)  # (batch, n_pixels)
+        pixels = self.inr(coords, modulated)
+        return pixels.squeeze(-1)
 
     # -------------------------------------------------------------------------
     # Loss terms
