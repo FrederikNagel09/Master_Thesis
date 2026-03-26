@@ -432,7 +432,7 @@ class NeuralDiffusionModel(nn.Module):
         return self.negative_elbo(x)
 
     @torch.no_grad()
-    def sample(self, n_samples: int = 1) -> torch.Tensor:
+    def sample_old(self, n_samples: int = 1) -> torch.Tensor:
         """
         Ancestral sampling from the NDM.
         Algorithm 2:
@@ -473,6 +473,52 @@ class NeuralDiffusionModel(nn.Module):
             mu = alpha_s * Fx_hat_s + coeff * (z_t - alpha_t_val * Fx_hat_t)
             noise = torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(z_t)
             z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
+        return z_t
+
+    @torch.no_grad()
+    def sample(self, n_samples: int = 1) -> torch.Tensor:
+        shape = (n_samples, self.data_dim)
+        device = self.sqrt_alpha_cumprod.device
+        z_t = torch.randn(shape, device=device)
+
+        # Pre-compute all scalar coefficients — avoids repeated indexing inside loop
+        alpha = self.sqrt_alpha_cumprod  # (T,)
+        sigma = self.sigma  # (T,)
+        sigma_sq = self.sigma_sq  # (T,)
+        T_minus_1 = max(self.T - 1, 1)  # noqa: N806
+
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T, leave=False):
+            t_norm = torch.full((n_samples, 1), t / T_minus_1, device=device)
+
+            # --- Predict x_hat ---
+            eps_hat = self.network(z_t, t_norm)
+            alpha_t = alpha[t]
+            sigma_t = sigma[t]
+            x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
+
+            if t == 0:
+                z_t = x_hat
+                break
+
+            s = t - 1
+            s_norm = torch.full((n_samples, 1), s / T_minus_1, device=device)
+
+            # --- Batch both F_phi calls into one forward pass ---
+            x_hat_2x = torch.cat([x_hat, x_hat], dim=0)  # (2*n, data_dim)
+            t_norm_2x = torch.cat([s_norm, t_norm], dim=0)  # (2*n, 1)
+            Fx_2x = self.F_phi(x_hat_2x, t_norm_2x)  # (2*n, data_dim)  # noqa: N806
+            Fx_hat_s, Fx_hat_t = Fx_2x.chunk(2, dim=0)  # noqa: N806
+
+            # --- Pre-looked-up scalars, no .view() reshaping needed ---
+            alpha_s = alpha[s]
+            sigma_s_sq = sigma_sq[s]
+            sigma_tilde_sq = self._sigma_tilde_sq(torch.tensor([s], device=device), torch.tensor([t], device=device))[0]
+
+            coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t.clamp(min=1e-6)
+            mu = alpha_s * Fx_hat_s + coeff * (z_t - alpha_t * Fx_hat_t)
+
+            z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else mu
+
         return z_t
 
 

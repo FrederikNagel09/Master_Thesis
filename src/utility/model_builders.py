@@ -62,8 +62,9 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
         "mnist": (1, 28, 28),
         "cifar10": (3, 32, 32),
     }
-    dataset_name = data_config.get("dataset", "mnist").lower()
+    dataset_name = args.dataset.lower()
     C, H, W = shape_map.get(dataset_name, (1, 28, 28))  # noqa: N806
+    print(f"  Dataset : {dataset_name.upper()}  | shape=({C},{H},{W})  | data_dim={data_dim}")
 
     def _make_attention_unet(identity_constraint: bool) -> nn.Module:
         unet = UNetModel(
@@ -75,7 +76,7 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
             attention_resolutions=getattr(args, "attention_resolutions", (4,)),  # (16,8)
             channel_mult=getattr(args, "channel_mult", (1, 2, 4)),  # (1,2,2,2)
             num_heads=getattr(args, "num_heads", 4),  # 4
-            num_head_channels=getattr(args, "num_head_channels", 64),  # 64
+            num_head_channels=getattr(args, "num_heads_channels", 64),  # 64
             dims=2,
         )
         return WrappedUNetModel(unet, C=C, H=H, W=W, identity_constraint=identity_constraint)

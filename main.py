@@ -71,31 +71,32 @@ python main.py \
     --base_channels 32 
 
 python main.py \
-    --run_name ndm_attention_unet_mnist \
+    --run_name ndm_attention_CIFAR_full \
     --model ndm \
-    --dataset mnist \
-    --epochs 10 \
-    --batch_size 16 \
-    --lr 1e-3 \
+    --dataset cifar10 \
+    --epochs 1000 \
+    --batch_size 128 \
+    --lr 4e-4 \
     --weight_decay 0.0 \
     --grad_clip 1.0 \
-    --log_every_n_steps 10 \
-    --subset_frac 0.02 \
+    --log_every_n_steps 50 \
     --prior_scaling 1.0 \
     --use_scheduler \
-    --warmup_steps 30 \
-    --peak_lr 2e-4 \
+    --warmup_steps 45000 \
+    --peak_lr 4e-4 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --base_channels 32 \
+    --base_channels 256 \
     --use_attention_unet \
     --num_res_blocks 2 \
-    --channel_mult 1 2 2 \
+    --channel_mult 1 2 2 2 \
     --num_heads 4 \
     --num_heads_channels 64 \
-    --attention_resolutions 4    
+    --attention_resolutions 16
+
+    --resume src/train_results/ndm_attention_CIFAR_full/.../weights/weights.pt    
 
 
 ######################### INR-VAE Training ####################################

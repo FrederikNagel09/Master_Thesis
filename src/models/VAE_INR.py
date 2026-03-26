@@ -35,7 +35,7 @@ class VAEINR(nn.Module):
 
     def _init_theta_b(self, weight_dim: int, device: torch.device):
         if self._theta_b is None:
-            self._theta_b = nn.Parameter(torch.zeros(1, weight_dim, device=device))
+            self._theta_b = nn.Parameter(torch.ones(1, weight_dim, device=device))
 
     def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
         if not self.use_modulation:
