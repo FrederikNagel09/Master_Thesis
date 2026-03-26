@@ -101,21 +101,21 @@ python main.py \
 
 ######################### INR-VAE Training ####################################
 python main.py \
-    --run_name vae_inr_mnist_test_modulation \
+    --run_name vae_inr_mnist_modulation \
     --model inr_vae \
     --dataset mnist \
-    --epochs 20 \
+    --epochs 300 \
     --batch_size 64 \
     --lr 1e-3 \
     --weight_decay 0.0 \
     --grad_clip 1.0 \
     --log_every_n_steps 10 \
-    --subset_frac 0.5 \
+    --subset_frac 1.0 \
     --latent_dim 128 \
     --prior gaussian \
     --vae_enc_dim 512 \
     --vae_dec_dim 512 \
-    --inr_hidden_dim 20 \
+    --inr_hidden_dim 32 \
     --inr_layers 3 \
     --use_modulation true
 
