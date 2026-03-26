@@ -73,10 +73,10 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
             model_channels=getattr(args, "base_channels", 32),  # 256
             out_channels=C,
             num_res_blocks=getattr(args, "num_res_blocks", 2),  # 3
-            attention_resolutions=getattr(args, "attention_resolutions", (4,)),  # (16,8)
-            channel_mult=getattr(args, "channel_mult", (1, 2, 4)),  # (1,2,2,2)
-            num_heads=getattr(args, "num_heads", 4),  # 4
-            num_head_channels=getattr(args, "num_heads_channels", 64),  # 64
+            attention_resolutions=getattr(args, "attention_resolutions", (3,)),  # (16,8)
+            channel_mult=getattr(args, "channel_mult", (1, 2, 2)),  # (1,2,2,2)
+            num_heads=getattr(args, "num_heads", 3),  # 4
+            num_head_channels=getattr(args, "num_heads_channels", 16),  # 64
             dims=2,
         )
         return WrappedUNetModel(unet, C=C, H=H, W=W, identity_constraint=identity_constraint)

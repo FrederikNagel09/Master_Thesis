@@ -97,7 +97,7 @@ python main.py \
     --attention_resolutions 16
 
     --resume src/train_results/ndm_attention_CIFAR_full/.../weights/weights.pt    
-
+--resume /zhome/66/4/156534/Master_Thesis/src/train_results/ndm_attention_CIFAR_TEST2/weights/weights.pt \
 
 ######################### INR-VAE Training ####################################
 python main.py \
