@@ -44,6 +44,7 @@ python main.py \
     --channel_mult 1 2 4 \               # channel multiplier for each UNet level (e.g. 1 2 4 = [base, 2*base, 4*base])
     --use_attention_unet True\           # flag: use UNet architecture for F_phi in NDM (default MLP)
     --use_modulation False  \            # flag: use learnable base modulation in VAE-INR decoder and NDM-INR      
+    --ndm_variant temporal \              # ndm_inr variant: 'temporal' or 'static' (only relevant if --model ndm_inr)
     --resume src/train_results/.../weights/weights.pt  # path to checkpoint (omit to train from scratch)
 
 
@@ -120,8 +121,9 @@ python main.py \
 
 ######################### NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_inr_test \
+    --run_name ndm_inr_Static \
     --model ndm_inr \
+    --ndm_variant static \
     --dataset mnist \
     --epochs 10 \
     --batch_size 32 \
@@ -137,14 +139,13 @@ python main.py \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 20 \
     --inr_layers 3 \
-    --f_phi_hidden 256 512 512 256 \
-    --f_phi_t_embed 64 \
+    --f_phi_hidden 256 512 256 \
+    --f_phi_t_embed 32 \
     --noise_hidden_dim 128 \
     --noise_n_blocks 3 \
-    --noise_t_embed 64 \
-    --use_modulation True
+    --noise_t_embed 32 
 """
 
 import sys

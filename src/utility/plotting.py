@@ -545,7 +545,7 @@ def plot_reconstruction_progression(
     model.eval()
     with torch.no_grad():
         t0_norm = torch.zeros(x.shape[0], 1, device=device)
-        weights = model.F_phi(x, t0_norm)  # (3, weight_dim)
+        weights = model.F_phi(x, t0_norm) if hasattr(model, "F_phi") else model.W(x)  # (3, weight_dim)
         x_recon = model._inr_decode(weights)  # (3, data_dim)  in [0, 1]
     model.train()
 

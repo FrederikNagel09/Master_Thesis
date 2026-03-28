@@ -66,6 +66,9 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_n_blocks", type=int, default=4)
     p.add_argument("--noise_t_embed", type=int, default=128)
 
+    # ─── NDM-INR────────────────────────────────────────────────────────────────
+    p.add_argument("--ndm_variant", type=str, default="temporal", choices=["temporal", "static"])
+
     # ── UNet NDM-specific args ───────────────────────────────────────────────
     p.add_argument("--use_attention_unet", action="store_true")
     p.add_argument("--num_res_blocks", type=int, default=2)

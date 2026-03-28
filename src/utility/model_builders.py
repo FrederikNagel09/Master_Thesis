@@ -189,26 +189,31 @@ def _build_inr_vae(args, data_config: dict) -> nn.Module:
 
 
 def _build_ndm_inr(args, data_config: dict) -> nn.Module:
-    from src.models.NDM_INR import INR, NeuralDiffusionModelINR, NoisePredictor, WeightEncoder
+    from src.models.NDM_INR import (
+        INR,
+        NDMStaticINR,
+        NDMTemporalINR,
+        NoisePredictor,
+        StaticWeightEncoder,
+        TemporalWeightEncoder,
+    )
 
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
 
     # ── INR ───────────────────────────────────────────────────────────────────
-    inr = INR(coord_dim=2, hidden_dim=args.inr_hidden_dim, n_hidden=args.inr_layers, out_dim=channels, output_activation="tanh")
+    inr = INR(
+        coord_dim=2,
+        hidden_dim=args.inr_hidden_dim,
+        n_hidden=args.inr_layers,
+        out_dim=channels,
+        output_activation="tanh",
+    )
     weight_dim = inr.num_weights
     print(f"    INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={weight_dim}")
 
-    # ── Weight encoder F_phi ──────────────────────────────────────────────────
-    f_phi = WeightEncoder(
-        data_dim=data_dim,
-        weight_dim=weight_dim,
-        hidden_dims=args.f_phi_hidden,
-        t_embed_dim=args.f_phi_t_embed,
-    )
-
-    # ── Noise predictor ───────────────────────────────────────────────────────
+    # ── Noise predictor (shared across both variants) ─────────────────────────
     network = NoisePredictor(
         weight_dim=weight_dim,
         hidden_dim=args.noise_hidden_dim,
@@ -216,22 +221,54 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         t_embed_dim=args.noise_t_embed,
     )
 
-    model = NeuralDiffusionModelINR(
-        network=network,
-        F_phi=f_phi,
-        inr=inr,
-        beta_1=args.beta_1,
-        beta_T=args.beta_T,
-        T=args.T,
-        sigma_tilde_factor=args.sigma_tilde,
-        data_dim=data_dim,
-        img_size=img_size,
-        use_modulation=getattr(args, "use_modulation", False),
-    )
+    # ── Weight encoder + model — chosen by args.ndm_variant ──────────────────
+    use_static = getattr(args, "ndm_variant", "temporal") == "static"
 
-    fphi_params = sum(p.numel() for p in f_phi.parameters())
+    if use_static:
+        encoder = StaticWeightEncoder(
+            data_dim=data_dim,
+            weight_dim=weight_dim,
+            hidden_dims=args.f_phi_hidden,
+        )
+        model = NDMStaticINR(
+            network=network,
+            W=encoder,
+            inr=inr,
+            beta_1=args.beta_1,
+            beta_T=args.beta_T,
+            T=args.T,
+            sigma_tilde_factor=args.sigma_tilde,
+            data_dim=data_dim,
+            img_size=img_size,
+            use_modulation=getattr(args, "use_modulation", False),
+        )
+        variant_label = "Static  W(x)"
+    else:
+        encoder = TemporalWeightEncoder(
+            data_dim=data_dim,
+            weight_dim=weight_dim,
+            hidden_dims=args.f_phi_hidden,
+            t_embed_dim=args.f_phi_t_embed,
+        )
+        model = NDMTemporalINR(
+            network=network,
+            F_phi=encoder,
+            inr=inr,
+            beta_1=args.beta_1,
+            beta_T=args.beta_T,
+            T=args.T,
+            sigma_tilde_factor=args.sigma_tilde,
+            data_dim=data_dim,
+            img_size=img_size,
+            use_modulation=getattr(args, "use_modulation", False),
+        )
+        variant_label = "Temporal  F_phi(x,t)"
+
+    encoder_params = sum(p.numel() for p in encoder.parameters())
     net_params = sum(p.numel() for p in network.parameters())
-    print(f"    ε_θ   : {net_params:,}  |  F_phi : {fphi_params:,}")
+    print(f"    Variant : {variant_label}")
+    print(f"    ε_θ   : {net_params:,}  |  Encoder : {encoder_params:,}")
+
     return model
 
 

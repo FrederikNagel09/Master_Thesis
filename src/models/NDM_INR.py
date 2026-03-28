@@ -116,11 +116,11 @@ class NoisePredictor(nn.Module):
 
 
 # =============================================================================
-# Data Transformation Network  F_phi(x, t)
+# Data Transformation Network  F_phi(x, t) / W(x)
 # =============================================================================
 
 
-class WeightEncoder(nn.Module):
+class TemporalWeightEncoder(nn.Module):
     """
     MLP-based transformation network F_phi(x, t) for MNIST.
 
@@ -169,57 +169,86 @@ class WeightEncoder(nn.Module):
         return self.net(xt)
 
 
+class StaticWeightEncoder(nn.Module):
+    """
+    MLP-based transformation network W(x).
+    Maps a flattened image x (784-dim) to a weight vector in the INR
+    parameter space (weight_dim). No time conditioning.
+
+    Architecture
+    ------------
+    [x (data_dim)]  ->  MLP  ->  weight vector (weight_dim)
+    """
+
+    def __init__(
+        self,
+        data_dim: int = 784,
+        weight_dim: int = 501,
+        hidden_dims: list = None,  # noqa: RUF013
+    ):
+        super().__init__()
+        if hidden_dims is None:
+            hidden_dims = [512, 512, 512]
+
+        layers = []
+        in_dim = data_dim
+        for h_dim in hidden_dims:
+            layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
+            in_dim = h_dim
+        layers.append(nn.Linear(in_dim, weight_dim))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        x : (batch, data_dim)   flattened input image
+        Returns
+        -------
+        (batch, weight_dim)  weight vector in INR parameter space
+        """
+        return self.net(x)
+
+
 # =============================================================================
-# Neural Diffusion Model
+# Base Neural Diffusion Model  — shared logic
 # =============================================================================
 
 
 class NeuralDiffusionModelINR(nn.Module):
     """
-    Neural Diffusion Model (NDM) with INR-based reconstruction.
+    Base class for Neural Diffusion Models with INR-based reconstruction.
+    Contains all shared logic: noise schedule, INR decoding, sigma_tilde,
+    modulation, and the ELBO structure.
 
-    Forward process
-    ---------------
-      z_t = alpha_t * F_phi(x, t) + sigma_t * eps,   eps ~ N(0, I)
-
-    F_phi maps images into *INR weight space*.  The diffusion process therefore
-    operates entirely in weight space.
-
-    Reconstruction (t=0)
-    --------------------
-      weights = F_phi(x, t=0)          # encode image -> weight vector
-      x_recon = INR(coords, weights)   # decode weight vector -> pixel values
-      l_rec   = 0.5 * ||x - x_recon||^2
-
-    Sampling
-    --------
-      Sample z_0 via ancestral sampling, then decode: x = INR(coords, z_0).
+    Subclasses must implement:
+        _sample_zt(x, t_idx, t_norm)  ->  (z_t, epsilon, Wx)
+        _l_diff(x, z_t, t_idx, t_norm, Wx)  ->  (batch,)
+        _l_prior(x)  ->  (batch,)
+        _l_rec(x)    ->  (batch,)
+        sample_weight(n_samples)  ->  (n_samples, weight_dim)
     """
 
     def __init__(
         self,
-        network: nn.Module,  # NoisePredictor  epsilon_theta(z_t, t)
-        F_phi: nn.Module,  # noqa: N803 — WeightEncoder
+        network: nn.Module,
         inr: INR,
         beta_1: float = 1e-4,
         beta_T: float = 2e-2,  # noqa: N803
         T: int = 100,  # noqa: N803
         sigma_tilde_factor: float = 1.0,
-        data_dim: int = 784,  # pixel dimension (for coords / MSE)
-        img_size: int = 28,  # spatial size (28 for MNIST)
+        data_dim: int = 784,
+        img_size: int = 28,
         use_modulation: bool = False,
     ):
         super().__init__()
-
         self.data_dim = data_dim
         self.img_size = img_size
-        self.network = network  # epsilon_theta
-        self.F_phi = F_phi  # image -> weight vector
-        self.inr = inr  # weight vector + coords -> pixels
-
+        self.network = network
+        self.inr = inr
         self.use_modulation = use_modulation
+
         # ── Learnable base weight vector ──────────────────────────────────────
-        # Inferred lazily on first use since weight_dim may not be known at init
         self._theta_b: nn.Parameter | None = None
 
         self.beta_1 = beta_1
@@ -231,7 +260,6 @@ class NeuralDiffusionModelINR(nn.Module):
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
         alpha_cumprod = alpha.cumprod(dim=0)
-
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
         self.register_buffer("alpha_cumprod", alpha_cumprod)
@@ -240,17 +268,15 @@ class NeuralDiffusionModelINR(nn.Module):
         self.register_buffer("sigma", (1.0 - alpha_cumprod).sqrt())
 
         # --- Pre-build pixel coordinate grid for MNIST (28x28) ---
-        # Normalised to [-1, 1]; shape (1, 784, 2) — broadcast over batch
         xs = torch.linspace(-1, 1, img_size)
         ys = torch.linspace(-1, 1, img_size)
-        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")  # (28,28) each
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
         coords = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=-1)  # (784, 2)
         self.register_buffer("coords", coords.unsqueeze(0))  # (1, 784, 2)
 
     # -------------------------------------------------------------------------
-    # Helpers
+    # Shared helpers
     # -------------------------------------------------------------------------
-
     def _sigma_tilde_sq(self, s_idx: torch.Tensor, t_idx: torch.Tensor) -> torch.Tensor:
         sigma_s_sq = self.sigma_sq[s_idx]
         sigma_t_sq = self.sigma_sq[t_idx]
@@ -259,55 +285,30 @@ class NeuralDiffusionModelINR(nn.Module):
         base = (sigma_t_sq - alpha_t_sq / alpha_s_sq * sigma_s_sq) * sigma_s_sq / sigma_t_sq
         return self.sigma_tilde_factor * base
 
-    def _sample_zt(
-        self,
-        x: torch.Tensor,
-        t_idx: torch.Tensor,
-        t_norm: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Returns z_t, epsilon, and F_phi(x, t) — all in weight space."""
-        Fx = self.F_phi(x, t_norm)  # (batch, weight_dim)  # noqa: N806
-        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)  # (batch, 1)
-        sigma_t = self.sigma[t_idx].unsqueeze(1)  # (batch, 1)
-        epsilon = torch.randn_like(Fx)  # noise in weight space
-        z_t = alpha_t * Fx + sigma_t * epsilon
-        return z_t, epsilon, Fx
-
     def _init_theta_b(self, weight_dim: int, device: torch.device):
-        """Lazily initialise theta_b on first use so weight_dim need not be known at __init__."""
         if self._theta_b is None:
             self._theta_b = nn.Parameter(torch.empty(1, weight_dim, device=device))
             nn.init.normal_(self._theta_b, std=0.1)
 
     def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
-        """
-        Apply learnable base modulation:
-            theta_mod = (1 + theta) * theta_b
-        Only applied when use_modulation=True.
-        """
         if not self.use_modulation:
             return theta
         self._init_theta_b(theta.shape[-1], theta.device)
-        return (1.0 + theta) * self._theta_b  # broadcasts over batch
+        return (1.0 + theta) * self._theta_b
 
     def _inr_decode(self, flat_weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
         """
         Decode a batch of flat weight vectors to pixel images.
-
         Parameters
         ----------
         flat_weights : (batch, num_weights)
-
         Returns
         -------
-        pixels : (batch, 784)   values in [0, 1]  (sigmoid output from INR)
+        pixels : (batch, 784)
         """
         batch = flat_weights.shape[0]
-
-        # Apply modulation if enabled (modulation is identity if disabled)
         if self.use_modulation:
-            flat_weights = self._modulate(flat_weights)  # (batch, weight_dim) or identity
-
+            flat_weights = self._modulate(flat_weights)
         if coords is None:
             coords = self.coords
         coords = coords.expand(batch, -1, -1)
@@ -315,22 +316,120 @@ class NeuralDiffusionModelINR(nn.Module):
         return pixels.squeeze(-1)
 
     # -------------------------------------------------------------------------
+    # Abstract interface — subclasses must override these
+    # -------------------------------------------------------------------------
+    def _sample_zt(self, x, t_idx, t_norm):
+        raise NotImplementedError
+
+    def _l_diff(self, x, z_t, t_idx, t_norm, Wx):  # noqa: N803
+        raise NotImplementedError
+
+    def _l_prior(self, x):
+        raise NotImplementedError
+
+    def _l_rec(self, x):
+        raise NotImplementedError
+
+    def sample_weight(self, n_samples: int = 1):
+        raise NotImplementedError
+
+    # -------------------------------------------------------------------------
+    # Shared ELBO structure
+    # -------------------------------------------------------------------------
+    def negative_elbo(self, x: torch.Tensor):
+        """
+        Estimates the negative ELBO:
+            L = E[ l_diff ] + prior_mask * l_prior + l_rec
+        Parameters
+        ----------
+        x : (batch, data_dim)
+        Returns
+        -------
+        (scalar mean loss, l_diff mean, l_prior mean, l_rec mean)
+        """
+        batch_size = x.shape[0]
+
+        # Sample random time step  t ~ Uniform{1, ..., T}
+        t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1
+        t_norm = t_idx.float() / (self.T - 1)
+
+        # Forward: z_t ~ q(z_t | x)
+        z_t, _, Wx = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))  # noqa: N806
+
+        # Three loss terms
+        l_diff = self._l_diff(x, z_t, t_idx, t_norm, Wx)  # (batch,)
+        l_prior = self._l_prior(x)  # (batch,)
+        l_rec = self._l_rec(x)  # (batch,)
+
+        prior_mask = (t_idx == self.T - 1).float()
+        elbo = l_diff + prior_mask * l_prior + l_rec
+
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+
+    def loss(self, x: torch.Tensor):
+        return self.negative_elbo(x)
+
+    # -------------------------------------------------------------------------
+    # Shared decode / sample convenience wrappers
+    # -------------------------------------------------------------------------
+    @torch.no_grad()
+    def decode_weights(self, weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
+        return self._inr_decode(weights, coords)
+
+    @torch.no_grad()
+    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None) -> torch.Tensor:
+        weights = self.sample_weight(n_samples)
+        return self.decode_weights(weights, coords)
+
+
+# =============================================================================
+# Subclass 1 — Time-dependent  F_phi(x, t)
+# =============================================================================
+class NDMTemporalINR(NeuralDiffusionModelINR):
+    """
+    NDM with a time-dependent data transformation F_phi(x, t).
+    Forward process:
+        z_t = alpha_t * F_phi(x, t) + sigma_t * eps,   eps ~ N(0, I)
+    """
+
+    def __init__(
+        self,
+        network: nn.Module,
+        F_phi: TemporalWeightEncoder,  # noqa: N803
+        inr: INR,
+        **kwargs,
+    ):
+        super().__init__(network=network, inr=inr, **kwargs)
+        self.F_phi = F_phi
+
+    # -------------------------------------------------------------------------
+    # Forward process
+    # -------------------------------------------------------------------------
+    def _sample_zt(self, x, t_idx, t_norm):
+        """Returns z_t, epsilon, and F_phi(x, t)."""
+        Fx = self.F_phi(x, t_norm)  # (batch, weight_dim)  # noqa: N806
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+        epsilon = torch.randn_like(Fx)
+        z_t = alpha_t * Fx + sigma_t * epsilon
+        return z_t, epsilon, Fx
+
+    # -------------------------------------------------------------------------
     # Loss terms
     # -------------------------------------------------------------------------
-
     def _l_diff(self, x, z_t, t_idx, t_norm, Fx_t):  # noqa: N803
         eps_hat = self.network(z_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
 
-        # Predicted clean weight vector
+        # Recover predicted clean weight vector from predicted noise
         x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
 
         s_idx = (t_idx - 1).clamp(min=0)
         s_norm = s_idx.float() / (self.T - 1)
 
-        # With:
-        x_hat_pixels = self._inr_decode(x_hat)  # weight -> pixel space
+        # Decode predicted weights to pixel space, then re-encode with F_phi
+        x_hat_pixels = self._inr_decode(x_hat)
         Fx_hat_t = self.F_phi(x_hat_pixels, t_norm.unsqueeze(1))  # noqa: N806
         Fx_hat_s = self.F_phi(x_hat_pixels, s_norm.unsqueeze(1))  # noqa: N806
         Fx_s = self.F_phi(x, s_norm.unsqueeze(1))  # noqa: N806
@@ -347,100 +446,34 @@ class NeuralDiffusionModelINR(nn.Module):
         """Closed-form KL  N(alpha_T * F(x,T), sigma_T^2 I) || N(0,I)."""
         T_idx = self.T - 1  # noqa: N806
         t_norm_T = torch.ones(x.shape[0], 1, device=x.device)  # noqa: N806
-        Fx_T = self.F_phi(x, t_norm_T)  # (batch, weight_dim)  # noqa: N806
-        sigma_T_sq = self.sigma_sq[T_idx]  # scalar  # noqa: N806
-        alpha_T_sq = self.alpha_cumprod[T_idx]  # scalar  # noqa: N806
-        d = Fx_T.shape[-1]  # weight_dim
+        Fx_T = self.F_phi(x, t_norm_T)  # noqa: N806
+        sigma_T_sq = self.sigma_sq[T_idx]  # noqa: N806
+        alpha_T_sq = self.alpha_cumprod[T_idx]  # noqa: N806
+        d = Fx_T.shape[-1]
         kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (Fx_T**2).sum(dim=-1))
-        return kl  # (batch,)
+        return kl
 
     def _l_rec(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        INR-based reconstruction loss at t = 0.
-
-        Pipeline
-        --------
-          1. Encode image to weight vector:  w = F_phi(x, t=0)
-          2. Decode weight vector to pixels: x_recon = INR(coords, w)
-          3. MSE in pixel space:             l_rec = 0.5 * ||x - x_recon||^2
-
-        Parameters
-        ----------
-        x : (batch, 784)   flattened input image, values in [0, 1]
-
-        Returns
-        -------
-        (batch,)  per-sample reconstruction loss
-        """
+        """INR-based reconstruction loss at t = 0."""
         t0_norm = torch.zeros(x.shape[0], 1, device=x.device)
-        weights = self.F_phi(x, t0_norm)  # (batch, weight_dim)
-        x_recon = self._inr_decode(weights)  # (batch, 784)  in [0,1]
-        l_rec = 0.5 * ((x - x_recon) ** 2).sum(dim=-1)  # (batch,)
-        return l_rec
-
-    # -------------------------------------------------------------------------
-    # ELBO
-    # -------------------------------------------------------------------------
-
-    def negative_elbo(self, x: torch.Tensor):
-        """
-        Estimates the negative ELBO:
-            L = E[ l_diff ] + prior_mask * l_prior + l_rec
-
-        Parameters
-        ----------
-        x : (batch, 784)
-
-        Returns
-        -------
-        (scalar mean loss, l_diff mean, l_prior mean, l_rec mean)
-        """
-        batch_size = x.shape[0]
-
-        # Sample random time step  t ~ Uniform{1, ..., T}
-        t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1
-        t_norm = t_idx.float() / (self.T - 1)
-
-        # Forward: z_t ~ q_phi(z_t | x)
-        z_t, _, Fx_t = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))  # noqa: N806
-
-        # Three loss terms
-        l_diff = self._l_diff(x, z_t, t_idx, t_norm, Fx_t)  # (batch,)
-        l_prior = self._l_prior(x)  # (batch,)
-        l_rec = self._l_rec(x)  # (batch,)
-
-        prior_mask = (t_idx == self.T - 1).float()
-        elbo = l_diff + prior_mask * l_prior + l_rec
-
-        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
-
-    def loss(self, x: torch.Tensor):
-        return self.negative_elbo(x)
+        weights = self.F_phi(x, t0_norm)
+        x_recon = self._inr_decode(weights)
+        return 0.5 * ((x - x_recon) ** 2).sum(dim=-1)
 
     # -------------------------------------------------------------------------
     # Sampling
     # -------------------------------------------------------------------------
-
     @torch.no_grad()
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
-        """
-        Ancestral sampling from the NDM, with INR decoding at t=0.
-
-        Returns
-        -------
-        images : (n_samples, 784)  pixel values in [0, 1]
-        """
-        weight_dim = self.F_phi.net[-1].out_features  # infer from WeightEncoder output
+        weight_dim = self.F_phi.net[-1].out_features
         device = self.sqrt_alpha_cumprod.device
+        theta_t = torch.randn(n_samples, weight_dim, device=device)
 
-        theta_t = torch.randn(n_samples, weight_dim, device=device)  # sample in weight space
-
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM (Temporal) Sampling", total=self.T):
             t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
             t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
 
-            # Predict noise, recover clean weight vector
-            eps_hat = self.network(theta_t, t_norm)  # (n, weight_dim)
+            eps_hat = self.network(theta_t, t_norm)
             alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
             sigma_t = self.sigma[t].unsqueeze(0)
             theta_t_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
@@ -448,13 +481,11 @@ class NeuralDiffusionModelINR(nn.Module):
             if t == 0:
                 return theta_t_hat
 
-            # Sample theta_{t-1} ~ q_phi(theta_{t-1} | theta_t, x_hat)
             s = t - 1
             s_idx = torch.full((n_samples,), s, dtype=torch.long, device=device)
             s_norm = torch.full((n_samples, 1), s / max(self.T - 1, 1), device=device)
 
-            # With:
-            x_hat_pixels = self._inr_decode(theta_t_hat)  # weight -> pixel space
+            x_hat_pixels = self._inr_decode(theta_t_hat)
             Fx_hat_t = self.F_phi(x_hat_pixels, t_norm)  # noqa: N806
             Fx_hat_s = self.F_phi(x_hat_pixels, s_norm)  # noqa: N806
 
@@ -463,26 +494,145 @@ class NeuralDiffusionModelINR(nn.Module):
             sigma_t_val = self.sigma[t].view(1, 1)
             alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)
             sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)
-
             coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)
+
             mu = alpha_s * Fx_hat_s + coeff * (theta_t - alpha_t_val * Fx_hat_t)
             noise = torch.randn_like(theta_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(theta_t)
             theta_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
 
-        # Should not reach here, but safety fallback
-        return theta_t_hat
+        return theta_t_hat  # safety fallback
 
-    @torch.no_grad()
-    def decode_weights(self, weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
-        """
-        Decode a weight vector into pixel space at arbitrary resolution via INR.
-        weights : (n_samples, weight_dim)
-        coords  : (H*W, 2) or None for default grid
-        """
-        return self._inr_decode(weights, coords)
 
+# =============================================================================
+# Subclass 2 — Time-independent  W(x)
+# =============================================================================
+class NDMStaticINR(NeuralDiffusionModelINR):
+    """
+    NDM with a time-independent data transformation W(x).
+    Forward process:
+        z_t = alpha_t * W(x) + sigma_t * eps,   eps ~ N(0, I)
+
+    The diffusion loss simplifies to a single squared error in W-space:
+        L_diff = 1 / (2 * sigma_tilde_sq) * (alpha_s - B * alpha_t)^2
+                 * || W(x) - W(x_hat) ||^2
+    where B = sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t.
+    """
+
+    def __init__(
+        self,
+        network: nn.Module,
+        W: StaticWeightEncoder,  # noqa: N803
+        inr: INR,
+        **kwargs,
+    ):
+        super().__init__(network=network, inr=inr, **kwargs)
+        self.W = W
+
+    # -------------------------------------------------------------------------
+    # Forward process
+    # -------------------------------------------------------------------------
+    def _sample_zt(self, x, t_idx, t_norm):  # noqa: ARG002
+        """Returns z_t, epsilon, and W(x). t_norm unused but kept for API consistency."""
+        Wx = self.W(x)  # (batch, weight_dim)  # noqa: N806
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+        epsilon = torch.randn_like(Wx)
+        z_t = alpha_t * Wx + sigma_t * epsilon
+        return z_t, epsilon, Wx
+
+    # -------------------------------------------------------------------------
+    # Loss terms
+    # -------------------------------------------------------------------------
+    def _l_diff(self, x, z_t, t_idx, t_norm, Wx):  # noqa: ARG002, N803
+        """
+        Simplified L_diff for time-independent W(x).
+
+        Because W has no time dependence, W(x,s) = W(x,t) = W(x), so the
+        two terms in the general loss factor out into a single squared error:
+
+            diff = (alpha_s - B * alpha_t) * (W(x) - W(x_hat))
+
+        where B = sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t.
+        """
+        eps_hat = self.network(z_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+
+        # Recover predicted clean weight vector
+        x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
+
+        s_idx = (t_idx - 1).clamp(min=0)
+
+        # Decode predicted weights to pixel space, then re-encode with W
+        x_hat_pixels = self._inr_decode(x_hat)
+        Wx_hat = self.W(x_hat_pixels)  # (batch, weight_dim)  # noqa: N806
+
+        alpha_s = self.sqrt_alpha_cumprod[s_idx].unsqueeze(1)
+        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)
+        B = (  # noqa: N806
+            (self.sigma_sq[s_idx].unsqueeze(1) - sigma_tilde_sq).clamp(min=0).sqrt() / self.sigma[t_idx].unsqueeze(1).clamp(min=1e-6)
+        )
+
+        # Scalar coefficient — factored out because W has no time dependence
+        coeff = alpha_s - B * alpha_t  # (batch, 1)
+        diff = coeff * (Wx - Wx_hat)  # (batch, weight_dim)
+
+        l_diff = (diff**2).sum(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
+        return l_diff
+
+    def _l_prior(self, x: torch.Tensor) -> torch.Tensor:
+        """Closed-form KL  N(alpha_T * W(x), sigma_T^2 I) || N(0,I)."""
+        T_idx = self.T - 1  # noqa: N806
+        Wx_T = self.W(x)  # (batch, weight_dim)  # noqa: N806
+        sigma_T_sq = self.sigma_sq[T_idx]  # noqa: N806
+        alpha_T_sq = self.alpha_cumprod[T_idx]  # noqa: N806
+        d = Wx_T.shape[-1]
+        kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (Wx_T**2).sum(dim=-1))
+        return kl
+
+    def _l_rec(self, x: torch.Tensor) -> torch.Tensor:
+        """INR-based reconstruction loss at t = 0."""
+        weights = self.W(x)
+        x_recon = self._inr_decode(weights)
+        return 0.5 * ((x - x_recon) ** 2).sum(dim=-1)
+
+    # -------------------------------------------------------------------------
+    # Sampling
+    # -------------------------------------------------------------------------
     @torch.no_grad()
-    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None) -> torch.Tensor:
-        """Convenience wrapper"""
-        weights = self.sample_weight(n_samples)
-        return self.decode_weights(weights, coords)
+    def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
+        weight_dim = self.W.net[-1].out_features
+        device = self.sqrt_alpha_cumprod.device
+        theta_t = torch.randn(n_samples, weight_dim, device=device)
+
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM (Static) Sampling", total=self.T):
+            t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
+            t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
+
+            eps_hat = self.network(theta_t, t_norm)
+            alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
+            sigma_t = self.sigma[t].unsqueeze(0)
+            theta_t_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
+
+            if t == 0:
+                return theta_t_hat
+
+            s = t - 1
+            s_idx = torch.full((n_samples,), s, dtype=torch.long, device=device)
+
+            # W(x_hat) — single forward pass, no time argument needed
+            x_hat_pixels = self._inr_decode(theta_t_hat)
+            Wx_hat = self.W(x_hat_pixels)  # noqa: N806
+
+            alpha_s = self.sqrt_alpha_cumprod[s].view(1, 1)
+            sigma_s_sq = self.sigma_sq[s].view(1, 1)
+            sigma_t_val = self.sigma[t].view(1, 1)
+            alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)
+            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)
+
+            B = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)  # noqa: N806
+            mu = alpha_s * Wx_hat + B * (theta_t - alpha_t_val * Wx_hat)
+            noise = torch.randn_like(theta_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(theta_t)
+            theta_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
+
+        return theta_t_hat  # safety fallback
