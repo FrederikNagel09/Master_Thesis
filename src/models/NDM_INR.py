@@ -277,7 +277,7 @@ class NeuralDiffusionModelINR(nn.Module):
         """Lazily initialise theta_b on first use so weight_dim need not be known at __init__."""
         if self._theta_b is None:
             self._theta_b = nn.Parameter(torch.empty(1, weight_dim, device=device))
-            nn.init.normal_(self._theta_b, std=0.01)
+            nn.init.normal_(self._theta_b, std=0.1)
 
     def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
         """

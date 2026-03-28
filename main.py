@@ -97,7 +97,6 @@ python main.py \
     --attention_resolutions 16
 
     --resume src/train_results/ndm_attention_CIFAR_full/.../weights/weights.pt    
---resume /zhome/66/4/156534/Master_Thesis/src/train_results/ndm_attention_CIFAR_TEST2/weights/weights.pt \
 
 ######################### INR-VAE Training ####################################
 python main.py \
@@ -124,13 +123,13 @@ python main.py \
     --run_name ndm_inr_test \
     --model ndm_inr \
     --dataset mnist \
-    --epochs 20 \
+    --epochs 10 \
     --batch_size 32 \
     --lr 1e-3 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 20 \
-    --subset_frac 0.2 \
+    --subset_frac 0.25 \
     --use_scheduler \
     --warmup_steps 30 \
     --peak_lr 1e-3 \
@@ -138,14 +137,14 @@ python main.py \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 16 \
+    --inr_hidden_dim 32 \
     --inr_layers 3 \
-    --f_phi_hidden 256 128 128 256 \
-    --f_phi_t_embed 32 \
+    --f_phi_hidden 256 512 512 256 \
+    --f_phi_t_embed 64 \
     --noise_hidden_dim 128 \
     --noise_n_blocks 3 \
-    --noise_t_embed 32 \
-    --use_modulation False
+    --noise_t_embed 64 \
+    --use_modulation True
 """
 
 import sys
