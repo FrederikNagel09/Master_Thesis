@@ -1,14 +1,14 @@
 #!/bin/bash
 #BSUB -J ndm_attention_cifar2
 #BSUB -q gpuv100
-#BSUB -W 1200
+#BSUB -W 1300
 #BSUB -n 4
 #BSUB -R "rusage[mem=4GB]"
 #BSUB -R "span[hosts=1]"
 #BSUB -gpu "num=1:mode=exclusive_process"
-#BSUB -o src/outputs/ndm_attention_unet_cifar_test_2_1.out
-#BSUB -e src/outputs/ndm_attention_unet_cifar_test_2_1.err
-##BSUB -N
+#BSUB -o src/outputs/ndm_attention_unet_cifar_test_2_2.out
+#BSUB -e src/outputs/ndm_attention_unet_cifar_test_2_2.err
+#BSUB -N
 
 source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
@@ -16,7 +16,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --run_name ndm_attention_CIFAR_TEST2 \
     --model ndm \
     --dataset cifar10 \
-    --epochs 200 \
+    --epochs 210 \
     --batch_size 128 \
     --lr 4e-4 \
     --weight_decay 0.0 \
