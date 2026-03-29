@@ -1,3 +1,4 @@
+import math
 import sys
 
 import torch
@@ -9,6 +10,25 @@ sys.path.append(".")
 
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
 from src.models.INR import INR
+
+
+# =============================================================================
+# Shared building block
+# =============================================================================
+class _ConvBlock(nn.Module):
+    """Conv -> BatchNorm -> SiLU  (with optional stride for downsampling)."""
+
+    def __init__(self, in_ch: int, out_ch: int, stride: int = 1):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.SiLU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.block(x)
+
 
 # =============================================================================
 # Noise Predictor Network  epsilon_theta(z_t, t)
@@ -115,12 +135,140 @@ class NoisePredictor(nn.Module):
         return self.output_proj(h)  # (batch, weight_dim)
 
 
+class TransformerNoisePredictor(nn.Module):
+    """
+    Transformer-based noise predictor  epsilon_theta(z_t, t).
+
+    Tokenization
+    ------------
+    The flat weight vector of dimension `weight_dim` is split into
+    fixed-size chunks of `chunk_size` dims each, giving a sequence of
+    n_tokens = ceil(weight_dim / chunk_size) tokens.  If weight_dim is
+    not divisible by chunk_size the vector is zero-padded to the next
+    multiple before splitting, and the padding is discarded at the output.
+
+    Time conditioning
+    -----------------
+    The time embedding is projected to d_model and prepended as a
+    dedicated [TIME] token (index 0).  This lets every weight-space
+    token attend to the global time signal via self-attention.
+
+    Architecture
+    ------------
+    z (flat)  ->  pad & chunk  ->  linear per-token embed  ->  + pos embed
+              ->  prepend [TIME] token
+              ->  N x TransformerEncoderLayer
+              ->  drop [TIME] token
+              ->  linear per-token readout
+              ->  reassemble  ->  drop padding  ->  weight vector (weight_dim)
+
+    Parameters
+    ----------
+    weight_dim  : dimensionality of the weight vector
+    chunk_size  : tokens are `chunk_size`-dimensional slices of the weight vec
+    d_model     : transformer hidden dimension
+    n_heads     : number of attention heads  (must divide d_model)
+    n_layers    : number of transformer encoder layers
+    d_ff        : feedforward dimension inside each transformer layer
+    dropout     : dropout probability
+    t_embed_dim : sinusoidal time embedding dimension
+    """
+
+    def __init__(
+        self,
+        weight_dim: int,
+        chunk_size: int = 32,
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
+        d_ff: int = 1024,
+        dropout: float = 0.1,
+        t_embed_dim: int = 128,
+    ):
+        super().__init__()
+        self.weight_dim = weight_dim
+        self.chunk_size = chunk_size
+        self.d_model = d_model
+
+        # Pad weight_dim to nearest multiple of chunk_size
+        self.padded_dim = math.ceil(weight_dim / chunk_size) * chunk_size
+        self.n_tokens = self.padded_dim // chunk_size
+
+        # ── Time embedding ────────────────────────────────────────────────────
+        self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
+        self.time_proj = nn.Linear(t_embed_dim, d_model)
+
+        # ── Per-token input projection: chunk_size -> d_model ─────────────────
+        self.token_embed = nn.Linear(chunk_size, d_model)
+
+        # ── Learnable positional embeddings (+ 1 for the TIME token) ──────────
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.n_tokens + 1, d_model))
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        # ── Transformer encoder ───────────────────────────────────────────────
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,  # (B, S, d_model) convention throughout
+            norm_first=True,  # pre-norm for training stability
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+
+        # ── Per-token output projection: d_model -> chunk_size ────────────────
+        self.token_readout = nn.Linear(d_model, chunk_size)
+
+    def forward(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        z : (batch, weight_dim)   noisy weight vector at time t
+        t : (batch, 1)            normalised time in [0, 1]
+        Returns
+        -------
+        eps_hat : (batch, weight_dim)  predicted noise
+        """
+        B = z.shape[0]  # noqa: N806
+
+        # ── Pad and tokenize ──────────────────────────────────────────────────
+        if self.padded_dim > self.weight_dim:
+            pad = z.new_zeros(B, self.padded_dim - self.weight_dim)
+            z_pad = torch.cat([z, pad], dim=-1)
+        else:
+            z_pad = z
+        tokens = z_pad.view(B, self.n_tokens, self.chunk_size)  # (B, n_tokens, chunk_size)
+
+        # ── Embed tokens ──────────────────────────────────────────────────────
+        x = self.token_embed(tokens)  # (B, n_tokens, d_model)
+
+        # ── Build TIME token and prepend ──────────────────────────────────────
+        t_emb = self.time_embed(t)  # (B, t_embed_dim)
+        t_tok = self.time_proj(t_emb).unsqueeze(1)  # (B, 1, d_model)
+        x = torch.cat([t_tok, x], dim=1)  # (B, n_tokens+1, d_model)
+
+        # ── Add positional embeddings ─────────────────────────────────────────
+        x = x + self.pos_embed  # (B, n_tokens+1, d_model)
+
+        # ── Transformer ───────────────────────────────────────────────────────
+        x = self.transformer(x)  # (B, n_tokens+1, d_model)
+
+        # ── Drop TIME token, project back to chunk_size ───────────────────────
+        x = x[:, 1:, :]  # (B, n_tokens, d_model)
+        x = self.token_readout(x)  # (B, n_tokens, chunk_size)
+
+        # ── Reassemble and drop padding ───────────────────────────────────────
+        eps_hat = x.reshape(B, self.padded_dim)[:, : self.weight_dim]
+        return eps_hat  # (B, weight_dim)
+
+
 # =============================================================================
 # Data Transformation Network  F_phi(x, t) / W(x)
 # =============================================================================
 
 
-class TemporalWeightEncoder(nn.Module):
+class MLPTemporalWeightEncoder(nn.Module):
     """
     MLP-based transformation network F_phi(x, t) for MNIST.
 
@@ -152,6 +300,7 @@ class TemporalWeightEncoder(nn.Module):
             in_dim = h_dim
         layers.append(nn.Linear(in_dim, weight_dim))  # output = INR weight vector
         self.net = nn.Sequential(*layers)
+        self.weight_dim = weight_dim
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
@@ -169,7 +318,7 @@ class TemporalWeightEncoder(nn.Module):
         return self.net(xt)
 
 
-class StaticWeightEncoder(nn.Module):
+class MLPStaticWeightEncoder(nn.Module):
     """
     MLP-based transformation network W(x).
     Maps a flattened image x (784-dim) to a weight vector in the INR
@@ -197,6 +346,7 @@ class StaticWeightEncoder(nn.Module):
             in_dim = h_dim
         layers.append(nn.Linear(in_dim, weight_dim))
         self.net = nn.Sequential(*layers)
+        self.weight_dim = weight_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -208,6 +358,164 @@ class StaticWeightEncoder(nn.Module):
         (batch, weight_dim)  weight vector in INR parameter space
         """
         return self.net(x)
+
+
+class CNNTemporalWeightEncoder(nn.Module):
+    """
+    CNN-based time-dependent weight encoder  F_phi(x, t).
+
+    Pipeline
+    --------
+    x (flat)  ->  reshape (B, C, H, W)
+              ->  CNN backbone (conv blocks + global avg pool)
+              ->  concat time embedding
+              ->  linear projection  ->  weight vector (weight_dim)
+
+    The spatial structure of the image is exploited by the CNN before
+    being combined with the time signal and projected to weight space.
+
+    Parameters
+    ----------
+    data_dim    : flat image dimension  (e.g. 784 for MNIST)
+    img_size    : spatial size          (e.g. 28 for MNIST)
+    channels    : image channels        (1 for grayscale, 3 for RGB)
+    weight_dim  : output dimension      (= inr.num_weights)
+    base_ch     : base channel width for CNN  (doubled each block)
+    n_blocks    : number of conv blocks
+    t_embed_dim : time embedding dimension
+    """
+
+    def __init__(
+        self,
+        data_dim: int = 784,
+        img_size: int = 28,
+        channels: int = 1,
+        weight_dim: int = 501,
+        base_ch: int = 32,
+        n_blocks: int = 4,
+        t_embed_dim: int = 64,
+    ):
+        super().__init__()
+        self.data_dim = data_dim
+        self.img_size = img_size
+        self.channels = channels
+
+        # ── Time embedding ────────────────────────────────────────────────────
+        self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
+
+        # ── CNN backbone ──────────────────────────────────────────────────────
+        # Each block doubles channels and halves spatial dims via stride=2
+        # except the first block which just lifts channel count
+        cnn_layers = []
+        in_ch = channels
+        out_ch = base_ch
+        for i in range(n_blocks):
+            stride = 1 if i == 0 else 2
+            cnn_layers.append(_ConvBlock(in_ch, out_ch, stride=stride))
+            in_ch = out_ch
+            out_ch = min(out_ch * 2, 512)  # cap at 512 channels
+        self.cnn = nn.Sequential(*cnn_layers)
+
+        # Global average pooling -> flat feature vector of size in_ch
+        self.gap = nn.AdaptiveAvgPool2d(1)
+
+        # ── Projection: CNN features + time -> weight_dim ─────────────────────
+        self.proj = nn.Sequential(
+            nn.Linear(in_ch + t_embed_dim, in_ch * 2),
+            nn.SiLU(),
+            nn.Linear(in_ch * 2, weight_dim),
+        )
+        self.weight_dim = weight_dim
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        x : (batch, data_dim)   flattened image
+        t : (batch, 1)          normalised time in [0, 1]
+        Returns
+        -------
+        (batch, weight_dim)
+        """
+        # Reshape flat image -> spatial
+        x2d = x.view(-1, self.channels, self.img_size, self.img_size)
+
+        # CNN feature extraction
+        feat = self.cnn(x2d)  # (B, C_out, H', W')
+        feat = self.gap(feat).flatten(1)  # (B, C_out)
+
+        # Time embedding
+        t_emb = self.time_embed(t)  # (B, t_embed_dim)
+
+        # Combine and project
+        out = self.proj(torch.cat([feat, t_emb], dim=-1))
+        return out  # (B, weight_dim)
+
+
+class CNNStaticWeightEncoder(nn.Module):
+    """
+    CNN-based time-independent weight encoder  W(x).
+
+    Same CNN backbone as CNNTemporalWeightEncoder but without any
+    time conditioning — a clean drop-in for StaticWeightEncoder.
+
+    Parameters
+    ----------
+    data_dim   : flat image dimension  (e.g. 784 for MNIST)
+    img_size   : spatial size          (e.g. 28 for MNIST)
+    channels   : image channels        (1 for grayscale, 3 for RGB)
+    weight_dim : output dimension      (= inr.num_weights)
+    base_ch    : base channel width for CNN  (doubled each block)
+    n_blocks   : number of conv blocks
+    """
+
+    def __init__(
+        self,
+        data_dim: int = 784,
+        img_size: int = 28,
+        channels: int = 1,
+        weight_dim: int = 501,
+        base_ch: int = 32,
+        n_blocks: int = 4,
+    ):
+        super().__init__()
+        self.data_dim = data_dim
+        self.img_size = img_size
+        self.channels = channels
+
+        # ── CNN backbone ──────────────────────────────────────────────────────
+        cnn_layers = []
+        in_ch = channels
+        out_ch = base_ch
+        for i in range(n_blocks):
+            stride = 1 if i == 0 else 2
+            cnn_layers.append(_ConvBlock(in_ch, out_ch, stride=stride))
+            in_ch = out_ch
+            out_ch = min(out_ch * 2, 512)
+        self.cnn = nn.Sequential(*cnn_layers)
+        self.gap = nn.AdaptiveAvgPool2d(1)
+
+        # ── Projection: CNN features -> weight_dim ────────────────────────────
+        self.proj = nn.Sequential(
+            nn.Linear(in_ch, in_ch * 2),
+            nn.SiLU(),
+            nn.Linear(in_ch * 2, weight_dim),
+        )
+        self.weight_dim = weight_dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        x : (batch, data_dim)   flattened image
+        Returns
+        -------
+        (batch, weight_dim)
+        """
+        x2d = x.view(-1, self.channels, self.img_size, self.img_size)
+        feat = self.cnn(x2d)
+        feat = self.gap(feat).flatten(1)  # (B, C_out)
+        return self.proj(feat)  # (B, weight_dim)
 
 
 # =============================================================================
@@ -395,7 +703,7 @@ class NDMTemporalINR(NeuralDiffusionModelINR):
     def __init__(
         self,
         network: nn.Module,
-        F_phi: TemporalWeightEncoder,  # noqa: N803
+        F_phi: MLPTemporalWeightEncoder | CNNTemporalWeightEncoder,  # noqa: N803
         inr: INR,
         **kwargs,
     ):
@@ -465,7 +773,7 @@ class NDMTemporalINR(NeuralDiffusionModelINR):
     # -------------------------------------------------------------------------
     @torch.no_grad()
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
-        weight_dim = self.F_phi.net[-1].out_features
+        weight_dim = self.W.weight_dim
         device = self.sqrt_alpha_cumprod.device
         theta_t = torch.randn(n_samples, weight_dim, device=device)
 
@@ -521,7 +829,7 @@ class NDMStaticINR(NeuralDiffusionModelINR):
     def __init__(
         self,
         network: nn.Module,
-        W: StaticWeightEncoder,  # noqa: N803
+        W: MLPStaticWeightEncoder | CNNStaticWeightEncoder,  # noqa: N803
         inr: INR,
         **kwargs,
     ):
@@ -601,7 +909,7 @@ class NDMStaticINR(NeuralDiffusionModelINR):
     # -------------------------------------------------------------------------
     @torch.no_grad()
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
-        weight_dim = self.W.net[-1].out_features
+        weight_dim = self.W.weight_dim
         device = self.sqrt_alpha_cumprod.device
         theta_t = torch.randn(n_samples, weight_dim, device=device)
 

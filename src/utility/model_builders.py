@@ -13,6 +13,18 @@ Supported model names (args.model):
 
 import torch.nn as nn
 
+from src.models.NDM_INR import (
+    INR,
+    CNNStaticWeightEncoder,
+    CNNTemporalWeightEncoder,
+    MLPStaticWeightEncoder,
+    MLPTemporalWeightEncoder,
+    NDMStaticINR,
+    NDMTemporalINR,
+    NoisePredictor,
+    TransformerNoisePredictor,
+)
+
 # =============================================================================
 # Public API
 # =============================================================================
@@ -189,15 +201,6 @@ def _build_inr_vae(args, data_config: dict) -> nn.Module:
 
 
 def _build_ndm_inr(args, data_config: dict) -> nn.Module:
-    from src.models.NDM_INR import (
-        INR,
-        NDMStaticINR,
-        NDMTemporalINR,
-        NoisePredictor,
-        StaticWeightEncoder,
-        TemporalWeightEncoder,
-    )
-
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
@@ -213,23 +216,38 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
     weight_dim = inr.num_weights
     print(f"    INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={weight_dim}")
 
-    # ── Noise predictor (shared across both variants) ─────────────────────────
-    network = NoisePredictor(
+    # ── Noise predictor ───────────────────────────────────────────────────────
+    network = build_noise_predictor(
+        variant=getattr(args, "predictor_variant", "mlp"),
         weight_dim=weight_dim,
         hidden_dim=args.noise_hidden_dim,
         n_blocks=args.noise_n_blocks,
         t_embed_dim=args.noise_t_embed,
+        chunk_size=getattr(args, "transformer_chunk_size", 32),
+        d_model=getattr(args, "transformer_d_model", 256),
+        n_heads=getattr(args, "transformer_n_heads", 8),
+        n_layers=getattr(args, "transformer_n_layers", 4),
+        d_ff=getattr(args, "transformer_d_ff", 1024),
+        dropout=getattr(args, "transformer_dropout", 0.1),
     )
 
     # ── Weight encoder + model — chosen by args.ndm_variant ──────────────────
     use_static = getattr(args, "ndm_variant", "temporal") == "static"
 
+    encoder = build_encoder(
+        variant=getattr(args, "encoder_variant", "mlp"),
+        temporal=not use_static,
+        data_dim=data_dim,
+        weight_dim=weight_dim,
+        img_size=img_size,
+        channels=channels,
+        hidden_dims=args.f_phi_hidden,
+        t_embed_dim=args.f_phi_t_embed,
+        base_ch=getattr(args, "cnn_base_ch", 32),
+        n_blocks=getattr(args, "cnn_n_blocks", 4),
+    )
+
     if use_static:
-        encoder = StaticWeightEncoder(
-            data_dim=data_dim,
-            weight_dim=weight_dim,
-            hidden_dims=args.f_phi_hidden,
-        )
         model = NDMStaticINR(
             network=network,
             W=encoder,
@@ -244,12 +262,6 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         )
         variant_label = "Static  W(x)"
     else:
-        encoder = TemporalWeightEncoder(
-            data_dim=data_dim,
-            weight_dim=weight_dim,
-            hidden_dims=args.f_phi_hidden,
-            t_embed_dim=args.f_phi_t_embed,
-        )
         model = NDMTemporalINR(
             network=network,
             F_phi=encoder,
@@ -266,10 +278,118 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
 
     encoder_params = sum(p.numel() for p in encoder.parameters())
     net_params = sum(p.numel() for p in network.parameters())
-    print(f"    Variant : {variant_label}")
-    print(f"    ε_θ   : {net_params:,}  |  Encoder : {encoder_params:,}")
-
+    print(f"    Variant   : {variant_label}")
+    print(f"    Encoder   : {getattr(args, 'encoder_variant', 'mlp')}  |  Predictor : {getattr(args, 'predictor_variant', 'mlp')}")
+    print(f"    ε_θ       : {net_params:,}  |  Encoder : {encoder_params:,}")
     return model
+
+
+# =============================================================================
+# Factory functions
+# =============================================================================
+def build_encoder(
+    variant: str,
+    data_dim: int,
+    weight_dim: int,
+    img_size: int,
+    channels: int,
+    temporal: bool,
+    # MLP kwargs
+    hidden_dims: list = None,  # noqa: RUF013
+    t_embed_dim: int = 64,
+    # CNN kwargs
+    base_ch: int = 32,
+    n_blocks: int = 4,
+) -> nn.Module:
+    """
+    Build a weight encoder.
+
+    Parameters
+    ----------
+    variant   : "mlp" or "cnn"
+    temporal  : if True build the time-dependent F_phi(x,t) version,
+                otherwise the time-independent W(x) version
+    """
+    if variant == "mlp":
+        if temporal:
+            return MLPTemporalWeightEncoder(
+                data_dim=data_dim,
+                weight_dim=weight_dim,
+                hidden_dims=hidden_dims,
+                t_embed_dim=t_embed_dim,
+            )
+        else:
+            return MLPStaticWeightEncoder(
+                data_dim=data_dim,
+                weight_dim=weight_dim,
+                hidden_dims=hidden_dims,
+            )
+    elif variant == "cnn":
+        if temporal:
+            return CNNTemporalWeightEncoder(
+                data_dim=data_dim,
+                img_size=img_size,
+                channels=channels,
+                weight_dim=weight_dim,
+                base_ch=base_ch,
+                n_blocks=n_blocks,
+                t_embed_dim=t_embed_dim,
+            )
+        else:
+            return CNNStaticWeightEncoder(
+                data_dim=data_dim,
+                img_size=img_size,
+                channels=channels,
+                weight_dim=weight_dim,
+                base_ch=base_ch,
+                n_blocks=n_blocks,
+            )
+    else:
+        raise ValueError(f"Unknown encoder variant '{variant}'. Choose 'mlp' or 'cnn'.")
+
+
+def build_noise_predictor(
+    variant: str,
+    weight_dim: int,
+    # MLP kwargs
+    hidden_dim: int = 512,
+    n_blocks: int = 4,
+    t_embed_dim: int = 128,
+    # Transformer kwargs
+    chunk_size: int = 32,
+    d_model: int = 256,
+    n_heads: int = 8,
+    n_layers: int = 4,
+    d_ff: int = 1024,
+    dropout: float = 0.1,
+) -> nn.Module:
+    """
+    Build a noise predictor.
+
+    Parameters
+    ----------
+    variant : "mlp" or "transformer"
+    """
+    if variant == "mlp":
+        return NoisePredictor(
+            weight_dim=weight_dim,
+            hidden_dim=hidden_dim,
+            n_blocks=n_blocks,
+            t_embed_dim=t_embed_dim,
+        )
+    elif variant == "transformer":
+        return TransformerNoisePredictor(
+            weight_dim=weight_dim,
+            chunk_size=chunk_size,
+            d_model=d_model,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            d_ff=d_ff,
+            dropout=dropout,
+            t_embed_dim=t_embed_dim,
+        )
+    else:
+        raise ValueError(f"Unknown noise predictor variant '{variant}'. Choose 'mlp' or 'transformer'.")
 
 
 if __name__ == "__main__":

@@ -50,16 +50,17 @@ python main.py \
 
 ######################### NDM Training ########################################
 python main.py \
-    --run_name ndm_unet_mnist \
+    --run_name ndm_unet_mnist_no_scaling \
     --model ndm \
     --dataset mnist \
-    --epochs 10 \
+    --epochs 300 \
     --batch_size 128 \
     --lr 1e-3 \
     --weight_decay 0.0 \
+    --prior_scaling 1.0 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.5 \
+    --subset_frac 1.0 \
     --use_scheduler \
     --warmup_steps 30000 \
     --peak_lr 2e-4 \
@@ -146,6 +147,39 @@ python main.py \
     --noise_hidden_dim 128 \
     --noise_n_blocks 3 \
     --noise_t_embed 32 
+
+python main.py \
+    --run_name ndm_inr_Static_CNN_Transformer \
+    --model ndm_inr \
+    --ndm_variant static \
+    --encoder_variant cnn \
+    --predictor_variant transformer \
+    --dataset mnist \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 4e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 20 \
+    --subset_frac 0.5 \
+    --use_scheduler \
+    --warmup_steps 50 \
+    --peak_lr 4e-4 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --sigma_tilde 1.0 \
+    --inr_hidden_dim 32 \
+    --inr_layers 3 \
+    --cnn_base_ch 32 \
+    --cnn_n_blocks 4 \
+    --transformer_chunk_size 32 \
+    --transformer_d_model 256 \
+    --transformer_n_heads 8 \
+    --transformer_n_layers 4 \
+    --transformer_d_ff 512 \
+    --transformer_dropout 0.1 \
+    --noise_t_embed 32
 """
 
 import sys
