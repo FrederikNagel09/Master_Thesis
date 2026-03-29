@@ -37,10 +37,12 @@ SECTIONS: dict[str, list[str]] = {
         "beta_1",
         "beta_T",
         "sigma_tilde",
+        "prior_scaling",  # NDM prior scaling factor
     ],
     "inr": [
         "inr_hidden_dim",
         "inr_layers",
+        "use_modulation",
     ],
     "vae": [
         "latent_dim",
@@ -59,6 +61,29 @@ SECTIONS: dict[str, list[str]] = {
         "noise_n_blocks",
         "noise_t_embed",
     ],
+    "model_arch": [
+        # Attention UNet (NDM)
+        "use_attention_unet",
+        "num_res_blocks",
+        "channel_mult",
+        "num_heads",
+        "num_heads_channels",
+        "attention_resolutions",
+        # NDM-INR encoder / predictor variants
+        "ndm_variant",
+        "encoder_variant",
+        "predictor_variant",
+        # Transformer noise predictor
+        "transformer_chunk_size",
+        "transformer_d_model",
+        "transformer_n_heads",
+        "transformer_n_layers",
+        "transformer_d_ff",
+        "transformer_dropout",
+        # CNN encoder
+        "cnn_base_ch",
+        "cnn_n_blocks",
+    ],
 }
 
 # =============================================================================
@@ -67,7 +92,7 @@ SECTIONS: dict[str, list[str]] = {
 # =============================================================================
 
 MODEL_SECTIONS: dict[str, list[str]] = {
-    "ndm": ["training", "scheduler", "diffusion", "f_phi"],
+    "ndm": ["training", "scheduler", "diffusion", "f_phi", "model_arch"],
     "inr_vae": ["training", "inr", "vae"],
-    "ndm_inr": ["training", "scheduler", "diffusion", "inr", "f_phi", "noise_predictor"],
+    "ndm_inr": ["training", "scheduler", "diffusion", "inr", "f_phi", "noise_predictor", "model_arch"],
 }
