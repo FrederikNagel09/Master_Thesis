@@ -240,7 +240,8 @@ def train(
             epoch_callback(history)
 
     progress_bar.close()
-    tqdm_file.close()
+    if deactivate_progress_bar:
+        tqdm_file.close()
     # ── End-of-training summary (visible in LSF email) ───────────────────────────
     print_training_summary(name, history, global_step, completed_steps, start_epoch, epochs, lr)
 
