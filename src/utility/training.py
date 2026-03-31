@@ -55,6 +55,7 @@ def train(
     start_epoch: int = 0,
     history: dict | None = None,
     data_config: dict | None = None,
+    deactivate_progress_bar=False,
 ) -> nn.Module:
     """
     Train *model* for *epochs* epochs and return the trained model.
@@ -133,12 +134,22 @@ def train(
     running_count = 0
 
     # ── Progress bar ─────────────────────────────────────────────────────────
-    progress_bar = tqdm(
-        total=steps_per_epoch * epochs,
-        desc=f"Training {name}",
-        unit="step",
-        dynamic_ncols=True,
-    )
+    if deactivate_progress_bar:
+        tqdm_file = open(os.path.join(save_dir, "tqdm.log"), "w")  # noqa: SIM115
+        progress_bar = tqdm(
+            total=steps_per_epoch * epochs,
+            desc=f"Training {name}",
+            unit="step",
+            file=tqdm_file,
+            dynamic_ncols=True,
+        )
+    else:
+        progress_bar = tqdm(
+            total=steps_per_epoch * epochs,
+            desc=f"Training {name}",
+            unit="step",
+            dynamic_ncols=True,
+        )
 
     global_step = completed_steps
     model.train()
@@ -229,6 +240,7 @@ def train(
             epoch_callback(history)
 
     progress_bar.close()
+    tqdm_file.close()
     # ── End-of-training summary (visible in LSF email) ───────────────────────────
     print_training_summary(name, history, global_step, completed_steps, start_epoch, epochs, lr)
 

@@ -34,6 +34,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--grad_clip", type=float, default=1.0)
     p.add_argument("--log_every_n_steps", type=int, default=20)
     p.add_argument("--resume", type=str, default=None, help="Path to a weights.pt checkpoint to resume from")
+    p.add_argument("--deactivate_progress_bar", type=bool, default=False)
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
     p.add_argument("--use_scheduler", action="store_true")

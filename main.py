@@ -45,6 +45,7 @@ python main.py \
     --use_attention_unet True\           # flag: use UNet architecture for F_phi in NDM (default MLP)
     --use_modulation False  \            # flag: use learnable base modulation in VAE-INR decoder and NDM-INR      
     --ndm_variant temporal \              # ndm_inr variant: 'temporal' or 'static' (only relevant if --model ndm_inr)
+    --deactivate_progress_bar \              # flag: disable tqdm progress bar (e.g. for logging to file)
     --resume src/train_results/.../weights/weights.pt  # path to checkpoint (omit to train from scratch)
 
 
@@ -122,17 +123,19 @@ python main.py \
 
 ######################### NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_inr_Static \
+    --run_name ndm_inr_temporal_TESTING \
     --model ndm_inr \
-    --ndm_variant static \
+    --ndm_variant temporal \
+    --encoder_variant mlp \
+    --predictor_variant mlp \
     --dataset mnist \
-    --epochs 10 \
+    --epochs 5 \
     --batch_size 32 \
     --lr 1e-3 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 20 \
-    --subset_frac 0.25 \
+    --subset_frac 0.01 \
     --use_scheduler \
     --warmup_steps 30 \
     --peak_lr 1e-3 \
@@ -142,9 +145,9 @@ python main.py \
     --sigma_tilde 1.0 \
     --inr_hidden_dim 20 \
     --inr_layers 3 \
-    --f_phi_hidden 256 512 256 \
+    --f_phi_hidden 128 256 128 \
     --f_phi_t_embed 32 \
-    --noise_hidden_dim 128 \
+    --noise_hidden_dim 64 \
     --noise_n_blocks 3 \
     --noise_t_embed 32 
 

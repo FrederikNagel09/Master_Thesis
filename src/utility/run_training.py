@@ -92,6 +92,7 @@ def run_training(
 
         # Clear stale plots and metadata from a previous run with the same name
         for fname in [
+            "tqdm.log",
             "training_graph.png",
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
@@ -210,6 +211,7 @@ def run_training(
             ),
         ),
         data_config=data_config,
+        deactivate_progress_bar=args.deactivate_progress_bar,
     )
 
     print("\n  Training complete...")

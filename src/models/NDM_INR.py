@@ -773,7 +773,7 @@ class NDMTemporalINR(NeuralDiffusionModelINR):
     # -------------------------------------------------------------------------
     @torch.no_grad()
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
-        weight_dim = self.W.weight_dim
+        weight_dim = self.F_phi.weight_dim
         device = self.sqrt_alpha_cumprod.device
         theta_t = torch.randn(n_samples, weight_dim, device=device)
 
