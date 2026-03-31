@@ -186,7 +186,7 @@ def _build_inr_vae(args, data_config: dict) -> nn.Module:
         prior = MoGPrior(latent_dim=args.latent_dim)
     else:
         raise ValueError(f"Unknown prior '{args.prior}'. Choose 'gaussian' or 'mog'.")
-
+    print("MODULATION: ", getattr(args, "use_modulation", False))
     model = VAEINR(
         prior,
         encoder,

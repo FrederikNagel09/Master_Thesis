@@ -5,9 +5,9 @@ Computes MNIST-classifier FID for a single model config.
 Usage
 -----
 python src/scripts/compute_FID.py \
-    --model ndm \
-    --config src/trained_models/ndm_attention_mnist_scale/metadata/config.json \
-    --n 2000
+    --model inr_vae \
+    --config src/trained_models/vae_inr_mnist_modulation/metadata/config.json \
+    --n 50000
 
 --n defaults to the FID_SCORE_SAMPLES constant if not provided.
 """
