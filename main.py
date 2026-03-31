@@ -123,19 +123,20 @@ python main.py \
 
 ######################### NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_inr_temporal_TESTING \
+    --run_name ndm_inr_MLP_Temporal_TESTING \
     --model ndm_inr \
     --ndm_variant temporal \
     --encoder_variant mlp \
     --predictor_variant mlp \
     --dataset mnist \
-    --epochs 5 \
+    --use_modulation True \
+    --epochs 20 \
     --batch_size 128 \
     --lr 1e-3 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 20 \
-    --subset_frac 0.25 \
+    --subset_frac 0.33 \
     --use_scheduler \
     --warmup_steps 50 \
     --peak_lr 1e-3 \
@@ -152,19 +153,20 @@ python main.py \
     --noise_t_embed 64 
 
 python main.py \
-    --run_name ndm_inr_Static_CNN_Transformer \
+    --run_name ndm_inr_TRANS_Static_Testing \
     --model ndm_inr \
     --ndm_variant static \
     --encoder_variant cnn \
     --predictor_variant transformer \
     --dataset mnist \
-    --epochs 10 \
+    --use_modulation True \
+    --epochs 20 \
     --batch_size 32 \
     --lr 4e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 20 \
-    --subset_frac 0.5 \
+    --subset_frac 0.33 \
     --use_scheduler \
     --warmup_steps 50 \
     --peak_lr 4e-4 \
@@ -177,11 +179,11 @@ python main.py \
     --cnn_base_ch 32 \
     --cnn_n_blocks 4 \
     --transformer_chunk_size 32 \
-    --transformer_d_model 256 \
+    --transformer_d_model 128 \
     --transformer_n_heads 8 \
     --transformer_n_layers 4 \
     --transformer_d_ff 512 \
-    --transformer_dropout 0.1 \
+    --transformer_dropout 0.0 \
     --noise_t_embed 32
 """
 
