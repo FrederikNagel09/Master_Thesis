@@ -557,7 +557,12 @@ class NeuralDiffusionModelINR(nn.Module):
         self.use_modulation = use_modulation
 
         # ── Learnable base weight vector ──────────────────────────────────────
-        self._theta_b: nn.Parameter | None = None
+        # Initialise eagerly so load_state_dict can always find the key
+        if use_modulation:
+            self._theta_b = nn.Parameter(torch.empty(1, inr.num_weights))
+            nn.init.normal_(self._theta_b, std=0.1)
+        else:
+            self._theta_b = None
 
         self.beta_1 = beta_1
         self.beta_T = beta_T
@@ -593,15 +598,9 @@ class NeuralDiffusionModelINR(nn.Module):
         base = (sigma_t_sq - alpha_t_sq / alpha_s_sq * sigma_s_sq) * sigma_s_sq / sigma_t_sq
         return self.sigma_tilde_factor * base
 
-    def _init_theta_b(self, weight_dim: int, device: torch.device):
-        if self._theta_b is None:
-            self._theta_b = nn.Parameter(torch.empty(1, weight_dim, device=device))
-            nn.init.normal_(self._theta_b, std=0.1)
-
     def _modulate(self, theta: torch.Tensor) -> torch.Tensor:
         if not self.use_modulation:
             return theta
-        self._init_theta_b(theta.shape[-1], theta.device)
         return (1.0 + theta) * self._theta_b
 
     def _inr_decode(self, flat_weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
