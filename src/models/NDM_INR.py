@@ -426,6 +426,7 @@ class CNNTemporalWeightEncoder(nn.Module):
             nn.Linear(in_ch * 2, weight_dim),
         )
         self.weight_dim = weight_dim
+        self.out_norm = nn.LayerNorm(weight_dim)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
@@ -449,7 +450,7 @@ class CNNTemporalWeightEncoder(nn.Module):
 
         # Combine and project
         out = self.proj(torch.cat([feat, t_emb], dim=-1))
-        return out  # (B, weight_dim)
+        return self.out_norm(out)  # (B, weight_dim)
 
 
 class CNNStaticWeightEncoder(nn.Module):
@@ -502,6 +503,7 @@ class CNNStaticWeightEncoder(nn.Module):
             nn.Linear(in_ch * 2, weight_dim),
         )
         self.weight_dim = weight_dim
+        self.out_norm = nn.LayerNorm(weight_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -515,7 +517,8 @@ class CNNStaticWeightEncoder(nn.Module):
         x2d = x.view(-1, self.channels, self.img_size, self.img_size)
         feat = self.cnn(x2d)
         feat = self.gap(feat).flatten(1)  # (B, C_out)
-        return self.proj(feat)  # (B, weight_dim)
+        out = self.proj(feat)
+        return self.out_norm(out)  # (B, weight_dim)
 
 
 # =============================================================================

@@ -1,7 +1,7 @@
 #!/bin/bash
 #BSUB -J ndm_inr_TRANS_Static                   # Job name
-#BSUB -q gpua40                            # Queue to submit the job to
-#BSUB -W 400                              # Wall time limit (6 hours)
+#BSUB -q gpuv100                            # Queue to submit the job to
+#BSUB -W 600                              # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=512MB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
@@ -22,16 +22,16 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --predictor_variant transformer \
     --dataset mnist \
     --use_modulation True \
-    --epochs 300 \
+    --epochs 400 \
     --batch_size 128 \
-    --lr 1e-3 \
+    --lr 5e-5 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 20 \
     --subset_frac 1.0 \
     --use_scheduler \
     --warmup_steps 50 \
-    --peak_lr 1e-3 \
+    --peak_lr 5e-5 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
@@ -46,4 +46,5 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --transformer_n_layers 6 \
     --transformer_d_ff 512 \
     --transformer_dropout 0.2 \
-    --noise_t_embed 128
+    --noise_t_embed 128 \
+    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/ndm_inr_TRANS_Static/weights/weights.pt
