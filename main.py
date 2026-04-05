@@ -177,11 +177,11 @@ python main.py \
     --inr_hidden_dim 32 \
     --inr_layers 3 \
     --cnn_base_ch 32 \
-    --cnn_n_blocks 4 \
+    --cnn_n_blocks 6 \
     --transformer_chunk_size 32 \
     --transformer_d_model 128 \
     --transformer_n_heads 8 \
-    --transformer_n_layers 4 \
+    --transformer_n_layers 6 \
     --transformer_d_ff 512 \
     --transformer_dropout 0.0 \
     --noise_t_embed 32

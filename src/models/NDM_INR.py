@@ -268,6 +268,7 @@ class TransformerNoisePredictor(nn.Module):
 # =============================================================================
 
 
+########## MLP Weight Encoders ##########
 class MLPTemporalWeightEncoder(nn.Module):
     """
     MLP-based transformation network F_phi(x, t) for MNIST.
@@ -360,6 +361,7 @@ class MLPStaticWeightEncoder(nn.Module):
         return self.net(x)
 
 
+########## CNN Weight Encoders ##########
 class CNNTemporalWeightEncoder(nn.Module):
     """
     CNN-based time-dependent weight encoder  F_phi(x, t).
@@ -518,6 +520,245 @@ class CNNStaticWeightEncoder(nn.Module):
         feat = self.cnn(x2d)
         feat = self.gap(feat).flatten(1)  # (B, C_out)
         out = self.proj(feat)
+        return self.out_norm(out)  # (B, weight_dim)
+
+
+########## Transformer Weight Encoders ##########
+class TransformerTemporalWeightEncoder(nn.Module):
+    """
+    Transformer-based time-dependent weight encoder  F_phi(x, t).
+
+    Pipeline
+    --------
+    x (flat)  ->  reshape (B, C, H, W)
+              ->  patch embedding  (B, num_patches, embed_dim)
+              ->  + positional embedding
+              ->  Transformer encoder blocks
+              ->  CLS token output
+              ->  concat time embedding
+              ->  linear projection  ->  weight vector (weight_dim)
+
+    Parameters
+    ----------
+    data_dim    : flat image dimension  (e.g. 784 for MNIST)
+    img_size    : spatial size          (e.g. 28 for MNIST)
+    channels    : image channels        (1 for grayscale, 3 for RGB)
+    weight_dim  : output dimension      (= inr.num_weights)
+    patch_size  : size of each square patch  (img_size must be divisible)
+    embed_dim   : transformer embedding dimension
+    n_blocks    : number of transformer encoder layers
+    n_heads     : number of attention heads
+    mlp_ratio   : MLP hidden dim multiplier inside transformer
+    t_embed_dim : time embedding dimension
+    dropout     : dropout rate
+    """
+
+    def __init__(
+        self,
+        data_dim: int = 784,
+        img_size: int = 28,
+        channels: int = 1,
+        weight_dim: int = 501,
+        patch_size: int = 4,
+        embed_dim: int = 128,
+        n_blocks: int = 4,
+        n_heads: int = 4,
+        mlp_ratio: float = 4.0,
+        t_embed_dim: int = 64,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
+        self.data_dim = data_dim
+        self.img_size = img_size
+        self.channels = channels
+
+        num_patches = (img_size // patch_size) ** 2
+        patch_dim = channels * patch_size * patch_size
+
+        # ── Patch embedding ───────────────────────────────────────────────────
+        self.patch_size = patch_size
+        self.patch_embed = nn.Linear(patch_dim, embed_dim)
+
+        # Learnable CLS token and positional embedding
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        # ── Transformer encoder ───────────────────────────────────────────────
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=n_heads,
+            dim_feedforward=int(embed_dim * mlp_ratio),
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,  # pre-norm (more stable)
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_blocks)
+        self.norm = nn.LayerNorm(embed_dim)
+
+        # ── Time embedding ────────────────────────────────────────────────────
+        self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
+
+        # ── Projection: CLS features + time -> weight_dim ────────────────────
+        self.proj = nn.Sequential(
+            nn.Linear(embed_dim + t_embed_dim, embed_dim * 2),
+            nn.SiLU(),
+            nn.Linear(embed_dim * 2, weight_dim),
+        )
+        self.weight_dim = weight_dim
+        self.out_norm = nn.LayerNorm(weight_dim)
+
+    def _patchify(self, x2d: torch.Tensor) -> torch.Tensor:
+        """(B, C, H, W) -> (B, num_patches, patch_dim)"""
+        B, C, H, W = x2d.shape  # noqa: N806
+        p = self.patch_size
+        x2d = x2d.reshape(B, C, H // p, p, W // p, p)
+        x2d = x2d.permute(0, 2, 4, 1, 3, 5)  # (B, H/p, W/p, C, p, p)
+        return x2d.flatten(1, 2).flatten(2)  # (B, num_patches, patch_dim)
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        x : (batch, data_dim)   flattened image
+        t : (batch, 1)          normalised time in [0, 1]
+        Returns
+        -------
+        (batch, weight_dim)
+        """
+        B = x.size(0)  # noqa: N806
+        x2d = x.view(B, self.channels, self.img_size, self.img_size)
+
+        # Patchify and embed
+        patches = self._patchify(x2d)  # (B, N, patch_dim)
+        tokens = self.patch_embed(patches)  # (B, N, embed_dim)
+
+        # Prepend CLS token and add positional embeddings
+        cls = self.cls_token.expand(B, -1, -1)
+        tokens = torch.cat([cls, tokens], dim=1)  # (B, N+1, embed_dim)
+        tokens = tokens + self.pos_embed
+
+        # Transformer
+        tokens = self.transformer(tokens)  # (B, N+1, embed_dim)
+        cls_out = self.norm(tokens[:, 0])  # (B, embed_dim)
+
+        # Time embedding
+        t_emb = self.time_embed(t)  # (B, t_embed_dim)
+
+        # Combine and project
+        out = self.proj(torch.cat([cls_out, t_emb], dim=-1))
+        return self.out_norm(out)  # (B, weight_dim)
+
+
+class TransformerStaticWeightEncoder(nn.Module):
+    """
+    Transformer-based time-independent weight encoder  W(x).
+
+    Same ViT-style backbone as TransformerTemporalWeightEncoder but
+    without any time conditioning — a clean drop-in for
+    CNNStaticWeightEncoder.
+
+    Parameters
+    ----------
+    data_dim   : flat image dimension  (e.g. 784 for MNIST)
+    img_size   : spatial size          (e.g. 28 for MNIST)
+    channels   : image channels        (1 for grayscale, 3 for RGB)
+    weight_dim : output dimension      (= inr.num_weights)
+    patch_size : size of each square patch  (img_size must be divisible)
+    embed_dim  : transformer embedding dimension
+    n_blocks   : number of transformer encoder layers
+    n_heads    : number of attention heads
+    mlp_ratio  : MLP hidden dim multiplier inside transformer
+    dropout    : dropout rate
+    """
+
+    def __init__(
+        self,
+        data_dim: int = 784,
+        img_size: int = 28,
+        channels: int = 1,
+        weight_dim: int = 501,
+        patch_size: int = 4,
+        embed_dim: int = 128,
+        n_blocks: int = 4,
+        n_heads: int = 4,
+        mlp_ratio: float = 4.0,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
+        self.data_dim = data_dim
+        self.img_size = img_size
+        self.channels = channels
+
+        num_patches = (img_size // patch_size) ** 2
+        patch_dim = channels * patch_size * patch_size
+
+        # ── Patch embedding ───────────────────────────────────────────────────
+        self.patch_size = patch_size
+        self.patch_embed = nn.Linear(patch_dim, embed_dim)
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        # ── Transformer encoder ───────────────────────────────────────────────
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=n_heads,
+            dim_feedforward=int(embed_dim * mlp_ratio),
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_blocks)
+        self.norm = nn.LayerNorm(embed_dim)
+
+        # ── Projection: CLS features -> weight_dim ────────────────────────────
+        self.proj = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim * 2),
+            nn.SiLU(),
+            nn.Linear(embed_dim * 2, weight_dim),
+        )
+        self.weight_dim = weight_dim
+        self.out_norm = nn.LayerNorm(weight_dim)
+
+    def _patchify(self, x2d: torch.Tensor) -> torch.Tensor:
+        """(B, C, H, W) -> (B, num_patches, patch_dim)"""
+        B, C, H, W = x2d.shape  # noqa: N806
+        p = self.patch_size
+        x2d = x2d.reshape(B, C, H // p, p, W // p, p)
+        x2d = x2d.permute(0, 2, 4, 1, 3, 5)
+        return x2d.flatten(1, 2).flatten(2)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        x : (batch, data_dim)   flattened image
+        Returns
+        -------
+        (batch, weight_dim)
+        """
+        B = x.size(0)  # noqa: N806
+        x2d = x.view(B, self.channels, self.img_size, self.img_size)
+
+        patches = self._patchify(x2d)
+        tokens = self.patch_embed(patches)  # (B, N, embed_dim)
+
+        cls = self.cls_token.expand(B, -1, -1)
+        tokens = torch.cat([cls, tokens], dim=1)
+        tokens = tokens + self.pos_embed
+
+        tokens = self.transformer(tokens)
+        cls_out = self.norm(tokens[:, 0])  # (B, embed_dim)
+
+        out = self.proj(cls_out)
         return self.out_norm(out)  # (B, weight_dim)
 
 
