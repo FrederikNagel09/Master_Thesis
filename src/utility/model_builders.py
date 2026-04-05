@@ -23,6 +23,8 @@ from src.models.NDM_INR import (
     NDMTemporalINR,
     NoisePredictor,
     TransformerNoisePredictor,
+    TransformerStaticWeightEncoder,
+    TransformerTemporalWeightEncoder,
 )
 
 # =============================================================================
@@ -245,6 +247,13 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         t_embed_dim=args.f_phi_t_embed,
         base_ch=getattr(args, "cnn_base_ch", 32),
         n_blocks=getattr(args, "cnn_n_blocks", 4),
+        enc_patch_size=getattr(args, "enc_patch_size", 4),
+        enc_embed_dim=getattr(args, "enc_embed_dim", 128),
+        enc_n_heads=getattr(args, "enc_n_heads", 4),
+        enc_n_blocks=getattr(args, "enc_n_blocks", 4),
+        enc_mlp_ratio=getattr(args, "enc_mlp_ratio", 4.0),
+        enc_dropout=getattr(args, "enc_dropout", 0.1),
+        noise_t_embed=args.noise_t_embed,  # shared with predictor
     )
 
     if use_static:
@@ -300,6 +309,14 @@ def build_encoder(
     # CNN kwargs
     base_ch: int = 32,
     n_blocks: int = 4,
+    # Transformer kwargs
+    enc_patch_size: int = 4,
+    enc_embed_dim: int = 128,
+    enc_n_heads: int = 4,
+    enc_n_blocks: int = 4,
+    enc_mlp_ratio: float = 4.0,
+    enc_dropout: float = 0.1,
+    noise_t_embed: int = 128,  # shared with predictor
 ) -> nn.Module:
     """
     Build a weight encoder.
@@ -343,6 +360,34 @@ def build_encoder(
                 weight_dim=weight_dim,
                 base_ch=base_ch,
                 n_blocks=n_blocks,
+            )
+    elif variant == "transformer":
+        if temporal:
+            return TransformerTemporalWeightEncoder(
+                data_dim=data_dim,
+                img_size=img_size,
+                channels=channels,
+                weight_dim=weight_dim,
+                patch_size=enc_patch_size,
+                embed_dim=enc_embed_dim,
+                n_heads=enc_n_heads,
+                n_blocks=enc_n_blocks,
+                mlp_ratio=enc_mlp_ratio,
+                t_embed_dim=noise_t_embed,  # shared with predictor
+                dropout=enc_dropout,
+            )
+        else:
+            return TransformerStaticWeightEncoder(
+                data_dim=data_dim,
+                img_size=img_size,
+                channels=channels,
+                weight_dim=weight_dim,
+                patch_size=enc_patch_size,
+                embed_dim=enc_embed_dim,
+                n_heads=enc_n_heads,
+                n_blocks=enc_n_blocks,
+                mlp_ratio=enc_mlp_ratio,
+                dropout=enc_dropout,
             )
     else:
         raise ValueError(f"Unknown encoder variant '{variant}'. Choose 'mlp' or 'cnn'.")

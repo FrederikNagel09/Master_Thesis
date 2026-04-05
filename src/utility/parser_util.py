@@ -67,17 +67,26 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_n_blocks", type=int, default=4)
     p.add_argument("--noise_t_embed", type=int, default=128)
 
-    # ── NDM-INR Transformer / CNN settings ───────────────────────────────────────────────
-    p.add_argument("--encoder_variant", default="mlp", choices=["mlp", "cnn"])
+    # ── NDM-INR Transformer / CNN settings ───────────────────────────────────
+    p.add_argument("--encoder_variant", default="mlp", choices=["mlp", "cnn", "transformer"])
     p.add_argument("--predictor_variant", default="mlp", choices=["mlp", "transformer"])
+    # Predictor transformer args
     p.add_argument("--transformer_chunk_size", type=int, default=32)
     p.add_argument("--transformer_d_model", type=int, default=256)
     p.add_argument("--transformer_n_heads", type=int, default=8)
     p.add_argument("--transformer_n_layers", type=int, default=4)
     p.add_argument("--transformer_d_ff", type=int, default=1024)
     p.add_argument("--transformer_dropout", type=float, default=0.1)
+    # CNN encoder args
     p.add_argument("--cnn_base_ch", type=int, default=32)
     p.add_argument("--cnn_n_blocks", type=int, default=4)
+    # Transformer encoder args  (enc_ prefix to avoid collision with predictor)
+    p.add_argument("--enc_patch_size", type=int, default=4)
+    p.add_argument("--enc_embed_dim", type=int, default=128)
+    p.add_argument("--enc_n_heads", type=int, default=4)
+    p.add_argument("--enc_n_blocks", type=int, default=4)
+    p.add_argument("--enc_mlp_ratio", type=float, default=4.0)
+    p.add_argument("--enc_dropout", type=float, default=0.1)
 
     # ─── NDM-INR────────────────────────────────────────────────────────────────
     p.add_argument("--ndm_variant", type=str, default="temporal", choices=["temporal", "static"])
