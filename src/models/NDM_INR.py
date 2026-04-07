@@ -9,7 +9,7 @@ from tqdm import tqdm
 sys.path.append(".")
 
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
-from src.models.INR import INR
+from src.models.INR import INR, SirenINR  # noqa: F401
 
 
 # =============================================================================

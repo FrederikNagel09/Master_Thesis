@@ -22,6 +22,7 @@ from src.models.NDM_INR import (
     NDMStaticINR,
     NDMTemporalINR,
     NoisePredictor,
+    SirenINR,
     TransformerNoisePredictor,
     TransformerStaticWeightEncoder,
     TransformerTemporalWeightEncoder,
@@ -138,7 +139,6 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
 
 
 def _build_inr_vae(args, data_config: dict) -> nn.Module:
-    from src.models.INR import INR
     from src.models.VAE_INR import VAEINR
     from src.models.vae_modules import GaussianEncoder, GaussianPrior, MoGPrior
 
@@ -208,7 +208,7 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
     data_dim = data_config["data_dim"]
 
     # ── INR ───────────────────────────────────────────────────────────────────
-    inr = INR(
+    inr = SirenINR(
         coord_dim=2,
         hidden_dim=args.inr_hidden_dim,
         n_hidden=args.inr_layers,
@@ -216,7 +216,7 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         output_activation="tanh",
     )
     weight_dim = inr.num_weights
-    print(f"    INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={weight_dim}")
+    print(f"  Siren INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={weight_dim}")
 
     # ── Noise predictor ───────────────────────────────────────────────────────
     network = build_noise_predictor(
