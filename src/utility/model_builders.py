@@ -214,6 +214,7 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         n_hidden=args.inr_layers,
         out_dim=channels,
         output_activation="tanh",
+        omega_0=args.omega_0,
     )
     weight_dim = inr.num_weights
     print(f"  Siren INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={weight_dim}")
@@ -243,8 +244,8 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         weight_dim=weight_dim,
         img_size=img_size,
         channels=channels,
-        hidden_dims=args.f_phi_hidden,
-        t_embed_dim=args.f_phi_t_embed,
+        hidden_dims=getattr(args, "f_phi_hidden", [128, 128]),
+        t_embed_dim=getattr(args, "f_phi_t_embed", 32),
         base_ch=getattr(args, "cnn_base_ch", 32),
         n_blocks=getattr(args, "cnn_n_blocks", 4),
         enc_patch_size=getattr(args, "enc_patch_size", 4),
@@ -253,7 +254,7 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         enc_n_blocks=getattr(args, "enc_n_blocks", 4),
         enc_mlp_ratio=getattr(args, "enc_mlp_ratio", 4.0),
         enc_dropout=getattr(args, "enc_dropout", 0.1),
-        noise_t_embed=args.noise_t_embed,  # shared with predictor
+        noise_t_embed=getattr(args, "noise_t_embed", 16),  # shared with predictor
     )
 
     if use_static:
@@ -329,6 +330,8 @@ def build_encoder(
     """
     if variant == "mlp":
         if temporal:
+            print("\nBuilding MLP Temporal Weight Encoder F_phi(x,t) …")
+            print(f"  data_dim={data_dim}  weight_dim={weight_dim}  hidden_dims={hidden_dims}  t_embed_dim={t_embed_dim}")
             return MLPTemporalWeightEncoder(
                 data_dim=data_dim,
                 weight_dim=weight_dim,
@@ -336,6 +339,8 @@ def build_encoder(
                 t_embed_dim=t_embed_dim,
             )
         else:
+            print("Building MLP Static Weight Encoder W(x) …")
+            print(f"  data_dim={data_dim}  weight_dim={weight_dim}  hidden_dims={hidden_dims}")
             return MLPStaticWeightEncoder(
                 data_dim=data_dim,
                 weight_dim=weight_dim,
@@ -416,6 +421,8 @@ def build_noise_predictor(
     variant : "mlp" or "transformer"
     """
     if variant == "mlp":
+        print("\nBuilding MLP Noise Predictor ε_θ(x,t) …")
+        print(f"  weight_dim={weight_dim}  hidden_dim={hidden_dim}  n_blocks={n_blocks}  t_embed_dim={t_embed_dim}")
         return NoisePredictor(
             weight_dim=weight_dim,
             hidden_dim=hidden_dim,

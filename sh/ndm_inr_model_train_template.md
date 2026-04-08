@@ -12,21 +12,22 @@ python main.py \
     --predictor_variant mlp \
     --dataset mnist \
     --use_modulation True \
-    --epochs 300 \
+    --epochs 20 \
     --batch_size 128 \
-    --lr 1e-3 \
+    --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 20 \
     --subset_frac 1.0 \
+    --single_class \
     --use_scheduler \
     --warmup_steps 50 \
-    --peak_lr 1e-3 \
+    --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 20 \
     --inr_layers 3 \
     --f_phi_hidden 512 512 512 \
     --f_phi_t_embed 128 \
@@ -35,35 +36,35 @@ python main.py \
     --noise_t_embed 128
 
 ################# Temporal #################
-python main.py \
-    --run_name ndm_inr_MLP_Temporal \
-    --model ndm_inr \
-    --ndm_variant temporal \
-    --encoder_variant mlp \
-    --predictor_variant mlp \
-    --dataset mnist \
-    --use_modulation True \
-    --epochs 300 \
-    --batch_size 128 \
-    --lr 1e-3 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 20 \
-    --subset_frac 1.0 \
-    --use_scheduler \
-    --warmup_steps 50 \
-    --peak_lr 1e-3 \
-    --T 1000 \
-    --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
-    --inr_layers 3 \
-    --f_phi_hidden 512 512 512 \
-    --f_phi_t_embed 128 \
-    --noise_hidden_dim 256 \
-    --noise_n_blocks 6 \
-    --noise_t_embed 128
+python main.py\
+    --run_name ndm_inr_MLP_new_modulation_1\
+    --model ndm_inr\
+    --ndm_variant temporal\
+    --encoder_variant mlp\
+    --predictor_variant mlp\
+    --dataset mnist\
+    --use_modulation True\
+    --epochs 40\
+    --batch_size 128\
+    --lr 1e-4\
+    --weight_decay 1e-5\
+    --grad_clip 1.0\
+    --log_every_n_steps 20\
+    --subset_frac 1.0\
+    --single_class\
+    --peak_lr 1e-4\
+    --T 1000\
+    --beta_1 1e-4\
+    --beta_T 2e-2\
+    --sigma_tilde 1.0\
+    --inr_hidden_dim 20\
+    --inr_layers 3\
+    --omega_0 15 \
+    --f_phi_hidden 512 512 512 512 512\
+    --f_phi_t_embed 256\
+    --noise_hidden_dim 512\
+    --noise_n_blocks 6\
+    --noise_t_embed 256
 
 
 
