@@ -297,7 +297,7 @@ class MLPTemporalWeightEncoder(nn.Module):
         layers = []
         in_dim = data_dim + t_embed_dim
         for h_dim in hidden_dims:
-            layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
+            layers += [nn.Linear(in_dim, h_dim), nn.LayerNorm(h_dim), nn.SiLU()]
             in_dim = h_dim
         layers.append(nn.Linear(in_dim, weight_dim))  # output = INR weight vector
         self.net = nn.Sequential(*layers)
