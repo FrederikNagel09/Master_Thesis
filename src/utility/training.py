@@ -178,6 +178,15 @@ def train(
                     pixels = ((image_flat * 0.5 + 0.5).clamp(0, 1)).reshape(b, -1, data_config["channels"])  # (B, H*W, C)
 
                 loss, l_diff, l_prior, l_rec = model(image_flat, coords, pixels)
+            elif model_type == "ndm_transinr":
+                x = batch[0] if isinstance(batch, list | tuple) else batch
+                x = x.to(device)
+                # TransInrEncoder expects spatial (B, C, H, W), but the dataloader
+                # yields flat (B, C*H*W). Reshape here so model internals stay clean.
+                C = data_config["channels"]  # noqa: N806
+                H = W = data_config["img_size"]  # noqa: N806
+                x = x.view(x.shape[0], C, H, W)
+                loss, l_diff, l_prior, l_rec = model.loss(x)
             else:
                 x = batch[0] if isinstance(batch, list | tuple) else batch
                 x = x.to(device)
