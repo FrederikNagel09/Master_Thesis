@@ -193,6 +193,9 @@ def _model_to_grid(
         elif model_type == "ndm_inr":
             samples = model.sample(n_samples)  # (N, H*W) in [0, 1]
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+        elif model_type == "ndm_transinr":
+            samples = model.sample(n_samples)  # (N, H*W)
+            samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)  # ← ADD
 
         else:
             raise ValueError(f"Unknown model_type '{model_type}' for sampling.")
@@ -541,12 +544,20 @@ def plot_reconstruction_progression(
     # ── Get images from batch ─────────────────────────────────────────────────
     x = batch[0][:n_pairs].to(device)  # (3, data_dim)
 
-    # ── Reconstruct via F_phi(t=0) → INR decode ───────────────────────────────
+    # ── Reconstruct via encoder(t=0) → INR decode ────────────────────────────
     model.eval()
     with torch.no_grad():
-        t0_norm = torch.zeros(x.shape[0], 1, device=device)
-        weights = model.F_phi(x, t0_norm) if hasattr(model, "F_phi") else model.W(x)  # (3, weight_dim)
-        x_recon = model._inr_decode(weights)  # (3, data_dim)  in [0, 1]
+        if hasattr(model, "F_phi"):
+            t0_norm = torch.zeros(x.shape[0], 1, device=device)
+            weights = model.F_phi(x, t0_norm)  # temporal encoder
+        elif hasattr(model, "W") and hasattr(model.W, "inflate"):
+            # TransInrEncoder expects spatial (B, C, H, W)
+            x_spatial = x.view(x.shape[0], channels, img_size, img_size)
+            weights = model.W(x_spatial)  # ← spatial reshape
+        else:
+            t0_norm = torch.zeros(x.shape[0], 1, device=device)
+            weights = model.W(x)  # static MLP/CNN encoder
+        x_recon = model._inr_decode(weights)  # (3, data_dim)
     model.train()
 
     def _to_img(tensor_1d):

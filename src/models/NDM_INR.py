@@ -1191,3 +1191,213 @@ class NDMStaticINR(NeuralDiffusionModelINR):
             theta_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
 
         return theta_t_hat  # safety fallback
+
+
+class NDMTransInr(NeuralDiffusionModelINR):
+    """
+    NDM with TransInr as the static weight encoder W(x).
+
+    Parameters
+    ----------
+    network          : noise predictor  ε_θ(z_t, t)
+    encoder          : TransInrEncoder  (exposes .weight_dim and .inr)
+    coord_grid       : (H, W, 2) coordinate grid for the SIREN query;
+                       built externally and passed in so this class stays
+                       dataset-agnostic.
+    beta_1, beta_T, T, sigma_tilde_factor, data_dim, img_size
+                     : forwarded to NeuralDiffusionModelINR unchanged.
+    """
+
+    def __init__(
+        self,
+        network: nn.Module,
+        encoder,  # TransInrEncoder
+        coord_grid: torch.Tensor,  # (H, W, 2)
+        beta_1: float = 1e-4,
+        beta_T: float = 2e-2,  # noqa: N803
+        T: int = 100,  # noqa: N803
+        sigma_tilde_factor: float = 1.0,
+        data_dim: int = 784,
+        img_size: int = 28,
+    ):
+        # NeuralDiffusionModelINR expects an `inr` arg; pass the SIREN from encoder
+        super().__init__(
+            network=network,
+            inr=encoder.inr,
+            beta_1=beta_1,
+            beta_T=beta_T,
+            T=T,
+            sigma_tilde_factor=sigma_tilde_factor,
+            data_dim=data_dim,
+            img_size=img_size,
+            use_modulation=False,  # modulation lives inside TransInrEncoder
+        )
+
+        self.W = encoder  # TransInrEncoder
+
+        # Register the coordinate grid as a buffer so it moves with the model
+        # coord_grid shape: (H, W, 2)
+        self.register_buffer("trans_coord", coord_grid, persistent=False)
+
+    # -------------------------------------------------------------------------
+    # Forward process  (identical to NDMStaticINR._sample_zt)
+    # -------------------------------------------------------------------------
+
+    def _sample_zt(self, x, t_idx, t_norm):  # noqa: ARG002
+        """
+        x     : (B, C, H, W)  raw images  [note: spatial, not flat]
+        Returns z_t, epsilon, Wx — all (B, weight_dim).
+        """
+        Wx = self.W(x)  # (B, weight_dim)  # noqa: N806
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+        epsilon = torch.randn_like(Wx)
+        z_t = alpha_t * Wx + sigma_t * epsilon
+        return z_t, epsilon, Wx
+
+    # -------------------------------------------------------------------------
+    # Loss terms
+    # -------------------------------------------------------------------------
+
+    def _l_diff(self, x, z_t, t_idx, t_norm, Wx):  # noqa: ARG002, N803
+        """
+        Simplified L_diff for static W(x)  — identical formula to NDMStaticINR.
+        x     : (B, C, H, W)  raw images
+        """
+        eps_hat = self.network(z_t, t_norm.unsqueeze(1))  # (B, weight_dim)
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+
+        # Predicted clean weight vector
+        x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
+
+        s_idx = (t_idx - 1).clamp(min=0)
+
+        # Decode predicted weights → pixel space → re-encode with W
+        x_hat_pixels = self._inr_decode(x_hat)  # (B, H*W) or (B, data_dim)
+        # W expects (B, C, H, W) — reshape pixels back to spatial
+        x_hat_spatial = x_hat_pixels.view(x_hat_pixels.shape[0], 1, self.img_size, self.img_size)
+        Wx_hat = self.W(x_hat_spatial)  # (B, weight_dim)  # noqa: N806
+
+        alpha_s = self.sqrt_alpha_cumprod[s_idx].unsqueeze(1)
+        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)
+        B_coeff = (  # noqa: N806
+            (self.sigma_sq[s_idx].unsqueeze(1) - sigma_tilde_sq).clamp(min=0).sqrt() / self.sigma[t_idx].unsqueeze(1).clamp(min=1e-6)
+        )
+
+        coeff = alpha_s - B_coeff * alpha_t
+        diff = coeff * (Wx - Wx_hat)
+
+        l_diff = (diff**2).sum(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
+        return l_diff
+
+    def _l_prior(self, x: torch.Tensor) -> torch.Tensor:
+        """KL  N(alpha_T * W(x), sigma_T^2 I) || N(0, I).  x: (B, C, H, W)."""
+        T_idx = self.T - 1  # noqa: N806
+        Wx = self.W(x)  # noqa: N806
+        sigma_T_sq = self.sigma_sq[T_idx]  # noqa: N806
+        alpha_T_sq = self.alpha_cumprod[T_idx]  # noqa: N806
+        d = Wx.shape[-1]
+        kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (Wx**2).sum(dim=-1))
+        return kl
+
+    def _l_rec(self, x: torch.Tensor) -> torch.Tensor:
+        """Reconstruction loss at t = 0.  x: (B, C, H, W)."""
+        weights = self.W(x)  # (B, weight_dim)
+        x_recon = self._inr_decode(weights)  # (B, data_dim)
+
+        # Flatten x for MSE comparison
+        x_flat = x.reshape(x.shape[0], -1)  # (B, C*H*W)
+
+        # _inr_decode squeezes the channel dim for grayscale; match shapes
+        if x_recon.shape != x_flat.shape:
+            x_recon = x_recon.view_as(x_flat)
+
+        return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
+
+    # -------------------------------------------------------------------------
+    # INR decode  — inflate flat weights → param dict → SIREN
+    # -------------------------------------------------------------------------
+
+    def _inr_decode(
+        self,
+        flat_weights: torch.Tensor,
+        coords: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Decode flat weight vectors to pixel values.
+
+        Parameters
+        ----------
+        flat_weights : (B, weight_dim)
+        coords       : optional (B, N, 2) or (1, N, 2); uses trans_coord if None
+
+        Returns
+        -------
+        pixels : (B, H*W)   (channel dim squeezed for grayscale)
+        """
+        B = flat_weights.shape[0]  # noqa: N806
+
+        # Inflate flat vector → structured param dict
+        param_dict = self.W.inflate(flat_weights)
+
+        # Set params on the shared SIREN
+        self.inr.set_params(param_dict)
+
+        # Build coordinate grid if not provided
+        if coords is None:  # noqa: SIM108
+            # trans_coord: (H, W, 2)  →  (B, H, W, 2)
+            coord = self.trans_coord.unsqueeze(0).expand(B, -1, -1, -1)
+        else:
+            coord = coords
+
+        # SIREN forward: (B, H, W, 2) → (B, H, W, C_out)
+        pixels = self.inr(coord)
+
+        # Flatten spatial dims and squeeze channel for grayscale
+        # (B, H, W, C_out) → (B, H*W*C_out) or (B, H*W) for C_out=1
+        pixels = pixels.reshape(B, -1)
+        return pixels
+
+    # -------------------------------------------------------------------------
+    # Sampling
+    # -------------------------------------------------------------------------
+
+    @torch.no_grad()
+    def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
+        weight_dim = self.W.weight_dim
+        device = self.sqrt_alpha_cumprod.device
+        theta_t = torch.randn(n_samples, weight_dim, device=device)
+
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDMTransInr Sampling", total=self.T):
+            t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
+            t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
+
+            eps_hat = self.network(theta_t, t_norm)
+            alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
+            sigma_t = self.sigma[t].unsqueeze(0)
+            theta_t_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
+
+            if t == 0:
+                return theta_t_hat
+
+            s = t - 1
+            s_idx = torch.full((n_samples,), s, dtype=torch.long, device=device)
+
+            # W(x_hat) — decode predicted weights then re-encode
+            x_hat_pixels = self._inr_decode(theta_t_hat)  # (B, H*W)
+            x_hat_spatial = x_hat_pixels.view(n_samples, 1, self.img_size, self.img_size)
+            Wx_hat = self.W(x_hat_spatial)  # noqa: N806
+
+            alpha_s = self.sqrt_alpha_cumprod[s].view(1, 1)
+            sigma_s_sq = self.sigma_sq[s].view(1, 1)
+            sigma_t_val = self.sigma[t].view(1, 1)
+            alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)
+            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)
+
+            B_coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)  # noqa: N806
+            mu = alpha_s * Wx_hat + B_coeff * (theta_t - alpha_t_val * Wx_hat)
+            noise = torch.randn_like(theta_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(theta_t)
+            theta_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
+
+        return theta_t_hat  # safety fallback

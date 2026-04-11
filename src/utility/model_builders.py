@@ -54,6 +54,8 @@ def build_model(args, data_config: dict) -> nn.Module:
         model = _build_inr_vae(args, data_config)
     elif name == "ndm_inr":
         model = _build_ndm_inr(args, data_config)
+    elif name == "ndm_transinr":
+        model = _build_ndm_transinr(args, data_config)
     else:
         raise ValueError(f"Unknown model '{args.model}'. Choose from: 'ndm', 'inr_vae', 'ndm_inr'.")
 
@@ -65,6 +67,37 @@ def build_model(args, data_config: dict) -> nn.Module:
 # =============================================================================
 # Per-model builders
 # =============================================================================
+def print_model_stats(model):
+    def count(params):
+        return sum(p.numel() for p in params)
+
+    tokenizer_p = count(model.tokenizer.parameters())
+    transformer_p = count(model.transformer.parameters())
+    base_p = count(model.base_params.values())
+    wtoken_p = model.wtokens.numel()
+    postfc_p = count(model.wtoken_postfc.parameters())
+    inr_layers = list(model.inr.param_shapes.items())
+
+    print("\n" + "=" * 50)
+    print("  Transformer WeightEncoder Parameter Statistics:")
+    print("=" * 50)
+    print("Learnable parameters: ")
+    print(f"  Tokenizer:          {tokenizer_p:>10,} params")
+    print(f"  Transformer:        {transformer_p:>10,} params")
+    print(f"  Base weights:       {base_p:>10,} params")
+    print(f"  Weight tokens:      {wtoken_p:>10,} params")
+    print(f"  Wtoken post-fc:     {postfc_p:>10,} params")
+    print(f"  {'─'*38}")
+    print(f"Total:              {tokenizer_p+transformer_p+base_p+wtoken_p+postfc_p:>10,} params")
+    print("\nUn-Learnable parameters: ")
+    inr_total = sum(s[0] * s[1] for s in model.inr.param_shapes.values())
+    print("INR runtime weights (non-learnable, generated at forward):")
+    print(f"  {'─'*38}")
+    print(f"  Total INR weights:     {inr_total:>10,}  ← equals weight_dim")
+    print("\nINR architecture (SIREN):")
+    for name, shape in inr_layers:
+        print(f"    {name}: {shape[0]-1} → {shape[1]}  ({(shape[0])*shape[1]:,} params incl. bias)")
+    print("=" * 50 + "\n")
 
 
 def _build_ndm(args, data_config: dict) -> nn.Module:
@@ -442,6 +475,142 @@ def build_noise_predictor(
         )
     else:
         raise ValueError(f"Unknown noise predictor variant '{variant}'. Choose 'mlp' or 'transformer'.")
+
+
+def _build_ndm_transinr(args, data_config: dict):
+    """
+    Build NDMTransInr:  TransInrEncoder as W(x) + NDM diffusion in weight space.
+
+    Required args fields
+    --------------------
+    # TransInr / SIREN
+    trans_dim            : int   transformer embedding dim       (e.g. 256)
+    trans_n_head         : int   attention heads                 (e.g. 8)
+    trans_head_dim       : int   dims per head                   (e.g. 32)
+    trans_ff_dim         : int   feedforward dim                 (e.g. 512)
+    trans_enc_depth      : int   encoder depth                   (e.g. 4)
+    trans_dec_depth      : int   decoder depth                   (e.g. 4)
+    trans_patch_size     : int   patch size for ImageTokenizer   (e.g. 4)
+    trans_n_groups       : int   wtoken groups                   (e.g. 8)
+    trans_update_strategy: str   "normalize" | "scale" | "identity"
+    inr_hidden_dim       : int   SIREN hidden dim                (e.g. 256)
+    inr_layers           : int   SIREN depth (total layers)      (e.g. 5)
+
+    # Noise predictor
+    predictor_variant    : str   "mlp" | "transformer"
+    noise_hidden_dim     : int
+    noise_n_blocks       : int
+    noise_t_embed        : int
+    transformer_chunk_size, transformer_d_model, transformer_n_heads,
+    transformer_n_layers, transformer_d_ff, transformer_dropout  (if transformer)
+
+    # Diffusion schedule
+    beta_1, beta_T, T, sigma_tilde
+
+    # Dataset (from data_config)
+    channels, img_size, data_dim
+    """
+    from src.models.NDM_INR import NDMTransInr
+    from src.models.trans_inr_encoder import TransInrEncoder
+    from src.utility.model_builders import build_noise_predictor
+
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+    data_dim = data_config["data_dim"]
+
+    # ── TransInrEncoder config dicts ─────────────────────────────────────────
+    dim = getattr(args, "trans_dim", 256)
+    n_head = getattr(args, "trans_n_head", 8)
+    head_dim = getattr(args, "trans_head_dim", 32)
+    ff_dim = getattr(args, "trans_ff_dim", 512)
+    enc_depth = getattr(args, "trans_enc_depth", 4)
+    dec_depth = getattr(args, "trans_dec_depth", 4)
+    patch_size = getattr(args, "trans_patch_size", 4)
+    n_groups = getattr(args, "trans_n_groups", 8)
+    update_strat = getattr(args, "trans_update_strategy", "normalize")
+
+    inr_hidden = getattr(args, "inr_hidden_dim", 256)
+    inr_layers = getattr(args, "inr_layers", 5)
+
+    tokenizer_cfg = {
+        "target": "src.models.trans_inr_helpers.ImageTokenizer",
+        "params": {
+            "in_channels": channels,
+            "image_size": img_size,
+            "patch_size": patch_size,
+            "n_head": n_head,
+            "head_dim": head_dim,
+            # dim injected by TransInrEncoder via extra_args
+        },
+    }
+
+    inr_cfg = {
+        "target": "src.models.trans_inr_helpers.SIREN",
+        "params": {
+            "depth": inr_layers,
+            "in_dim": 2,
+            "out_dim": channels,
+            "hidden_dim": inr_hidden,
+        },
+    }
+
+    transformer_cfg = {
+        "target": "src.models.trans_inr_helpers.Transformer",
+        "params": {
+            "dim": dim,
+            "encoder_depth": enc_depth,
+            "decoder_depth": dec_depth,
+            "n_head": n_head,
+            "head_dim": head_dim,
+            "ff_dim": ff_dim,
+        },
+    }
+
+    encoder = TransInrEncoder(
+        tokenizer=tokenizer_cfg,
+        inr=inr_cfg,
+        n_groups=n_groups,
+        transformer=transformer_cfg,
+        update_strategy=update_strat,
+    )
+    print_model_stats(encoder)  # not model
+    weight_dim = encoder.weight_dim
+
+    # ── Noise predictor ───────────────────────────────────────────────────────
+    network = build_noise_predictor(
+        variant=getattr(args, "predictor_variant", "mlp"),
+        weight_dim=weight_dim,
+        hidden_dim=getattr(args, "noise_hidden_dim", 512),
+        n_blocks=getattr(args, "noise_n_blocks", 4),
+        t_embed_dim=getattr(args, "noise_t_embed", 128),
+        chunk_size=getattr(args, "transformer_chunk_size", 32),
+        d_model=getattr(args, "transformer_d_model", 256),
+        n_heads=getattr(args, "transformer_n_heads", 8),
+        n_layers=getattr(args, "transformer_n_layers", 4),
+        d_ff=getattr(args, "transformer_d_ff", 1024),
+        dropout=getattr(args, "transformer_dropout", 0.1),
+    )
+
+    # ── Coordinate grid for SIREN queries ────────────────────────────────────
+    # Shape: (img_size, img_size, 2),  range [-1, 1]
+    from src.models.trans_inr import make_coord_grid
+
+    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
+
+    # ── Assemble model ────────────────────────────────────────────────────────
+    model = NDMTransInr(
+        network=network,
+        encoder=encoder,
+        coord_grid=coord_grid,
+        beta_1=args.beta_1,
+        beta_T=args.beta_T,
+        T=args.T,
+        sigma_tilde_factor=args.sigma_tilde,
+        data_dim=data_dim,
+        img_size=img_size,
+    )
+
+    return model
 
 
 if __name__ == "__main__":

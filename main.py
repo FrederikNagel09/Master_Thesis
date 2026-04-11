@@ -185,15 +185,51 @@ python main.py \
     --transformer_d_ff 512 \
     --transformer_dropout 0.0 \
     --noise_t_embed 32
+
+
+######################### TRANSFORMER ENCODER NDM-INR Training ####################################
+python main.py \
+    --run_name ndm_transinr_smoke \
+    --model ndm_transinr \
+    --dataset mnist \
+    --epochs 5 \
+    --batch_size 64 \
+    --lr 4e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 5 \
+    --subset_frac 0.02 \
+    --T 10 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --sigma_tilde 1.0 \
+    --inr_hidden_dim 16 \
+    --inr_layers 2 \
+    --trans_dim 64 \
+    --trans_n_head 2 \
+    --trans_head_dim 16 \
+    --trans_ff_dim 128 \
+    --trans_enc_depth 1 \
+    --trans_dec_depth 1 \
+    --trans_patch_size 4 \
+    --trans_n_groups 4 \
+    --trans_update_strategy scale \
+    --predictor_variant mlp \
+    --noise_hidden_dim 64 \
+    --noise_n_blocks 1 \
+    --noise_t_embed 16
 """
 
-import sys
+import warnings
+
+warnings.filterwarnings("ignore")
+import sys  # noqa: E402
 
 sys.path.append(".")
 
-from src.utility.general import _get_device
-from src.utility.parser_util import get_default_parser
-from src.utility.run_training import run_training
+from src.utility.general import _get_device  # noqa: E402
+from src.utility.parser_util import get_default_parser  # noqa: E402
+from src.utility.run_training import run_training  # noqa: E402
 
 
 def main():
