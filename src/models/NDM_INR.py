@@ -297,7 +297,7 @@ class MLPTemporalWeightEncoder(nn.Module):
         layers = []
         in_dim = data_dim + t_embed_dim
         for h_dim in hidden_dims:
-            layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
+            layers += [nn.Linear(in_dim, h_dim), nn.LayerNorm(h_dim), nn.SiLU()]
             in_dim = h_dim
         layers.append(nn.Linear(in_dim, weight_dim))  # output = INR weight vector
         self.net = nn.Sequential(*layers)
@@ -912,8 +912,12 @@ class NeuralDiffusionModelINR(nn.Module):
         l_prior = self._l_prior(x)  # (batch,)
         l_rec = self._l_rec(x)  # (batch,)
 
+        # apply prior mask and scaling:
         prior_mask = (t_idx == self.T - 1).float()
-        elbo = l_diff + prior_mask * l_prior + l_rec
+        l_prior = prior_mask * l_prior
+
+        # Combine to get ELBO (mean over batch)
+        elbo = l_diff + l_prior + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 

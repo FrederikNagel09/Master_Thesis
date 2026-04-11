@@ -5,9 +5,7 @@ Generates a side-by-side 6x6 sample grid for up to three trained models.
 Usage
 -----
 python src/scripts/sample_comparison.py \
-    --ndm     src/train_results/ndm_unet_mnist/metadata/config.json \
-    --inr_vae src/train_results/vae_inr_mnist/metadata/config.json \
-    --ndm_inr src/train_results/ndm_inr_mlp_mnist/metadata/config.json \
+    --ndm_inr src/trained_models/ndm_inr_mlp_mnist/metadata/config.json \
     --out      src/results/sample_grid.png
 
 All three config paths are optional — omit any model you don't want included.

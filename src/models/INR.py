@@ -87,6 +87,7 @@ class SirenINR(nn.Module):
         self.out_dim = out_dim
         self.output_activation = output_activation
         self.omega_0 = omega_0
+        print(f"  Initialising SirenINR with omega_0 = {omega_0}")
 
         # ── Layer dimensions ──────────────────────────────────────────────────
         dims = [coord_dim] + [hidden_dim] * n_hidden + [out_dim]
