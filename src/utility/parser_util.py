@@ -51,6 +51,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--inr_hidden_dim", type=int, default=32)
     p.add_argument("--inr_layers", type=int, default=3)
     p.add_argument("--use_modulation", type=bool, default=False)
+    p.add_argument("--omega_0", type=float, default=30.0)
 
     # ── VAE ───────────────────────────────────────────────────────────────────
     p.add_argument("--latent_dim", type=int, default=32)

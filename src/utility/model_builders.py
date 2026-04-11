@@ -214,6 +214,7 @@ def _build_ndm_inr(args, data_config: dict) -> nn.Module:
         n_hidden=args.inr_layers,
         out_dim=channels,
         output_activation="tanh",
+        omega_0=args.omega_0,
     )
     weight_dim = inr.num_weights
     print(f"  Siren INR   : hidden={args.inr_hidden_dim}  layers={args.inr_layers}  out_dim={channels}  weights={weight_dim}")
