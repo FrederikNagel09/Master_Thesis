@@ -51,7 +51,7 @@ SEED = 42
 LOG_EVERY = 50  # log loss every N batches
 EVAL_EVERY = 1  # run validation every N epochs
 SAVE_EVERY = 5  # save checkpoint every N epochs
-CHECKPOINT_DIR = "./checkpoints"
+CHECKPOINT_DIR = "./src"
 RESUME_CKPT = None  # path to checkpoint to resume from, or None
 
 # ---------- Model — Tokenizer ------------------------------------------------
@@ -369,13 +369,8 @@ def train():
             val_loss = evaluate(model, val_loader, criterion, device)
             print(f"[epoch {epoch+1:>3}] val_loss={val_loss:.6f}")
 
-        # ---- checkpoint ---------------------------------------------------
-        if (epoch + 1) % SAVE_EVERY == 0:
-            ckpt_path = os.path.join(CHECKPOINT_DIR, f"transinr_epoch{epoch+1:04d}.pt")
-            save_checkpoint(model, optimizer, scheduler, epoch, avg_train, ckpt_path)
-
     # ---- final checkpoint -------------------------------------------------
-    final_path = os.path.join(CHECKPOINT_DIR, "transinr_final.pt")
+    final_path = os.path.join(CHECKPOINT_DIR, "train_results/transinr_final.pt")
     save_checkpoint(model, optimizer, scheduler, NUM_EPOCHS - 1, avg_train, final_path)
     print("\n[done] Training complete.")
 
