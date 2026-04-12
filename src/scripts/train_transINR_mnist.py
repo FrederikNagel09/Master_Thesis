@@ -40,7 +40,7 @@ SUBSET_SIZE = None  # int → use only N training samples;
 
 # ---------- Training ---------------------------------------------------------
 BATCH_SIZE = 64
-NUM_EPOCHS = 1
+NUM_EPOCHS = 10
 LEARNING_RATE = 1e-4
 LR_WARMUP_STEPS = 1000  # linear warm-up before cosine decay
 WEIGHT_DECAY = 1e-4

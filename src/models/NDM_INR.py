@@ -1315,6 +1315,50 @@ class NDMTransInr(NeuralDiffusionModelINR):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
+    def _l_prior_from_wx(self, Wx: torch.Tensor) -> torch.Tensor:
+        T_idx = self.T - 1
+        sigma_T_sq = self.sigma_sq[T_idx]
+        alpha_T_sq = self.alpha_cumprod[T_idx]
+        d = Wx.shape[-1]
+        return 0.5 * (
+            d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0)
+            + alpha_T_sq * (Wx ** 2).sum(dim=-1)
+        )
+
+    def _l_rec_from_wx(self, x: torch.Tensor, Wx: torch.Tensor) -> torch.Tensor:
+        x_recon = self._inr_decode(Wx)
+        x_flat = (x.reshape(x.shape[0], -1) * 0.5 + 0.5).clamp(0, 1)
+        x_recon = x_recon.clamp(0, 1)
+        if x_recon.shape != x_flat.shape:
+            x_recon = x_recon.view_as(x_flat)
+        return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
+
+    # -------------------------------------------------------------------------
+    # Negative ELBO
+    # ------------------------------------------------------------------------- 
+    def negative_elbo(self, x: torch.Tensor):
+        batch_size = x.shape[0]
+        t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1
+        t_norm = t_idx.float() / (self.T - 1)
+
+        # ── Encode once, reuse everywhere ────────────────────────────────────
+        Wx = self.W(x)  # (B, weight_dim)
+
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+        epsilon = torch.randn_like(Wx)
+        z_t = alpha_t * Wx + sigma_t * epsilon
+
+        l_diff = self._l_diff(x, z_t, t_idx, t_norm, Wx)
+        l_prior = self._l_prior_from_wx(Wx)
+        l_rec = self._l_rec_from_wx(x, Wx)
+
+        prior_mask = (t_idx == self.T - 1).float()
+        l_prior = prior_mask * l_prior
+
+        elbo = l_diff + l_prior + l_rec
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+
     # -------------------------------------------------------------------------
     # INR decode  — inflate flat weights → param dict → SIREN
     # -------------------------------------------------------------------------
