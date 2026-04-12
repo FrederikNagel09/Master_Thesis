@@ -15,7 +15,7 @@ def get_default_parser() -> argparse.ArgumentParser:
 
     # ── Identity ──────────────────────────────────────────────────────────────
     p.add_argument("--run_name", type=str, required=True)
-    p.add_argument("--model", type=str, required=True, help="'ndm' | 'inr_vae' | 'ndm_inr | ndm_transinr'")
+    p.add_argument("--model", type=str, required=True, help="'ndm' | 'inr_vae' | 'ndm_inr' | 'ndm_transinr' | 'ndm_temporal_transinr'")
     p.add_argument("--dataset", type=str, default="mnist", help="'mnist' | 'cifar10' | 'celeba'")
     p.add_argument("--device", type=str, default="cuda")
 
@@ -111,5 +111,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--trans_patch_size", type=int, default=4)
     p.add_argument("--trans_n_groups", type=int, default=8)
     p.add_argument("--trans_update_strategy", type=str, default="normalize", choices=["normalize", "scale", "identity"])
+
+    p.add_argument("--trans_t_embed_dim", type=int, default=128)
 
     return p

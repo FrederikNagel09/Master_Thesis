@@ -1315,17 +1315,14 @@ class NDMTransInr(NeuralDiffusionModelINR):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_prior_from_wx(self, Wx: torch.Tensor) -> torch.Tensor:
-        T_idx = self.T - 1
-        sigma_T_sq = self.sigma_sq[T_idx]
-        alpha_T_sq = self.alpha_cumprod[T_idx]
+    def _l_prior_from_wx(self, Wx: torch.Tensor) -> torch.Tensor:  # noqa: N803
+        T_idx = self.T - 1  # noqa: N806
+        sigma_T_sq = self.sigma_sq[T_idx]  # noqa: N806
+        alpha_T_sq = self.alpha_cumprod[T_idx]  # noqa: N806
         d = Wx.shape[-1]
-        return 0.5 * (
-            d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0)
-            + alpha_T_sq * (Wx ** 2).sum(dim=-1)
-        )
+        return 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (Wx**2).sum(dim=-1))
 
-    def _l_rec_from_wx(self, x: torch.Tensor, Wx: torch.Tensor) -> torch.Tensor:
+    def _l_rec_from_wx(self, x: torch.Tensor, Wx: torch.Tensor) -> torch.Tensor:  # noqa: N803
         x_recon = self._inr_decode(Wx)
         x_flat = (x.reshape(x.shape[0], -1) * 0.5 + 0.5).clamp(0, 1)
         x_recon = x_recon.clamp(0, 1)
@@ -1335,14 +1332,14 @@ class NDMTransInr(NeuralDiffusionModelINR):
 
     # -------------------------------------------------------------------------
     # Negative ELBO
-    # ------------------------------------------------------------------------- 
+    # -------------------------------------------------------------------------
     def negative_elbo(self, x: torch.Tensor):
         batch_size = x.shape[0]
         t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1
         t_norm = t_idx.float() / (self.T - 1)
 
         # ── Encode once, reuse everywhere ────────────────────────────────────
-        Wx = self.W(x)  # (B, weight_dim)
+        Wx = self.W(x)  # (B, weight_dim)  # noqa: N806
 
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)

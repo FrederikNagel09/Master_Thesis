@@ -189,8 +189,8 @@ python main.py \
 
 ######################### TRANSFORMER ENCODER NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_transinr_mnist_v3_full \
-    --model ndm_transinr \
+    --run_name ndm_temporal_transinr_v1 \
+    --model ndm_temporal_transinr \
     --dataset mnist \
     --epochs 100 \
     --batch_size 128 \
@@ -215,11 +215,16 @@ python main.py \
     --trans_dec_depth 4 \
     --trans_patch_size 4 \
     --trans_n_groups 8 \
+    --trans_t_embed_dim 128 \
     --trans_update_strategy scale \
-    --predictor_variant mlp \
-    --noise_hidden_dim 256 \
-    --noise_n_blocks 3 \
-    --noise_t_embed 256
+    --predictor_variant transformer \
+    --transformer_chunk_size 32 \
+    --transformer_d_model 256 \
+    --transformer_n_heads 8 \
+    --transformer_n_layers 6 \
+    --transformer_d_ff 512 \
+    --transformer_dropout 0.0 \
+    --noise_t_embed 128
 """
 
 import warnings
