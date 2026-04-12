@@ -65,9 +65,9 @@ def build_model(args, data_config: dict) -> nn.Module:
 
 
 # =============================================================================
-# Per-model builders
+# Printing functions:
 # =============================================================================
-def print_model_stats(model):
+def print_encoder_stats(model):
     def count(params):
         return sum(p.numel() for p in params)
 
@@ -98,6 +98,89 @@ def print_model_stats(model):
     for name, shape in inr_layers:
         print(f"    {name}: {shape[0]-1} → {shape[1]}  ({(shape[0])*shape[1]:,} params incl. bias)")
     print("=" * 50 + "\n")
+
+
+def print_noise_predictor_stats(model):
+    def count(params):
+        return sum(p.numel() for p in params)
+
+    total = count(model.parameters())
+
+    print("\n" + "=" * 50)
+
+    if isinstance(model, NoisePredictor):
+        time_embed_p = count(model.time_embed.parameters())
+        time_proj_p = count(model.time_proj.parameters())
+        input_proj_p = count(model.input_proj.parameters())
+        blocks_p = count(model.blocks.parameters())
+        t_projs_p = count(model.t_projs.parameters())
+        output_proj_p = count(model.output_proj.parameters())
+
+        print("  MLP Noise Predictor ε_θ(z_t, t) Parameter Statistics:")
+        print("=" * 50)
+        print(f"  Config:  weight_dim={model.weight_dim}  hidden_dim={model.hidden_dim}" f"  n_blocks={model.n_blocks}")
+        print()
+        print("Learnable parameters:")
+        print(f"  Time embedding:     {time_embed_p:>10,} params")
+        print(f"  Time projection:    {time_proj_p:>10,} params")
+        print(f"  Input projection:   {input_proj_p:>10,} params")
+        print(f"  Residual blocks:    {blocks_p:>10,} params  ({model.n_blocks} blocks)")
+        print(f"  Block time projs:   {t_projs_p:>10,} params  ({model.n_blocks} projections)")
+        print(f"  Output projection:  {output_proj_p:>10,} params")
+        print(f"  {'─'*38}")
+        print(f"  Total:              {total:>10,} params")
+        print()
+        print("Architecture (residual block):")
+        print(f"    Input:  weight_dim ({model.weight_dim}) → hidden_dim ({model.hidden_dim})")
+        for i in range(model.n_blocks):
+            print(
+                f"    Block {i+1}: LayerNorm → Linear({model.hidden_dim}→{model.hidden_dim})"
+                f" + time_proj → SiLU → Linear({model.hidden_dim}→{model.hidden_dim}) + skip"
+            )
+        print(f"    Output: hidden_dim ({model.hidden_dim}) → weight_dim ({model.weight_dim})")
+
+    elif isinstance(model, TransformerNoisePredictor):
+        time_embed_p = count(model.time_embed.parameters())
+        time_proj_p = count(model.time_proj.parameters())
+        token_embed_p = count(model.token_embed.parameters())
+        pos_embed_p = model.pos_embed.numel()
+        transformer_p = count(model.transformer.parameters())
+        readout_p = count(model.token_readout.parameters())
+
+        print("  Transformer Noise Predictor ε_θ(z_t, t) Parameter Statistics:")
+        print("=" * 50)
+        print(f"  Config:  weight_dim={model.weight_dim}  chunk_size={model.chunk_size}" f"  d_model={model.d_model}")
+        print(f"           n_tokens={model.n_tokens}  padded_dim={model.padded_dim}" f"  (padding={model.padded_dim - model.weight_dim})")
+        print()
+        print("Learnable parameters:")
+        print(f"  Time embedding:     {time_embed_p:>10,} params")
+        print(f"  Time projection:    {time_proj_p:>10,} params")
+        print(f"  Token embedding:    {token_embed_p:>10,} params  (chunk_size → d_model, per token)")
+        print(f"  Positional embed:   {pos_embed_p:>10,} params  ({model.n_tokens + 1} positions x d_model)")
+        print(f"  Transformer:        {transformer_p:>10,} params  ({model.transformer.num_layers} layers)")
+        print(f"  Token readout:      {readout_p:>10,} params  (d_model → chunk_size, per token)")
+        print(f"  {'─'*38}")
+        print(f"  Total:              {total:>10,} params")
+        print()
+        print("Tokenization:")
+        print(
+            f"    weight_dim {model.weight_dim} → {model.n_tokens} tokens of dim {model.chunk_size}"
+            + (f"  (+ {model.padded_dim - model.weight_dim} zero-padded)" if model.padded_dim > model.weight_dim else "")
+        )
+        print(f"    + 1 [TIME] token  →  sequence length {model.n_tokens + 1}")
+        print(f"    Each token: {model.chunk_size} → d_model ({model.d_model}) → {model.chunk_size}")
+
+    else:
+        print("  Unknown noise predictor type.")
+        print("=" * 50)
+        print(f"  Total: {total:,} params")
+
+    print("=" * 50 + "\n")
+
+
+# =============================================================================
+# Per-model builders
+# =============================================================================
 
 
 def _build_ndm(args, data_config: dict) -> nn.Module:
@@ -573,7 +656,7 @@ def _build_ndm_transinr(args, data_config: dict):
         transformer=transformer_cfg,
         update_strategy=update_strat,
     )
-    print_model_stats(encoder)  # not model
+    print_encoder_stats(encoder)  # not model
     weight_dim = encoder.weight_dim
 
     # ── Noise predictor ───────────────────────────────────────────────────────
@@ -590,7 +673,7 @@ def _build_ndm_transinr(args, data_config: dict):
         d_ff=getattr(args, "transformer_d_ff", 1024),
         dropout=getattr(args, "transformer_dropout", 0.1),
     )
-
+    print_noise_predictor_stats(network)
     # ── Coordinate grid for SIREN queries ────────────────────────────────────
     # Shape: (img_size, img_size, 2),  range [-1, 1]
     from src.models.trans_inr import make_coord_grid

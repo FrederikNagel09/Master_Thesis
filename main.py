@@ -189,35 +189,37 @@ python main.py \
 
 ######################### TRANSFORMER ENCODER NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_transinr_smoke \
+    --run_name ndm_transinr_mnist_v3_full \
     --model ndm_transinr \
     --dataset mnist \
-    --epochs 5 \
-    --batch_size 64 \
-    --lr 4e-4 \
-    --weight_decay 1e-5 \
+    --epochs 100 \
+    --batch_size 128 \
+    --lr 1e-4 \
+    --weight_decay 1e-4 \
     --grad_clip 1.0 \
-    --log_every_n_steps 5 \
-    --subset_frac 0.02 \
-    --T 10 \
+    --log_every_n_steps 20 \
+    --subset_frac 1.0 \
+    --warmup_steps 2000 \
+    --peak_lr 3e-4 \
+    --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 16 \
-    --inr_layers 2 \
-    --trans_dim 64 \
-    --trans_n_head 2 \
-    --trans_head_dim 16 \
-    --trans_ff_dim 128 \
-    --trans_enc_depth 1 \
-    --trans_dec_depth 1 \
+    --inr_hidden_dim 64 \
+    --inr_layers 4 \
+    --trans_dim 256 \
+    --trans_n_head 8 \
+    --trans_head_dim 32 \
+    --trans_ff_dim 512 \
+    --trans_enc_depth 4 \
+    --trans_dec_depth 4 \
     --trans_patch_size 4 \
-    --trans_n_groups 4 \
+    --trans_n_groups 8 \
     --trans_update_strategy scale \
     --predictor_variant mlp \
-    --noise_hidden_dim 64 \
-    --noise_n_blocks 1 \
-    --noise_t_embed 16
+    --noise_hidden_dim 256 \
+    --noise_n_blocks 3 \
+    --noise_t_embed 256
 """
 
 import warnings
