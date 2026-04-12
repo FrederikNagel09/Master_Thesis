@@ -129,15 +129,6 @@ def print_noise_predictor_stats(model):
         print(f"  Output projection:  {output_proj_p:>10,} params")
         print(f"  {'─'*38}")
         print(f"  Total:              {total:>10,} params")
-        print()
-        print("Architecture (residual block):")
-        print(f"    Input:  weight_dim ({model.weight_dim}) → hidden_dim ({model.hidden_dim})")
-        for i in range(model.n_blocks):
-            print(
-                f"    Block {i+1}: LayerNorm → Linear({model.hidden_dim}→{model.hidden_dim})"
-                f" + time_proj → SiLU → Linear({model.hidden_dim}→{model.hidden_dim}) + skip"
-            )
-        print(f"    Output: hidden_dim ({model.hidden_dim}) → weight_dim ({model.weight_dim})")
 
     elif isinstance(model, TransformerNoisePredictor):
         time_embed_p = count(model.time_embed.parameters())
@@ -161,14 +152,6 @@ def print_noise_predictor_stats(model):
         print(f"  Token readout:      {readout_p:>10,} params  (d_model → chunk_size, per token)")
         print(f"  {'─'*38}")
         print(f"  Total:              {total:>10,} params")
-        print()
-        print("Tokenization:")
-        print(
-            f"    weight_dim {model.weight_dim} → {model.n_tokens} tokens of dim {model.chunk_size}"
-            + (f"  (+ {model.padded_dim - model.weight_dim} zero-padded)" if model.padded_dim > model.weight_dim else "")
-        )
-        print(f"    + 1 [TIME] token  →  sequence length {model.n_tokens + 1}")
-        print(f"    Each token: {model.chunk_size} → d_model ({model.d_model}) → {model.chunk_size}")
 
     else:
         print("  Unknown noise predictor type.")
