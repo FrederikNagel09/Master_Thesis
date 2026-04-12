@@ -162,7 +162,7 @@ def run_training(
                 plot_fphi_progression(
                     model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
                 )
-            elif args.model in ("ndm_inr", "ndm_transinr"):
+            elif args.model in ("ndm_inr", "ndm_transinr", "ndm_temporal_transinr"):
                 plot_reconstruction_progression(
                     model,
                     batch,

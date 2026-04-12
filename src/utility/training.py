@@ -238,7 +238,7 @@ def train(
             if sample_fn is not None and global_step in _sample_steps:
                 model.eval()
                 with torch.no_grad():
-                    if model_type in ("ndm", "ndm_inr", "ndm_transinr"):
+                    if model_type in ("ndm", "ndm_inr", "ndm_transinr", "ndm_temporal_transinr"):
                         sample_fn(model, global_step, device, batch=batch)
                     else:
                         sample_fn(model, global_step, device)
