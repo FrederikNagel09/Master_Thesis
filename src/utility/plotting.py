@@ -193,7 +193,7 @@ def _model_to_grid(
         elif model_type == "ndm_inr":
             samples = model.sample(n_samples)  # (N, H*W) in [0, 1]
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
-        elif model_type == "ndm_transinr":
+        elif model_type in ("ndm_transinr", "ndm_static_transinr", "ndm_temporal_transinr"):
             samples = model.sample(n_samples)  # (N, H*W)
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)  # ← ADD
 
@@ -222,7 +222,7 @@ def plot_final_samples(
     Parameters
     ----------
     model       : Trained model, already on device.
-    model_type  : One of "ndm", "inr_vae", "ndm_inr".
+    model_type  : One of "ndm", "inr_vae", "ndm_inr", "ndm_temporal_transinr".
     epoch       : Current epoch number, used in the filename.
     run_dir     : Run results directory (src/train_results/{run_name}).
     device      : Device string.
@@ -272,7 +272,7 @@ def plot_sample_progression(
     Parameters
     ----------
     model       : Trained model, already on device.
-    model_type  : One of "ndm", "inr_vae", "ndm_inr".
+    model_type  : One of "ndm", "inr_vae", "ndm_inr", "ndm_temporal_transinr".
     epoch       : Current epoch, used as the row label.
     run_dir     : Run results directory (src/train_results/{run_name}).
     device      : Device string.

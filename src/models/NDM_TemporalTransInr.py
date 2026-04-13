@@ -114,23 +114,66 @@ class NDMTemporalTransInr(NDMTemporalINR):
     # but does not normalise to [0,1]. Fix range here.
     # -------------------------------------------------------------------------
 
-    def _l_rec(self, x: torch.Tensor) -> torch.Tensor:
+    def _l_rec(self, x: torch.Tensor, z_t: torch.Tensor, t_idx: torch.Tensor, t_norm: torch.Tensor) -> torch.Tensor:
         """
-        Reconstruction loss at t = 0.
+        Reconstruction loss — decodes through the noise-predicting network.
         x : (B, data_dim) flat, in [-1, 1]
         """
-        t0_norm = torch.zeros(x.shape[0], 1, device=x.device)
-        weights = self.F_phi(x, t0_norm)  # (B, weight_dim)
-        x_recon = self._inr_decode(weights)  # (B, H*W)
+        eps_hat = self.network(z_t, t_norm.unsqueeze(1))
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
 
-        # Normalise target to [0, 1] to match SIREN output space
-        x_flat = (x.reshape(x.shape[0], -1) * 0.5 + 0.5).clamp(0, 1)
-        x_recon = x_recon.clamp(0, 1)
+        # Recover predicted clean weights via network
+        x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
 
+        x_recon = self._inr_decode(x_hat)  # (B, H*W)
+
+        x_flat = x.reshape(x.shape[0], -1)  # keep in [-1, 1], fix normalisation separately later
+        
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
+
+
+    # -------------------------------------------------------------------------
+    # Shared ELBO structure
+    # -------------------------------------------------------------------------
+    def negative_elbo(self, x: torch.Tensor):
+        """
+        Estimates the negative ELBO:
+            L = E[ l_diff ] + prior_mask * l_prior + l_rec
+        Parameters
+        ----------
+        x : (batch, data_dim)
+        Returns
+        -------
+        (scalar mean loss, l_diff mean, l_prior mean, l_rec mean)
+        """
+        batch_size = x.shape[0]
+
+        # Sample random time step  t ~ Uniform{1, ..., T}
+        t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1
+        t_norm = t_idx.float() / (self.T - 1)
+
+        # Forward: z_t ~ q(z_t | x)
+        z_t, _, Wx = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))  # noqa: N806
+
+        # Three loss terms
+        l_diff = self._l_diff(x, z_t, t_idx, t_norm, Wx)  # (batch,)
+        l_prior = self._l_prior(x)  # (batch,)
+        l_rec = self._l_rec(x, z_t, t_idx, t_norm)  # (batch,)
+
+        # apply prior mask and scaling:
+        prior_mask = (t_idx == self.T - 1).float()
+        l_prior = prior_mask * l_prior
+
+        # Combine to get ELBO (mean over batch)
+        elbo = l_diff + l_prior + l_rec
+
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+
+
 
     # -------------------------------------------------------------------------
     # Sampling — mirrors NDMTemporalINR.sample_weight but uses TransInr SIREN

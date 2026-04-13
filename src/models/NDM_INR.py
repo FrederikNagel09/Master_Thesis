@@ -916,6 +916,8 @@ class NeuralDiffusionModelINR(nn.Module):
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
+        l_diff = 5.0*l_diff
+
         # Combine to get ELBO (mean over batch)
         elbo = l_diff + l_prior + l_rec
 
