@@ -9,11 +9,14 @@ For components that are not applicable, return torch.tensor(0.0).
 from __future__ import annotations
 
 import os
+import random
 import sys
 
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+
+from src.configs.general_config import GLOBAL_DEBUG_BOOL
 
 sys.path.append(".")
 
@@ -190,6 +193,11 @@ def train(
             else:
                 x = batch[0] if isinstance(batch, list | tuple) else batch
                 x = x.to(device)
+                if GLOBAL_DEBUG_BOOL and random.random() < 0.1:  # print debug info for ~0.1% of batches
+                    print("==================== DEBUG: training.py ====================")
+                    print(f"  Dataset samples range : [{x.min()}, {x.max()}]")
+                    print(f"  Dataset samples shape : {x.shape}")
+                    print("================================================================")
                 loss, l_diff, l_prior, l_rec = model.loss(x)
 
             # ── Backward pass ────────────────────────────────────────────────
@@ -238,7 +246,7 @@ def train(
             if sample_fn is not None and global_step in _sample_steps:
                 model.eval()
                 with torch.no_grad():
-                    if model_type in ("ndm", "ndm_inr", "ndm_transinr", "ndm_static_transinr", "ndm_temporal_transinr"):
+                    if model_type in ("ndm", "ndm_inr", "ndm_transinr", "ndm_temporal_transinr", "ndm_static_transinr"):
                         sample_fn(model, global_step, device, batch=batch)
                     else:
                         sample_fn(model, global_step, device)

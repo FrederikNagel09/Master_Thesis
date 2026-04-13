@@ -58,6 +58,8 @@ def build_model(args, data_config: dict) -> nn.Module:
         model = _build_ndm_transinr(args, data_config)
     elif name == "ndm_temporal_transinr":
         model = _build_ndm_temporal_transinr(args, data_config)
+    elif name == "ndm_static_transinr":
+        model = _build_ndm_static_transinr(args, data_config)
     else:
         raise ValueError(f"Unknown model '{args.model}'. Choose from: 'ndm', 'inr_vae', 'ndm_inr'.")
 
@@ -794,6 +796,119 @@ def _build_ndm_temporal_transinr(args, data_config: dict):
     net_params = sum(p.numel() for p in network.parameters())
     print(f"    Encoder (TransInrTemporal) : {enc_params:,}")
     print(f"    Noise predictor            : {net_params:,}")
+
+    return model
+
+
+def _build_ndm_static_transinr(args, data_config: dict):
+    """
+    Build NDMStaticTransInr:
+        TransInrEncoder as W(x) + NDM diffusion in weight space.
+    """
+    from src.models.NDM_StaticTransInr import NDMStaticTransInr
+    from src.models.trans_inr import make_coord_grid
+    from src.models.trans_inr_encoder import TransInrEncoder
+    from src.utility.model_builders import build_noise_predictor
+
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+    data_dim = data_config["data_dim"]
+
+    # ── TransInr config ───────────────────────────────────────────────────────
+    dim = getattr(args, "trans_dim", 256)
+    n_head = getattr(args, "trans_n_head", 8)
+    head_dim = getattr(args, "trans_head_dim", 32)
+    ff_dim = getattr(args, "trans_ff_dim", 512)
+    enc_depth = getattr(args, "trans_enc_depth", 4)
+    dec_depth = getattr(args, "trans_dec_depth", 4)
+    patch_size = getattr(args, "trans_patch_size", 4)
+    n_groups = getattr(args, "trans_n_groups", 8)
+    update_strat = getattr(args, "trans_update_strategy", "normalize")
+    inr_hidden = getattr(args, "inr_hidden_dim", 256)
+    inr_layers = getattr(args, "inr_layers", 5)
+
+    tokenizer_cfg = {
+        "target": "src.models.trans_inr_helpers.ImageTokenizer",
+        "params": {
+            "in_channels": channels,
+            "image_size": img_size,
+            "patch_size": patch_size,
+            "n_head": n_head,
+            "head_dim": head_dim,
+        },
+    }
+
+    inr_cfg = {
+        "target": "src.models.trans_inr_helpers.SIREN",
+        "params": {
+            "depth": inr_layers,
+            "in_dim": 2,
+            "out_dim": channels,
+            "hidden_dim": inr_hidden,
+            "out_bias": 0.5,
+        },
+    }
+
+    transformer_cfg = {
+        "target": "src.models.trans_inr_helpers.Transformer",
+        "params": {
+            "dim": dim,
+            "encoder_depth": enc_depth,
+            "decoder_depth": dec_depth,
+            "n_head": n_head,
+            "head_dim": head_dim,
+            "ff_dim": ff_dim,
+        },
+    }
+
+    encoder = TransInrEncoder(
+        tokenizer=tokenizer_cfg,
+        inr=inr_cfg,
+        n_groups=n_groups,
+        transformer=transformer_cfg,
+        update_strategy=update_strat,
+        in_channels=channels,
+        img_size=img_size,
+    )
+
+    weight_dim = encoder.weight_dim
+    print(f"  TransInrEncoder weight_dim : {weight_dim:,}")
+
+    # ── Noise predictor ───────────────────────────────────────────────────────
+    network = build_noise_predictor(
+        variant=getattr(args, "predictor_variant", "mlp"),
+        weight_dim=weight_dim,
+        hidden_dim=getattr(args, "noise_hidden_dim", 512),
+        n_blocks=getattr(args, "noise_n_blocks", 4),
+        t_embed_dim=getattr(args, "noise_t_embed", 128),
+        chunk_size=getattr(args, "transformer_chunk_size", 32),
+        d_model=getattr(args, "transformer_d_model", 256),
+        n_heads=getattr(args, "transformer_n_heads", 8),
+        n_layers=getattr(args, "transformer_n_layers", 4),
+        d_ff=getattr(args, "transformer_d_ff", 1024),
+        dropout=getattr(args, "transformer_dropout", 0.1),
+    )
+
+    # ── Coordinate grid ───────────────────────────────────────────────────────
+    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
+
+    # ── Assemble ──────────────────────────────────────────────────────────────
+    model = NDMStaticTransInr(
+        network=network,
+        encoder=encoder,
+        coord_grid=coord_grid,
+        beta_1=args.beta_1,
+        beta_T=args.beta_T,
+        T=args.T,
+        sigma_tilde_factor=args.sigma_tilde,
+        data_dim=data_dim,
+        img_size=img_size,
+    )
+
+    enc_params = sum(p.numel() for p in encoder.parameters())
+    net_params = sum(p.numel() for p in network.parameters())
+    print(f"    Encoder (TransInrStatic) : {enc_params:,}")
+    print(f"    Noise predictor          : {net_params:,}")
 
     return model
 

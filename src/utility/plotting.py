@@ -193,7 +193,7 @@ def _model_to_grid(
         elif model_type == "ndm_inr":
             samples = model.sample(n_samples)  # (N, H*W) in [0, 1]
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
-        elif model_type in ("ndm_transinr", "ndm_static_transinr", "ndm_temporal_transinr"):
+        elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr"):
             samples = model.sample(n_samples)  # (N, H*W)
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)  # ← ADD
 
