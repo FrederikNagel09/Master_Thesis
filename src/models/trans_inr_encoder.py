@@ -114,10 +114,15 @@ class TransInrEncoder(nn.Module):
         n_groups: int,
         transformer: dict,
         update_strategy: str = "normalize",
+        in_channels: int = 1,
+        img_size: int = 28,
     ):
         super().__init__()
 
         dim = transformer["params"]["dim"]
+        # ── Dataset shape (for flat→spatial reshape) ──────────────────────────
+        self.in_channels = in_channels
+        self.img_size = img_size
 
         # ── Sub-modules ───────────────────────────────────────────────────────
         self.tokenizer = instantiate_from_config(tokenizer, extra_args={"dim": dim})
@@ -231,6 +236,9 @@ class TransInrEncoder(nn.Module):
         -------
         flat_weights : (B, weight_dim)
         """
+        # ── 0. Flat → spatial if needed ───────────────────────────────────────
+        if x.dim() == 2:
+            x = x.view(x.shape[0], self.in_channels, self.img_size, self.img_size)
         # 1. Tokenise image → (B, N_patch, dim)
         dtokens = self.tokenizer(x, **kwargs)
         B = dtokens.shape[0]  # noqa: N806

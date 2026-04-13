@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
+from src.configs.general_config import GLOBAL_DEBUG_BOOL
+
 # ---------------------------------------------------------------------------
 # Image Tokenizer  (replaces LatentTokenizer)
 # ---------------------------------------------------------------------------
@@ -152,6 +154,12 @@ class SIREN(nn.Module):
         self.params = None
         self.out_bias = out_bias
 
+        if GLOBAL_DEBUG_BOOL:
+            print("==================== DEBUG: SIREN init ====================")
+            print(f"  depth: {depth}, in_dim: {in_dim}, out_dim: {out_dim}, hidden_dim: {hidden_dim}")
+            print(f"  param_shapes: {self.param_shapes}")
+            print("================================================================")
+
     def siren_activation(self, x):
         return torch.sin(self.omega * x)
 
@@ -180,7 +188,7 @@ class SIREN(nn.Module):
 
         for i in range(self.depth):
             x = batched_linear_mm(x, self.params[f"wb{i}"])
-            x = self.siren_activation(x) if i < self.depth - 1 else x + self.out_bias
+            x = self.siren_activation(x) if i < self.depth - 1 else torch.tanh(x)
 
         x = x.view(B, *query_shape, -1)
         return x

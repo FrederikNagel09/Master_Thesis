@@ -1,1 +1,1 @@
-
+GLOBAL_DEBUG_BOOL = True

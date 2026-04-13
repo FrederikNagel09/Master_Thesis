@@ -30,6 +30,7 @@ import torch.nn as nn
 
 sys.path.append(".")
 
+from src.configs.general_config import GLOBAL_DEBUG_BOOL
 from src.utility.dataset_builders import build_dataset
 from src.utility.general import (
     _get_device,
@@ -125,6 +126,13 @@ def run_training(
     )
     print(f"  Batches per epoch : {len(data_loader)}")
 
+    # Check dataset stats for sanity and for building model
+    if GLOBAL_DEBUG_BOOL:
+        print("==================== DEBUG: run_training.py ====================")
+        print(f"  Dataset samples shape : {dataset[0][0].shape}")
+        print(f"  Dataset samples range : [{dataset[0][0].min().item():.4f}, {dataset[0][0].max().item():.4f}]")
+        print("================================================================")
+
     # ── 2. Model ──────────────────────────────────────────────────────────────
     print("\n[ 2 / 4 ]  Building model …")
     model = build_model(args, data_config).to(device)
@@ -162,7 +170,7 @@ def run_training(
                 plot_fphi_progression(
                     model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
                 )
-            elif args.model in ("ndm_inr", "ndm_transinr", "ndm_temporal_transinr"):
+            elif args.model in ("ndm_inr", "ndm_transinr", "ndm_temporal_transinr", "ndm_static_transinr"):
                 plot_reconstruction_progression(
                     model,
                     batch,
