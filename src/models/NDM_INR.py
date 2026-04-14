@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 sys.path.append(".")
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
 from src.models.INR import INR, SirenINR  # noqa: F401
 
@@ -866,7 +866,7 @@ class NeuralDiffusionModelINR(nn.Module):
             coords = self.coords
         coords = coords.expand(batch, -1, -1)
         pixels = self.inr(coords, flat_weights)
-        if GLOBAL_DEBUG_BOOL:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:  # print debug info for ~0.1% of calls
             print("==================== DEBUG: inr_decode.py ====================")
             print(f"Decoded pixels shape: {pixels.shape}")
             print(f"Pixel value range: {pixels.min().item():.4f} to {pixels.max().item():.4f}")
@@ -910,17 +910,17 @@ class NeuralDiffusionModelINR(nn.Module):
         # Sample random time step  t ~ Uniform{1, ..., T}
         t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1
         t_norm = t_idx.float() / (self.T - 1)
-        if GLOBAL_DEBUG_BOOL and random.random() < 0.001:  # print debug info for ~1% of batches
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:  # print debug info for ~0.1% of batches
             print("==================== DEBUG: NDM_INR.py ====================")
             print(f"t_norm (normalized time): {t_norm.min():.4f} to {t_norm.max():.4f}")
             print(f"t_idx (time step indices): {t_idx.min().item()} to {t_idx.max().item()}")
             print("================================================================")
 
         # Forward: z_t ~ q(z_t | x)
-        z_t, _, Wx = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))  # noqa: N806
+        theta_t, _, theta = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))  # noqa: N806
 
         # Three loss terms
-        l_diff = self._l_diff(x, z_t, t_idx, t_norm, Wx)  # (batch,)
+        l_diff = self._l_diff(x, theta_t, t_idx, t_norm, theta)  # (batch,)
         l_prior = self._l_prior(x)  # (batch,)
         l_rec = self._l_rec(x)  # (batch,)
 
@@ -928,7 +928,7 @@ class NeuralDiffusionModelINR(nn.Module):
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
-        l_diff = 5.0*l_diff
+        l_diff = 5.0 * l_diff
 
         # Combine to get ELBO (mean over batch)
         elbo = l_diff + l_prior + l_rec
@@ -1102,26 +1102,26 @@ class NDMStaticINR(NeuralDiffusionModelINR):
     # -------------------------------------------------------------------------
     def _sample_zt(self, x, t_idx, t_norm):  # noqa: ARG002
         """Returns z_t, epsilon, and W(x). t_norm unused but kept for API consistency."""
-        ran = random.random() < 0.1
+        ran = random.random() < probability_threshold
         if GLOBAL_DEBUG_BOOL and ran:
             print("==================== DEBUG: _sample_zt.py 1====================")
             print(f"x (input images): min {x.min().item():.4f}, max {x.max().item():.4f}")
             print("================================================================")
-        Wx = self.W(x)  # (batch, weight_dim)  # noqa: N806
+        theta = self.W(x)  # (batch, weight_dim)  # noqa: N806
         if GLOBAL_DEBUG_BOOL and ran:
             print("==================== DEBUG: _sample_zt.py 2====================")
-            print(f"W(x) (encoded weights): min {Wx.min().item():.4f}, max {Wx.max().item():.4f}")
-            print(f"shape W(x): {Wx.shape}")
+            print(f"W(x) (encoded weights): min {theta.min().item():.4f}, max {theta.max().item():.4f}")
+            print(f"shape W(x): {theta.shape}")
             print("================================================================")
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
-        epsilon = torch.randn_like(Wx)
-        z_t = alpha_t * Wx + sigma_t * epsilon
+        epsilon = torch.randn_like(theta)
+        theta_t = alpha_t * theta + sigma_t * epsilon
         if GLOBAL_DEBUG_BOOL and ran:
             print("==================== DEBUG: _sample_zt.py 3====================")
-            print(f"z_t (noisy images): min {z_t.min().item():.4f}, max {z_t.max().item():.4f}")
+            print(f"z_t (noisy images): min {theta_t.min().item():.4f}, max {theta_t.max().item():.4f}")
             print("================================================================")
-        return z_t, epsilon, Wx
+        return theta_t, epsilon, theta
 
     # -------------------------------------------------------------------------
     # Loss terms
@@ -1138,7 +1138,7 @@ class NDMStaticINR(NeuralDiffusionModelINR):
         where B = sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t.
         """
         eps_hat = self.network(z_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
-        if GLOBAL_DEBUG_BOOL and random.random() < 0.1:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _l_diff.py 0====================")
             print(f"eps_hat (predicted noise): min {eps_hat.min().item():.4f}, max {eps_hat.max().item():.4f}")
             print(f"shape eps_hat: {eps_hat.shape}")
@@ -1154,13 +1154,13 @@ class NDMStaticINR(NeuralDiffusionModelINR):
 
         # Decode predicted weights to pixel space, then re-encode with W
         x_hat_pixels = self._inr_decode(x_hat)
-        if GLOBAL_DEBUG_BOOL and random.random() < 0.1:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _l_diff.py 1====================")
             print(f"x_hat_pixels (reconstructed images): min {x_hat_pixels.min().item():.4f}, max {x_hat_pixels.max().item():.4f}")
             print(f"shape x_hat_pixels: {x_hat_pixels.shape}")
             print("================================================================")
         Wx_hat = self.W(x_hat_pixels)  # (batch, weight_dim)  # noqa: N806
-        if GLOBAL_DEBUG_BOOL and random.random() < 0.1:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _l_diff.py 2====================")
             print(f"W(x_hat) (re-encoded weights): min {Wx_hat.min().item():.4f}, max {Wx_hat.max().item():.4f}")
             print(f"shape W(x_hat): {Wx_hat.shape}")
@@ -1183,7 +1183,7 @@ class NDMStaticINR(NeuralDiffusionModelINR):
         """Closed-form KL  N(alpha_T * W(x), sigma_T^2 I) || N(0,I)."""
         T_idx = self.T - 1  # noqa: N806
         Wx_T = self.W(x)  # (batch, weight_dim)  # noqa: N806
-        if GLOBAL_DEBUG_BOOL and random.random() < 0.1:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _l_prior.py ====================")
             print(f"W(x) at T (encoded weights): min {Wx_T.min().item():.4f}, max {Wx_T.max().item():.4f}")
             print(f"shape W(x) at T: {Wx_T.shape}")
@@ -1226,7 +1226,7 @@ class NDMStaticINR(NeuralDiffusionModelINR):
 
             # W(x_hat) — single forward pass, no time argument needed
             x_hat_pixels = self._inr_decode(theta_t_hat)
-            if GLOBAL_DEBUG_BOOL and random.random() < 0.1:
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
                 print("==================== DEBUG: sample_weight.py 1====================")
                 print(f"x_hat_pixels (reconstructed images): min {x_hat_pixels.min().item():.4f}, max {x_hat_pixels.max().item():.4f}")
                 print(f"shape x_hat_pixels: {x_hat_pixels.shape}")

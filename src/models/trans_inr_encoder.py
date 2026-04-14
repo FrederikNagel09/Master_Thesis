@@ -267,9 +267,16 @@ class TransInrEncoder(nn.Module):
             l, r = self.wtoken_rng[name]  # noqa: E741
             x_mod = self.wtoken_postfc[name](trans_out[:, l:r, :])
             x_mod = x_mod.transpose(-1, -2)  # (B, shape[0]-1, g)
+            print(f"[{name}] trans_out slice: min={trans_out[:, l:r, :].min():.4f}, max={trans_out[:, l:r, :].max():.4f}")
+            print(f"[{name}] x_mod: min={x_mod.min():.4f}, max={x_mod.max():.4f}")
             w = self.update_strategy(w, x_mod)
+            # After update_strategy
+            print(f"[{name}] w after update: min={w.min():.4f}, max={w.max():.4f}, nan={w.isnan().any()}")
 
             param_dict[name] = torch.cat([w, b], dim=1)  # (B, shape[0], shape[1])
-
+            print(f"[{name}] param_dict entry: min={param_dict[name].min():.4f}, max={param_dict[name].max():.4f}")
+        
         # 5. Flatten to a single vector per batch item
-        return self._flatten_params(param_dict)  # (B, weight_dim)
+        flat = self._flatten_params(param_dict)
+        print(f"flat_weights: min={flat.min():.4f}, max={flat.max():.4f}, nan={flat.isnan().any()}")
+        return flat

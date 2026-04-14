@@ -22,7 +22,7 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 from src.models.NDM_INR import NDMStaticINR
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ class NDMStaticTransInr(NDMStaticINR):
 
         # SIREN forward: (B, H, W, 2) → (B, H, W, C_out)
         pixels = self.inr(coord)
-        if GLOBAL_DEBUG_BOOL and random.random() < 0.1:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _inr_decode.py ====================")
             print(f"Decoded pixels shape: {pixels.shape}")
             print(f"Pixel value range: {pixels.min().item():.4f} to {pixels.max().item():.4f}")
@@ -129,7 +129,7 @@ class NDMStaticTransInr(NDMStaticINR):
         """
         weights = self.W(x)
         x_recon = self._inr_decode(weights)  # now outputs [-1, 1] via tanh
-        if GLOBAL_DEBUG_BOOL and random.random() < 0.1:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _l_rec.py 1====================")
             print(f"x_recon (reconstructed images): min {x_recon.min().item():.4f}, max {x_recon.max().item():.4f}")
             print(f"shape x_recon: {x_recon.shape}")

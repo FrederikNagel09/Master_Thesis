@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
 sys.path.append(".")
 
@@ -193,21 +193,80 @@ def train(
             else:
                 x = batch[0] if isinstance(batch, list | tuple) else batch
                 x = x.to(device)
-                if GLOBAL_DEBUG_BOOL and random.random() < 0.1:  # print debug info for ~0.1% of batches
+                if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:  # print debug info for ~0.1% of batches
                     print("==================== DEBUG: training.py ====================")
                     print(f"  Dataset samples range : [{x.min()}, {x.max()}]")
                     print(f"  Dataset samples shape : {x.shape}")
                     print("================================================================")
                 loss, l_diff, l_prior, l_rec = model.loss(x)
+            
+            # ── NaN/divergence diagnostics ───────────────────────────────────
+            # Always check loss values regardless of debug flag
+            loss_is_nan = loss.isnan().any() or loss.isinf().any()
+            if loss_is_nan or (GLOBAL_DEBUG_BOOL and random.random() < probability_threshold):
+                print("==================== DEBUG: training.py LOSS COMPONENTS ====================")
+                print(f"  epoch={epoch}")
+                print(f"  loss   : {loss.item():.6f}  (nan={loss.isnan().any().item()})")
+                print(f"  l_diff : {l_diff.item():.6f}  (nan={l_diff.isnan().any().item()})")
+                print(f"  l_prior: {l_prior.item():.6f}  (nan={l_prior.isnan().any().item()})")
+                print(f"  l_rec  : {l_rec.item():.6f}  (nan={l_rec.isnan().any().item()})")
+                print("=============================================================================")
 
             # ── Backward pass ────────────────────────────────────────────────
             optimizer.zero_grad()
             loss.backward()
+
+            # ── Gradient diagnostics (after backward, before clipping) ───────
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold or loss_is_nan:
+                total_norm_preclip = 0.0
+                max_grad_param = ("", 0.0)
+                nan_grad_params = []
+                for name, param in model.named_parameters():
+                    if param.grad is not None:
+                        g = param.grad
+                        if g.isnan().any() or g.isinf().any():
+                            nan_grad_params.append(name)
+                        pnorm = g.norm().item()
+                        total_norm_preclip += pnorm ** 2
+                        if pnorm > max_grad_param[1]:
+                            max_grad_param = (name, pnorm)
+                total_norm_preclip = total_norm_preclip ** 0.5
+
+                print("==================== DEBUG: training.py GRADIENTS ====================")
+                print(f"  Total grad norm (pre-clip) : {total_norm_preclip:.4f}")
+                print(f"  Largest grad param         : {max_grad_param[0]} | norm={max_grad_param[1]:.4f}")
+                if nan_grad_params:
+                    print(f"  !! NaN/Inf grads in        : {nan_grad_params}")
+                else:
+                    print(f"  No NaN/Inf grads detected")
+                print("======================================================================")
+
             if grad_clip > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
+
+            # ── Post-step weight diagnostics ─────────────────────────────────
+            if loss_is_nan:
+                print("==================== DEBUG: training.py WEIGHTS POST-STEP ====================")
+                nan_weight_params = []
+                large_weight_params = []
+                for name, param in model.named_parameters():
+                    if param.isnan().any() or param.isinf().any():
+                        nan_weight_params.append(name)
+                    elif param.norm().item() > 1000:  # tune threshold if needed
+                        large_weight_params.append((name, param.norm().item()))
+                if nan_weight_params:
+                    print(f"  !! NaN/Inf weights in: {nan_weight_params}")
+                if large_weight_params:
+                    print(f"  !! Large weight norms: {large_weight_params}")
+                if not nan_weight_params and not large_weight_params:
+                    print("  Weights look okay — NaN may have originated in forward pass")
+                print("  Stopping training to inspect state.")
+                print("===============================================================================")
+                raise RuntimeError("NaN detected in loss — stopping early for inspection.")
+
 
             # ── Accumulate ───────────────────────────────────────────────────
             global_step += 1
