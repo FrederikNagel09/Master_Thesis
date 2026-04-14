@@ -121,109 +121,80 @@ python main.py \
     --inr_layers 3 \
     --use_modulation true
 
-######################### NDM-INR Training ####################################
-python main.py \
-    --run_name ndm_inr_MLP_Temporal_TESTING \
-    --model ndm_inr \
-    --ndm_variant temporal \
-    --encoder_variant mlp \
-    --predictor_variant mlp \
-    --dataset mnist \
-    --use_modulation True \
-    --epochs 20 \
-    --batch_size 128 \
-    --lr 1e-3 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 20 \
-    --subset_frac 0.33 \
-    --use_scheduler \
-    --warmup_steps 50 \
-    --peak_lr 1e-3 \
-    --T 1000 \
-    --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
-    --inr_layers 3 \
-    --f_phi_hidden 512 512 512 \
-    --f_phi_t_embed 64 \
-    --noise_hidden_dim 128 \
-    --noise_n_blocks 4 \
-    --noise_t_embed 64 
 
-python main.py \
-    --run_name ndm_inr_TRANS_Static_Testing \
-    --model ndm_inr \
-    --ndm_variant static \
-    --encoder_variant cnn \
-    --predictor_variant transformer \
-    --dataset mnist \
-    --use_modulation True \
-    --epochs 20 \
-    --batch_size 32 \
-    --lr 4e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 20 \
-    --subset_frac 0.33 \
-    --use_scheduler \
-    --warmup_steps 50 \
-    --peak_lr 4e-4 \
-    --T 1000 \
-    --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
-    --inr_layers 3 \
-    --cnn_base_ch 32 \
-    --cnn_n_blocks 6 \
-    --transformer_chunk_size 32 \
-    --transformer_d_model 128 \
-    --transformer_n_heads 8 \
-    --transformer_n_layers 6 \
-    --transformer_d_ff 512 \
-    --transformer_dropout 0.0 \
-    --noise_t_embed 32
 
 
 ######################### TRANSFORMER ENCODER NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_sanity_mnist \
-    --model ndm_static_transinr \
+    --run_name ndm_static_transinr_v1_new  \
+    --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 10 \
-    --batch_size 64 \
-    --lr 3e-4 \
+    --epochs 20 \
+    --batch_size 128 \
+    --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 10 \
-    --subset_frac 0.2 \
-    --warmup_steps 500 \
-    --peak_lr 3e-4 \
+    --log_every_n_steps 50 \
+    --subset_frac 1.0 \
+    --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
     --inr_hidden_dim 32 \
-    --inr_layers 3 \
-    --trans_dim 128 \
+    --inr_layers 4 \
+    --trans_dim 256 \
     --trans_n_head 4 \
     --trans_head_dim 32 \
     --trans_ff_dim 256 \
-    --trans_enc_depth 3 \
-    --trans_dec_depth 3 \
+    --trans_enc_depth 6 \
+    --trans_dec_depth 6 \
     --trans_patch_size 4 \
-    --trans_n_groups 4 \
+    --trans_n_groups 16 \
     --trans_update_strategy scale \
     --predictor_variant transformer \
-    --transformer_chunk_size 64 \
-    --transformer_d_model 128 \
-    --transformer_n_heads 4 \
-    --transformer_n_layers 3 \
+    --transformer_chunk_size 128 \
+    --transformer_d_model 256 \
+    --transformer_n_heads 8 \
+    --transformer_n_layers 8 \
     --transformer_d_ff 256 \
     --transformer_dropout 0.1 \
-    --noise_t_embed 64
+    --noise_t_embed 256
+
+
+    
+python main.py \
+    --run_name ndm_static_transinr_v1_new  \
+    --model ndm_static_transinr\
+    --dataset mnist \
+    --epochs 20 \
+    --batch_size 128 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 50 \
+    --subset_frac 1.0 \
+    --peak_lr 1e-4 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --sigma_tilde 1.0 \
+    --inr_hidden_dim 32 \
+    --inr_layers 4 \
+    --trans_dim 256 \
+    --trans_n_head 4 \
+    --trans_head_dim 32 \
+    --trans_ff_dim 256 \
+    --trans_enc_depth 6 \
+    --trans_dec_depth 6 \
+    --trans_patch_size 4 \
+    --trans_n_groups 16 \
+    --trans_update_strategy scale \
+    --predictor_variant mlp \
+    --noise_hidden_dim 256 \
+    --noise_n_blocks 6 \
+    --noise_t_embed 512 
+
 """
 
 import warnings

@@ -894,8 +894,8 @@ def _build_ndm_static_transinr(args, data_config: dict):
 
     # ── Assemble ──────────────────────────────────────────────────────────────
     model = NDMStaticTransInr(
-        network=network,
-        encoder=encoder,
+        NoisePredictor=network,
+        WeightEncoder=encoder,
         coord_grid=coord_grid,
         beta_1=args.beta_1,
         beta_T=args.beta_T,

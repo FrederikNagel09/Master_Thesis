@@ -553,10 +553,10 @@ def plot_reconstruction_progression(
         elif hasattr(model, "W") and hasattr(model.W, "inflate"):
             # TransInrEncoder expects spatial (B, C, H, W)
             x_spatial = x.view(x.shape[0], channels, img_size, img_size)
-            weights = model.W(x_spatial)  # ← spatial reshape
+            weights = model.weight_encoder(x_spatial)  # ← spatial reshape
         else:
             t0_norm = torch.zeros(x.shape[0], 1, device=device)
-            weights = model.W(x)  # static MLP/CNN encoder
+            weights = model.weight_encoder(x)  # static MLP/CNN encoder
         x_recon = model._inr_decode(weights)  # (3, data_dim)
     model.train()
 

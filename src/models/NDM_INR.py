@@ -917,7 +917,7 @@ class NeuralDiffusionModelINR(nn.Module):
             print("================================================================")
 
         # Forward: z_t ~ q(z_t | x)
-        theta_t, _, theta = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))  # noqa: N806
+        theta_t, _, theta = self._sample_zt(x, t_idx, t_norm.unsqueeze(1))
 
         # Three loss terms
         l_diff = self._l_diff(x, theta_t, t_idx, t_norm, theta)  # (batch,)
@@ -1107,7 +1107,7 @@ class NDMStaticINR(NeuralDiffusionModelINR):
             print("==================== DEBUG: _sample_zt.py 1====================")
             print(f"x (input images): min {x.min().item():.4f}, max {x.max().item():.4f}")
             print("================================================================")
-        theta = self.W(x)  # (batch, weight_dim)  # noqa: N806
+        theta = self.W(x)  # (batch, weight_dim)
         if GLOBAL_DEBUG_BOOL and ran:
             print("==================== DEBUG: _sample_zt.py 2====================")
             print(f"W(x) (encoded weights): min {theta.min().item():.4f}, max {theta.max().item():.4f}")
