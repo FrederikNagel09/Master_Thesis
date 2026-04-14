@@ -285,6 +285,7 @@ class NDMStaticTransInr(nn.Module):
 
             # Compute DDPM posterior mean in weight space
             B = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)  # noqa: N806
+            
             mu = alpha_s * theta_t_hat + B * (theta_t - alpha_t_val * theta_t_hat)
 
             # Sample theta at timestep s, adding noise scaled by posterior variance
