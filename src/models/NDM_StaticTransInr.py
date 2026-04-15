@@ -23,49 +23,34 @@ import random
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
-import torch.nn.functional as F
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
+from src_old.models.ndm__inr_time import WeightEncoder  # noqa: F401
 
-class WeightScaler(nn.Module):
-    def __init__(self, dim, momentum=0.1):
+
+class WeightVAE(nn.Module):
+    def __init__(self, weight_dim, latent_dim):
         super().__init__()
-        self.dim = dim
-        self.momentum = momentum
-        
-        # register_buffer ensures these stay with the model but are NOT trainable parameters
-        self.register_buffer("running_mean", torch.zeros(1, dim))
-        self.register_buffer("running_std", torch.ones(1, dim))
+        self.latent_dim = latent_dim
+        # Encodes raw weights into Gaussian latent space
+        self.encoder = nn.Sequential(
+            nn.Linear(weight_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, latent_dim * 2),  # mu and logvar
+        )
+        # Decodes latents back into raw INR weights
+        self.decoder = nn.Sequential(nn.Linear(latent_dim, 256), nn.ReLU(), nn.Linear(256, weight_dim))
 
-    def forward(self, x, reverse=False, training=True):
-        """
-        x: (batch_size, dim)
-        reverse: False for encoding (to N(0,1)), True for decoding (back to INR scale)
-        training: If True, updates the running stats.
-        """
-        if not reverse:
-            if training:
-                # Calculate current batch stats
-                # Using keepdim=True to ensure broadcasting works smoothly
-                batch_mean = x.mean(dim=0, keepdim=True)
-                batch_std = x.std(dim=0, keepdim=True) + 1e-6
+    def forward(self, x):
+        h = self.encoder(x)
+        mu, logvar = torch.chunk(h, 2, dim=-1)
+        z = mu + torch.exp(0.5 * logvar) * torch.randn_like(logvar)
+        return z, mu, logvar
 
-                # Update running statistics (Exponential Moving Average)
-                with torch.no_grad():
-                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean
-                    self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
-                
-                # Use current batch stats for standardization during training
-                return (x - batch_mean) / batch_std
-            else:
-                # Use remembered stats for standardization during inference/validation
-                return (x - self.running_mean) / self.running_std
-        
-        else:
-            # Re-scaling for INR (Reverse process)
-            # We ALWAYS use the running/remembered stats for sampling
-            return (x * self.running_std) + self.running_mean
+    def decode(self, z):
+        return self.decoder(z)
 
 
 class NDMStaticTransInr(nn.Module):
@@ -88,7 +73,7 @@ class NDMStaticTransInr(nn.Module):
     def __init__(
         self,
         NoisePredictor: nn.Module,  # noqa: N803
-        WeightEncoder: nn.Module,  # noqa: N803
+        WeightEncoder: nn.Module,  # noqa: F811, N803
         coord_grid: torch.Tensor,  # (H, W, 2)
         beta_1: float = 1e-4,
         beta_T: float = 2e-2,  # noqa: N803
@@ -112,26 +97,25 @@ class NDMStaticTransInr(nn.Module):
 
         # --- NEW: Learnable Scaler ---
         # We initialize it with the weight_dim from your encoder
-        self.scaler = WeightScaler(WeightEncoder.weight_dim) 
-        # (You can remove self.weight_vector_scaling now)
+        self.vae = WeightVAE(WeightEncoder.weight_dim, latent_dim=512)
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
         alpha_cumprod = alpha.cumprod(dim=0)
         # --- Add this debug block ---
-        print("\n" + "="*30)
+        print("\n" + "=" * 30)
         print("DIFFUSION SCHEDULE DEBUG")
         print(f"Beta range: {beta[0]:.6f} to {beta[-1]:.6f}")
-        print(f"Alpha_cumprod (Signal scale):")
+        print(f"Alpha_cumprod (Signal scale):")  # noqa: F541
         print(f"  t=0:   {torch.sqrt(alpha_cumprod[0]):.4f}")
         print(f"  t={T//2}: {torch.sqrt(alpha_cumprod[T//2]):.4f}")
         print(f"  t={T-1}: {torch.sqrt(alpha_cumprod[-1]):.4f}")
-        print(f"Sqrt_1_minus_alpha (Noise scale):")
+        print(f"Sqrt_1_minus_alpha (Noise scale):")  # noqa: F541
         print(f"  t=0:   {torch.sqrt(1 - alpha_cumprod[0]):.4f}")
         print(f"  t={T//2}: {torch.sqrt(1 - alpha_cumprod[T//2]):.4f}")
         print(f"  t={T-1}: {torch.sqrt(1 - alpha_cumprod[-1]):.4f}")
-        print("="*30 + "\n")
+        print("=" * 30 + "\n")
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
         self.register_buffer("alpha_cumprod", alpha_cumprod)
@@ -186,39 +170,37 @@ class NDMStaticTransInr(nn.Module):
         # Normalize time step to [0, 1] for network input
         t_norm = t_idx.float() / (self.T - 1)
 
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:  # print debug info for ~0.1% of batches
-            print("==================== DEBUG: NDM_INR.py ====================")
-            print(f"t_norm (normalized time): {t_norm.min():.4f} to {t_norm.max():.4f}")
-            print(f"t_idx (time step indices): {t_idx.min().item()} to {t_idx.max().item()}")
-            print("================================================================")
-
         # Send image through Weight Encoder to get Theta_prime
         theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
 
-        # --- NEW: Apply Learnable Scaling ---
-        # This converts "Physical INR Weights" -> "Standardized Diffusion Latents"
-        theta_prime = self.scaler(theta_prime_raw, reverse=False)
+        # 2. VAE Encoding: Get latent z and KL parameters
+        z, mu, logvar = self.vae(theta_prime_raw)
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-            print(f"DEBUG SCALED THETA: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
-
+            print("==================== DEBUG: VAE Encoding ====================")
+            print(f"theta_prime_raw: mean {theta_prime_raw.mean().item():.4f}, std {theta_prime_raw.std().item():.4f}")
+            print(f"Latent z: mean {z.mean().item():.4f}, std {z.std().item():.4f}")
+            print("================================================================")
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
+        z_t, epsilon = self._construct_theta_t(z, t_idx)
 
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_prime, theta_t, t_idx, t_norm, epsilon)  # (batch,)
-        l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
-        
-        l_rec = self._l_rec(x, theta_prime_raw)
+        l_diff = self._l_diff(z, z_t, t_idx, t_norm, epsilon)  # (batch,)
 
-        # apply prior mask and scaling:
-        prior_mask = (t_idx == self.T - 1).float()
-        l_prior = prior_mask * l_prior
+        # 4. Losses
+        # KL loss for VAE bottleneck
+        l_vae_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
 
-        # Combine to get ELBO (mean over batch)
-        elbo = l_diff + l_prior + l_rec
+        # Reconstruction loss (decode z back to weights for SIREN)
+        theta_rec = self.vae.decode(z)
+        l_rec = self._l_rec(x, theta_rec)
 
+        # Standard prior loss on z
+        l_prior = (t_idx == self.T - 1).float() * self._l_prior(theta_prime=z)
+
+        # Total loss
+        elbo = l_diff + l_prior + l_rec + (0.01 * l_vae_kl)  # Weight KL properly
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
@@ -246,7 +228,7 @@ class NDMStaticTransInr(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_prime, theta_t, t_idx, t_norm, epsilon):
+    def _l_diff(self, theta_prime, theta_t, t_idx, t_norm, epsilon):  # noqa: ARG002
         """
         Computes L_diff for time-independent W(x).
 
@@ -302,42 +284,27 @@ class NDMStaticTransInr(nn.Module):
 
         Returns the predicted clean weight vector theta_t_hat at t=0.
         """
-        weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
 
-        # 1. Start from pure Gaussian noise
-        curr_theta = torch.randn(n_samples, weight_dim, device=device)
+        # Start noise in LATENT dimension
+        curr_z = torch.randn(n_samples, self.vae.latent_dim, device=device)
 
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            if t % 100 == 0:
-                print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
-            
-            t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
-            t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling"):
+            t_norm = torch.full((n_samples, 1), float(t) / (self.T - 1), device=device)
+            eps_hat = self.noise_predictor(curr_z, t_norm)
 
-            # 2. Predict noise
-            eps_hat = self.noise_predictor(curr_theta, t_norm)
-
-            # 3. Retrieve schedule parameters
-            alpha = self.alpha[t] # This is (1 - beta_t)
+            alpha = self.alpha[t]
             alpha_bar = self.alpha_cumprod[t]
             beta = self.beta[t]
-            
-            # 4. Standard DDPM Reverse Step
-            if t > 0:
-                noise = torch.randn_like(curr_theta)
-            else:
-                noise = 0
-                
-            # The DDPM update formula
-            # x_{t-1} = 1/sqrt(alpha) * (x_t - (1-alpha)/sqrt(1-alpha_bar) * eps_hat) + sigma * noise
-            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
-            curr_theta = (1.0 / torch.sqrt(alpha)) * (curr_theta - coeff * eps_hat) + torch.sqrt(beta) * noise
 
-        # 5. SCALE BACK DOWN for the INR
-        final_weights = self.scaler(curr_theta, reverse=True)
-        # This is crucial because the diffusion was trained on theta/scaling
-        return final_weights
+            noise = torch.randn_like(curr_z) if t > 0 else 0
+            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
+
+            # Update latent z
+            curr_z = (1.0 / torch.sqrt(alpha)) * (curr_z - coeff * eps_hat) + torch.sqrt(beta) * noise
+
+        # FINAL STEP: Decode sampled latent to physical weights
+        return self.vae.decode(curr_z)
 
     def _inr_decode(
         self,
@@ -411,9 +378,6 @@ class NDMStaticTransInr(nn.Module):
         theta_t = alpha_t * theta_prime + sigma_t * epsilon
 
         return theta_t, epsilon
-
-
-
 
 
 """

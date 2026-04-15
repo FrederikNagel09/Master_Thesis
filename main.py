@@ -126,56 +126,57 @@ python main.py \
 
 ######################### TRANSFORMER ENCODER NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_static_transinr_v1_new  \
+    --run_name ndm_static_transinr_learn_scale  \
     --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 20 \
-    --batch_size 128 \
-    --lr 1e-4 \
+    --epochs 50 \
+    --batch_size 256 \
+    --lr 5e-5 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
     --subset_frac 1.0 \
-    --peak_lr 1e-4 \
+    --use_scheduler \
+    --peak_lr 5e-5 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
     --inr_hidden_dim 32 \
-    --inr_layers 4 \
+    --inr_layers 3 \
     --trans_dim 256 \
     --trans_n_head 4 \
     --trans_head_dim 32 \
-    --trans_ff_dim 256 \
-    --trans_enc_depth 6 \
-    --trans_dec_depth 6 \
+    --trans_ff_dim 128 \
+    --trans_enc_depth 4 \
+    --trans_dec_depth 4 \
     --trans_patch_size 4 \
-    --trans_n_groups 16 \
+    --trans_n_groups 32 \
     --trans_update_strategy scale \
     --predictor_variant transformer \
     --transformer_chunk_size 128 \
     --transformer_d_model 256 \
-    --transformer_n_heads 8 \
-    --transformer_n_layers 8 \
-    --transformer_d_ff 256 \
+    --transformer_n_heads 4 \
+    --transformer_n_layers 4 \
+    --transformer_d_ff 128 \
     --transformer_dropout 0.1 \
     --noise_t_embed 256
 
-
     
 python main.py \
-    --run_name ndm_static_transinr_v1_new  \
+    --run_name ndm_static_transinr_learn_scale  \
     --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 20 \
+    --epochs 50 \
     --batch_size 128 \
-    --lr 1e-4 \
+    --lr 5e-5 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 1.0 \
-    --peak_lr 1e-4 \
-    --T 1000 \
+    --subset_frac 0.1 \
+    --use_scheduler \
+    --peak_lr 5e-5 \
+    --T 500 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
@@ -184,11 +185,11 @@ python main.py \
     --trans_dim 256 \
     --trans_n_head 4 \
     --trans_head_dim 32 \
-    --trans_ff_dim 256 \
-    --trans_enc_depth 6 \
-    --trans_dec_depth 6 \
+    --trans_ff_dim 128 \
+    --trans_enc_depth 4 \
+    --trans_dec_depth 4 \
     --trans_patch_size 4 \
-    --trans_n_groups 16 \
+    --trans_n_groups 32 \
     --trans_update_strategy scale \
     --predictor_variant mlp \
     --noise_hidden_dim 256 \

@@ -159,11 +159,7 @@ class TransformerNoisePredictor(nn.Module):
 
         # ── Time embedding ────────────────────────────────────────────────────
         self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
-        self.time_proj = nn.Sequential(
-            nn.Linear(t_embed_dim, d_model),
-            nn.SiLU(),
-            nn.Linear(d_model, d_model)
-        )
+        self.time_proj = nn.Sequential(nn.Linear(t_embed_dim, d_model), nn.SiLU(), nn.Linear(d_model, d_model))
 
         # ── Per-token input projection ────────────────────────────────────────
         self.token_embed = nn.Linear(chunk_size, d_model)
@@ -180,24 +176,24 @@ class TransformerNoisePredictor(nn.Module):
             dropout=dropout,
             activation="gelu",
             batch_first=True,
-            norm_first=True, # Pre-norm is crucial for stability
+            norm_first=True,  # Pre-norm is crucial for stability
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
 
         # ── Stability Improvements ────────────────────────────────────────────
-        self.final_norm = nn.LayerNorm(d_model) # Prevents drift before readout
+        self.final_norm = nn.LayerNorm(d_model)  # Prevents drift before readout
         self.token_readout = nn.Linear(d_model, chunk_size)
-        
+
         # Zero-initialize the readout so the model starts by predicting zero noise
         nn.init.zeros_(self.token_readout.weight)
         nn.init.zeros_(self.token_readout.bias)
 
     def forward(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        B = z.shape[0]
-        
+        B = z.shape[0]  # noqa: N806
+
         # --- DEBUG: Input ---
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-            print(f"\n=== DEBUG: Noise Predictor Input ===")
+            print(f"\n=== DEBUG: Noise Predictor Input ===")  # noqa: F541
             print(f"z_in: min={z.min():.4f}, max={z.max():.4f}, mean={z.mean():.4f}, std={z.std():.4f}")
             print(f"t: min={t.min():.4f}, max={t.max():.4f}")
 
@@ -207,40 +203,40 @@ class TransformerNoisePredictor(nn.Module):
             z_pad = torch.cat([z, pad], dim=-1)
         else:
             z_pad = z
-        tokens = z_pad.view(B, self.n_tokens, self.chunk_size) 
+        tokens = z_pad.view(B, self.n_tokens, self.chunk_size)
 
         # ── Embeddings ────────────────────────────────────────────────────────
-        x = self.token_embed(tokens) 
-        
+        x = self.token_embed(tokens)
+
         t_emb = self.time_embed(t)
-        t_tok = self.time_proj(t_emb).unsqueeze(1) 
-        
-        x = torch.cat([t_tok, x], dim=1) 
-        x = x + self.pos_embed 
+        t_tok = self.time_proj(t_emb).unsqueeze(1)
+
+        x = torch.cat([t_tok, x], dim=1)
+        x = x + self.pos_embed
 
         # ── Transformer Processing ────────────────────────────────────────────
         x = self.transformer(x)
 
         # --- DEBUG: Post-Transformer Latents ---
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-            print(f"=== DEBUG: Latent Stats ===")
+            print(f"=== DEBUG: Latent Stats ===")  # noqa: F541
             print(f"Latents: min={x.min():.4f}, max={x.max():.4f}, std={x.std():.4f}")
 
         # ── Readout with Stability Fixes ──────────────────────────────────────
-        x = x[:, 1:, :] # Drop TIME token
-        x = self.final_norm(x) # Keep values in a sane range
-        x = self.token_readout(x) 
+        x = x[:, 1:, :]  # Drop TIME token
+        x = self.final_norm(x)  # Keep values in a sane range
+        x = self.token_readout(x)
 
         # ── Reassemble ────────────────────────────────────────────────────────
         eps_hat = x.reshape(B, self.padded_dim)[:, : self.weight_dim]
-        
+
         # --- DEBUG: Output ---
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             if torch.isnan(eps_hat).any():
                 print("!!! WARNING: NaN DETECTED IN NOISE PREDICTOR OUTPUT !!!")
             print(f"eps_hat: min={eps_hat.min():.4f}, max={eps_hat.max():.4f}")
             print("==============================\n")
-            
+
         return eps_hat
 
 

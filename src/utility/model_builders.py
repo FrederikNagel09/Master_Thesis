@@ -534,7 +534,7 @@ def build_noise_predictor(
         )
     elif variant == "transformer":
         return TransformerNoisePredictor(
-            weight_dim=weight_dim,
+            weight_dim=512,
             chunk_size=chunk_size,
             d_model=d_model,
             n_heads=n_heads,
