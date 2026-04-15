@@ -167,6 +167,7 @@ def train(
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
+        print(f"\n############## EPOCH: {epoch} ##############\n")
         for batch in data_loader:
             # ── Forward pass (model-type dispatch) ───────────────────────────
             if model_type == "inr_vae":

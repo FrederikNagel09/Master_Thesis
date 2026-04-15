@@ -197,7 +197,7 @@ class TransformerNoisePredictor(nn.Module):
         
         # --- DEBUG: Input ---
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-            print(f"\n=== DEBUG: Predictor Input ===")
+            print(f"\n=== DEBUG: Noise Predictor Input ===")
             print(f"z_in: min={z.min():.4f}, max={z.max():.4f}, mean={z.mean():.4f}, std={z.std():.4f}")
             print(f"t: min={t.min():.4f}, max={t.max():.4f}")
 

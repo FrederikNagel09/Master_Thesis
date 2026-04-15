@@ -24,8 +24,24 @@ import random
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+import torch.nn.functional as F
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
+
+class WeightScaler(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        # Initialize gamma to a small value so it doesn't explode early
+        self.gamma = nn.Parameter(torch.ones(1, dim) * 0.1) 
+        self.beta = nn.Parameter(torch.zeros(1, dim))
+
+    def forward(self, x, reverse=False):
+        if not reverse:
+            # Standardizing: (x - beta) / gamma
+            return (x - self.beta) / (self.gamma + 1e-6)
+        else:
+            # Re-scaling for INR: (x * gamma) + beta
+            return (x * self.gamma) + self.beta
 
 
 class NDMStaticTransInr(nn.Module):
@@ -70,12 +86,28 @@ class NDMStaticTransInr(nn.Module):
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor
 
-        self.weight_vector_scaling = 0.005
+        # --- NEW: Learnable Scaler ---
+        # We initialize it with the weight_dim from your encoder
+        self.scaler = WeightScaler(WeightEncoder.weight_dim) 
+        # (You can remove self.weight_vector_scaling now)
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
         alpha_cumprod = alpha.cumprod(dim=0)
+        # --- Add this debug block ---
+        print("\n" + "="*30)
+        print("DIFFUSION SCHEDULE DEBUG")
+        print(f"Beta range: {beta[0]:.6f} to {beta[-1]:.6f}")
+        print(f"Alpha_cumprod (Signal scale):")
+        print(f"  t=0:   {torch.sqrt(alpha_cumprod[0]):.4f}")
+        print(f"  t={T//2}: {torch.sqrt(alpha_cumprod[T//2]):.4f}")
+        print(f"  t={T-1}: {torch.sqrt(alpha_cumprod[-1]):.4f}")
+        print(f"Sqrt_1_minus_alpha (Noise scale):")
+        print(f"  t=0:   {torch.sqrt(1 - alpha_cumprod[0]):.4f}")
+        print(f"  t={T//2}: {torch.sqrt(1 - alpha_cumprod[T//2]):.4f}")
+        print(f"  t={T-1}: {torch.sqrt(1 - alpha_cumprod[-1]):.4f}")
+        print("="*30 + "\n")
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
         self.register_buffer("alpha_cumprod", alpha_cumprod)
@@ -137,31 +169,33 @@ class NDMStaticTransInr(nn.Module):
             print("================================================================")
 
         # Send image through Weight Encoder to get Theta_prime
-        theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
-        print(f"DEBUG THETA_PRIME: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
-        # 1. Calculate stats (don't backprop through these for the scaling factors)
-        mu = theta_prime.mean().detach()
-        sigma = theta_prime.std().detach() + 1e-8
+        theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
 
-        # 2. Normalize
-        theta_prime = theta_prime / self.weight_vector_scaling
+        # --- NEW: Apply Learnable Scaling ---
+        # This converts "Physical INR Weights" -> "Standardized Diffusion Latents"
+        theta_prime = self.scaler(theta_prime_raw, reverse=False)
+
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print(f"DEBUG SCALED THETA: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
+
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_t = self._construct_theta_t(theta_prime, t_idx)
+        theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
 
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_prime, theta_t, t_idx, t_norm)  # (batch,)
+        l_diff = self._l_diff(theta_prime, theta_t, t_idx, t_norm, epsilon)  # (batch,)
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
-        l_rec = self._l_rec(x, theta_prime)
+        
+        l_rec = self._l_rec(x, theta_prime_raw)
 
         # apply prior mask and scaling:
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = 5*l_diff + l_prior + l_rec
+        elbo = l_diff + l_prior + l_rec
 
-        return elbo.mean(), l_diff.mean().log(), l_prior.mean(), l_rec.mean()
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
     # Loss term Helpers:
@@ -174,7 +208,7 @@ class NDMStaticTransInr(nn.Module):
         Essentially we want the weight encoder to procuse good weights that the diffusion process, then can learn to recreate.
         """
         # Send theta_prime through the shared SIREN decoder to get reconstructed images.
-        x_recon = self._inr_decode(theta_prime * self.weight_vector_scaling)
+        x_recon = self._inr_decode(theta_prime)
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _l_rec.py 1====================")
             print(f"x_recon (reconstructed images): min {x_recon.min().item():.4f}, max {x_recon.max().item():.4f}")
@@ -188,7 +222,7 @@ class NDMStaticTransInr(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_prime, theta_t, t_idx, t_norm):
+    def _l_diff(self, theta_prime, theta_t, t_idx, t_norm, epsilon):
         """
         Computes L_diff for time-independent W(x).
 
@@ -204,40 +238,8 @@ class NDMStaticTransInr(nn.Module):
         # Predict noise at time step t_idx using the noise predictor network
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
-        # Initialize time step parameters
-        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
-        sigma_t = self.sigma[t_idx].unsqueeze(1)
-
-        # --- FIXED DEBUG PRINT ---
-        if True and random.random() < probability_threshold:
-            # Calculate magnitudes based on the existing coefficients
-            signal_component = (alpha_t * theta_prime).abs().mean()
-            noise_component = (sigma_t * (theta_t - alpha_t * theta_prime) / sigma_t.clamp(min=1e-6)).abs().mean()
-            
-            # A simpler way to see the noise magnitude if you don't want to back-calculate:
-            # noise_component = (theta_t - alpha_t * theta_prime).abs().mean()
-
-            ratio = signal_component / noise_component.clamp(min=1e-8)
-            print(f"--- DEBUG SNR (Step {t_idx[0].item()}) ---")
-            print(f"Signal Magnitude: {signal_component:.6f}")
-            print(f"Noise Magnitude:  {noise_component:.6f}")
-            print(f"SNR Ratio:        {ratio:.4f}")
-            print(f"---------------------------------------")
-        # -------------------------
-
-        # Given predicted noise eps_hat, we can compute the noise-free estimate of theta
-        # at time step t_idx, which we call theta_prime_hat (basically the reverse of the function _construct_theta_t)
-        theta_prime_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-
-        # Compute ELBO variance weighting term:
-        s_idx = (t_idx - 1).clamp(min=0)
-        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)
-
-        # Compute the simplified L_diff as the squared error between theta_prime_hat and theta_prime, weighted by the variance term.
-        diff = theta_prime - theta_prime_hat
-        l_diff = (diff**2).mean(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
-
-        return l_diff
+        # 5. SIMPLE MSE LOSS (No variance weighting needed!)
+        return F.mse_loss(eps_hat, epsilon)
 
     def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
         """
@@ -279,48 +281,39 @@ class NDMStaticTransInr(nn.Module):
         weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
 
-        # Start from pure Gaussian noise in weight space
-        theta_t = torch.randn(n_samples, weight_dim, device=device)
+        # 1. Start from pure Gaussian noise
+        curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM (Static) Sampling", total=self.T):
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
             if t % 100 == 0:
-                print(f"\n\nDEBUG SAMPLE t={t}: mean={theta_t.mean():.4f}, std={theta_t.std():.4f}")
+                print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
+            
             t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
             t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
 
-            # Predict noise at timestep t
-            eps_hat = self.noise_predictor(theta_t, t_norm)
+            # 2. Predict noise
+            eps_hat = self.noise_predictor(curr_theta, t_norm)
 
-            # Retrieve schedule values for timestep t
-            alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
-            sigma_t = self.sigma[t].unsqueeze(0)
-
-            # Recover predicted clean weight vector (reverse of _construct_theta_t)
-            theta_t_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-
-            # At t=0, return the clean estimate directly — no further stepping needed
-            if t == 0:
-                return theta_t_hat * 0.05
-
-            # Compute schedule values for previous timestep s = t-1
-            s = t - 1
-            s_idx = torch.full((n_samples,), s, dtype=torch.long, device=device)
-            alpha_s = self.sqrt_alpha_cumprod[s].view(1, 1)
-            sigma_s_sq = self.sigma_sq[s].view(1, 1)
-            sigma_t_val = self.sigma[t].view(1, 1)
-            alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)
-            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)
-
-            # Compute DDPM posterior mean in weight space
-            B = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)  # noqa: N806
+            # 3. Retrieve schedule parameters
+            alpha = self.alpha[t] # This is (1 - beta_t)
+            alpha_bar = self.alpha_cumprod[t]
+            beta = self.beta[t]
             
-            mu = alpha_s * theta_t_hat + B * (theta_t - alpha_t_val * theta_t_hat)
+            # 4. Standard DDPM Reverse Step
+            if t > 0:
+                noise = torch.randn_like(curr_theta)
+            else:
+                noise = 0
+                
+            # The DDPM update formula
+            # x_{t-1} = 1/sqrt(alpha) * (x_t - (1-alpha)/sqrt(1-alpha_bar) * eps_hat) + sigma * noise
+            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
+            curr_theta = (1.0 / torch.sqrt(alpha)) * (curr_theta - coeff * eps_hat) + torch.sqrt(beta) * noise
 
-            # Sample theta at timestep s, adding noise scaled by posterior variance
-            noise = torch.randn_like(theta_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(theta_t)
-            theta_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
-
-        return theta_t_hat  # safety fallback
+        # 5. SCALE BACK DOWN for the INR
+        final_weights = self.scaler(curr_theta, reverse=True)
+        # This is crucial because the diffusion was trained on theta/scaling
+        return final_weights
 
     def _inr_decode(
         self,
@@ -393,4 +386,45 @@ class NDMStaticTransInr(nn.Module):
         # Construct theta_t using the noise schedule formula
         theta_t = alpha_t * theta_prime + sigma_t * epsilon
 
-        return theta_t
+        return theta_t, epsilon
+
+
+
+
+
+"""
+        # Initialize time step parameters
+        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)
+
+        # --- FIXED DEBUG PRINT ---
+        if True and random.random() < probability_threshold:
+            # Calculate magnitudes based on the existing coefficients
+            signal_component = (alpha_t * theta_prime).abs().mean()
+            noise_component = (sigma_t * (theta_t - alpha_t * theta_prime) / sigma_t.clamp(min=1e-6)).abs().mean()
+            
+            # A simpler way to see the noise magnitude if you don't want to back-calculate:
+            # noise_component = (theta_t - alpha_t * theta_prime).abs().mean()
+
+            ratio = signal_component / noise_component.clamp(min=1e-8)
+            print(f"--- DEBUG SNR (Step {t_idx[0].item()}) ---")
+            print(f"Signal Magnitude: {signal_component:.6f}")
+            print(f"Noise Magnitude:  {noise_component:.6f}")
+            print(f"SNR Ratio:        {ratio:.4f}")
+            print(f"---------------------------------------")
+        # -------------------------
+
+        # Given predicted noise eps_hat, we can compute the noise-free estimate of theta
+        # at time step t_idx, which we call theta_prime_hat (basically the reverse of the function _construct_theta_t)
+        theta_prime_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
+
+        # Compute ELBO variance weighting term:
+        s_idx = (t_idx - 1).clamp(min=0)
+        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)
+
+        # Compute the simplified L_diff as the squared error between theta_prime_hat and theta_prime, weighted by the variance term.
+        diff = theta_prime - theta_prime_hat
+        l_diff = (diff**2).mean(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
+
+        return l_diff
+        """
