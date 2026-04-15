@@ -218,7 +218,7 @@ def train(
             loss.backward()
 
             # ── Gradient diagnostics (after backward, before clipping) ───────
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold or loss_is_nan:
+            if True:
                 total_norm_preclip = 0.0
                 max_grad_param = ("", 0.0)
                 nan_grad_params = []

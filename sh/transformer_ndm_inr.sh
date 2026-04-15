@@ -16,7 +16,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py \
-    --run_name ndm_static_transinr_learn_scale  \
+    --run_name ndm_static_transinr \
     --model ndm_static_transinr\
     --dataset mnist \
     --epochs 30 \
@@ -28,7 +28,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --subset_frac 1.0 \
     --use_scheduler \
     --peak_lr 5e-5 \
-    --T 500 \
+    --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \

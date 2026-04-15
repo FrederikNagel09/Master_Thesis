@@ -278,5 +278,5 @@ class TransInrEncoder(nn.Module):
 
         # 5. Flatten to a single vector per batch item
         flat = self._flatten_params(param_dict)
-        print(f"flat_weights: min={flat.min():.4f}, max={flat.max():.4f}, nan={flat.isnan().any()}")
+        #print(f"flat_weights: min={flat.min():.4f}, max={flat.max():.4f}, nan={flat.isnan().any()}")
         return flat
