@@ -138,44 +138,6 @@ class NoisePredictor(nn.Module):
 
 
 class TransformerNoisePredictor(nn.Module):
-    """
-    Transformer-based noise predictor  epsilon_theta(z_t, t).
-
-    Tokenization
-    ------------
-    The flat weight vector of dimension `weight_dim` is split into
-    fixed-size chunks of `chunk_size` dims each, giving a sequence of
-    n_tokens = ceil(weight_dim / chunk_size) tokens.  If weight_dim is
-    not divisible by chunk_size the vector is zero-padded to the next
-    multiple before splitting, and the padding is discarded at the output.
-
-    Time conditioning
-    -----------------
-    The time embedding is projected to d_model and prepended as a
-    dedicated [TIME] token (index 0).  This lets every weight-space
-    token attend to the global time signal via self-attention.
-
-    Architecture
-    ------------
-    z (flat)  ->  pad & chunk  ->  linear per-token embed  ->  + pos embed
-              ->  prepend [TIME] token
-              ->  N x TransformerEncoderLayer
-              ->  drop [TIME] token
-              ->  linear per-token readout
-              ->  reassemble  ->  drop padding  ->  weight vector (weight_dim)
-
-    Parameters
-    ----------
-    weight_dim  : dimensionality of the weight vector
-    chunk_size  : tokens are `chunk_size`-dimensional slices of the weight vec
-    d_model     : transformer hidden dimension
-    n_heads     : number of attention heads  (must divide d_model)
-    n_layers    : number of transformer encoder layers
-    d_ff        : feedforward dimension inside each transformer layer
-    dropout     : dropout probability
-    t_embed_dim : sinusoidal time embedding dimension
-    """
-
     def __init__(
         self,
         weight_dim: int,
@@ -192,18 +154,21 @@ class TransformerNoisePredictor(nn.Module):
         self.chunk_size = chunk_size
         self.d_model = d_model
 
-        # Pad weight_dim to nearest multiple of chunk_size
         self.padded_dim = math.ceil(weight_dim / chunk_size) * chunk_size
         self.n_tokens = self.padded_dim // chunk_size
 
         # ── Time embedding ────────────────────────────────────────────────────
         self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
-        self.time_proj = nn.Linear(t_embed_dim, d_model)
+        self.time_proj = nn.Sequential(
+            nn.Linear(t_embed_dim, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model)
+        )
 
-        # ── Per-token input projection: chunk_size -> d_model ─────────────────
+        # ── Per-token input projection ────────────────────────────────────────
         self.token_embed = nn.Linear(chunk_size, d_model)
 
-        # ── Learnable positional embeddings (+ 1 for the TIME token) ──────────
+        # ── Positional embeddings ─────────────────────────────────────────────
         self.pos_embed = nn.Parameter(torch.zeros(1, self.n_tokens + 1, d_model))
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
@@ -214,25 +179,27 @@ class TransformerNoisePredictor(nn.Module):
             dim_feedforward=d_ff,
             dropout=dropout,
             activation="gelu",
-            batch_first=True,  # (B, S, d_model) convention throughout
-            norm_first=True,  # pre-norm for training stability
+            batch_first=True,
+            norm_first=True, # Pre-norm is crucial for stability
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
 
-        # ── Per-token output projection: d_model -> chunk_size ────────────────
+        # ── Stability Improvements ────────────────────────────────────────────
+        self.final_norm = nn.LayerNorm(d_model) # Prevents drift before readout
         self.token_readout = nn.Linear(d_model, chunk_size)
+        
+        # Zero-initialize the readout so the model starts by predicting zero noise
+        nn.init.zeros_(self.token_readout.weight)
+        nn.init.zeros_(self.token_readout.bias)
 
     def forward(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """
-        Parameters
-        ----------
-        z : (batch, weight_dim)   noisy weight vector at time t
-        t : (batch, 1)            normalised time in [0, 1]
-        Returns
-        -------
-        eps_hat : (batch, weight_dim)  predicted noise
-        """
-        B = z.shape[0]  # noqa: N806
+        B = z.shape[0]
+        
+        # --- DEBUG: Input ---
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print(f"\n=== DEBUG: Predictor Input ===")
+            print(f"z_in: min={z.min():.4f}, max={z.max():.4f}, mean={z.mean():.4f}, std={z.std():.4f}")
+            print(f"t: min={t.min():.4f}, max={t.max():.4f}")
 
         # ── Pad and tokenize ──────────────────────────────────────────────────
         if self.padded_dim > self.weight_dim:
@@ -240,31 +207,41 @@ class TransformerNoisePredictor(nn.Module):
             z_pad = torch.cat([z, pad], dim=-1)
         else:
             z_pad = z
-        tokens = z_pad.view(B, self.n_tokens, self.chunk_size)  # (B, n_tokens, chunk_size)
+        tokens = z_pad.view(B, self.n_tokens, self.chunk_size) 
 
-        # ── Embed tokens ──────────────────────────────────────────────────────
-        x = self.token_embed(tokens)  # (B, n_tokens, d_model)
+        # ── Embeddings ────────────────────────────────────────────────────────
+        x = self.token_embed(tokens) 
+        
+        t_emb = self.time_embed(t)
+        t_tok = self.time_proj(t_emb).unsqueeze(1) 
+        
+        x = torch.cat([t_tok, x], dim=1) 
+        x = x + self.pos_embed 
 
-        # ── Build TIME token and prepend ──────────────────────────────────────
-        t_emb = self.time_embed(t)  # (B, t_embed_dim)
-        t_tok = self.time_proj(t_emb).unsqueeze(1)  # (B, 1, d_model)
-        x = torch.cat([t_tok, x], dim=1)  # (B, n_tokens+1, d_model)
+        # ── Transformer Processing ────────────────────────────────────────────
+        x = self.transformer(x)
 
-        # ── Add positional embeddings ─────────────────────────────────────────
-        x = x + self.pos_embed  # (B, n_tokens+1, d_model)
+        # --- DEBUG: Post-Transformer Latents ---
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print(f"=== DEBUG: Latent Stats ===")
+            print(f"Latents: min={x.min():.4f}, max={x.max():.4f}, std={x.std():.4f}")
 
-        # ── Transformer ───────────────────────────────────────────────────────
-        x = self.transformer(x)  # (B, n_tokens+1, d_model)
+        # ── Readout with Stability Fixes ──────────────────────────────────────
+        x = x[:, 1:, :] # Drop TIME token
+        x = self.final_norm(x) # Keep values in a sane range
+        x = self.token_readout(x) 
 
-        # ── Drop TIME token, project back to chunk_size ───────────────────────
-        x = x[:, 1:, :]  # (B, n_tokens, d_model)
-        x = self.token_readout(x)  # (B, n_tokens, chunk_size)
-
-        # ── Reassemble and drop padding ───────────────────────────────────────
+        # ── Reassemble ────────────────────────────────────────────────────────
         eps_hat = x.reshape(B, self.padded_dim)[:, : self.weight_dim]
-        return eps_hat  # (B, weight_dim)
-
-
+        
+        # --- DEBUG: Output ---
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            if torch.isnan(eps_hat).any():
+                print("!!! WARNING: NaN DETECTED IN NOISE PREDICTOR OUTPUT !!!")
+            print(f"eps_hat: min={eps_hat.min():.4f}, max={eps_hat.max():.4f}")
+            print("==============================\n")
+            
+        return eps_hat
 # =============================================================================
 # Data Transformation Network  F_phi(x, t) / W(x)
 # =============================================================================

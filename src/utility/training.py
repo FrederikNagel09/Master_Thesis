@@ -106,7 +106,7 @@ def train(
                 group.setdefault("initial_lr", group["lr"])
         scheduler = _build_scheduler(
             optimizer,
-            warmup_steps=warmup_steps,
+            warmup_steps=0.1*total_steps,
             total_steps=total_steps,
             peak_lr=_peak_lr,
         )
@@ -240,7 +240,7 @@ def train(
                 else:
                     print(f"  No NaN/Inf grads detected")
                 print("======================================================================")
-
+            
             if grad_clip > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()

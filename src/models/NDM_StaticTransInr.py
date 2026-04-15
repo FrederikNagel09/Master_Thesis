@@ -70,6 +70,8 @@ class NDMStaticTransInr(nn.Module):
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor
 
+        self.weight_vector_scaling = 0.005
+
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
@@ -136,6 +138,13 @@ class NDMStaticTransInr(nn.Module):
 
         # Send image through Weight Encoder to get Theta_prime
         theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
+        print(f"DEBUG THETA_PRIME: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
+        # 1. Calculate stats (don't backprop through these for the scaling factors)
+        mu = theta_prime.mean().detach()
+        sigma = theta_prime.std().detach() + 1e-8
+
+        # 2. Normalize
+        theta_prime = theta_prime / self.weight_vector_scaling
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
         theta_t = self._construct_theta_t(theta_prime, t_idx)
@@ -150,9 +159,9 @@ class NDMStaticTransInr(nn.Module):
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = l_diff + l_prior + l_rec
+        elbo = 5*l_diff + l_prior + l_rec
 
-        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+        return elbo.mean(), l_diff.mean().log(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
     # Loss term Helpers:
@@ -165,7 +174,7 @@ class NDMStaticTransInr(nn.Module):
         Essentially we want the weight encoder to procuse good weights that the diffusion process, then can learn to recreate.
         """
         # Send theta_prime through the shared SIREN decoder to get reconstructed images.
-        x_recon = self._inr_decode(theta_prime)
+        x_recon = self._inr_decode(theta_prime * self.weight_vector_scaling)
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: _l_rec.py 1====================")
             print(f"x_recon (reconstructed images): min {x_recon.min().item():.4f}, max {x_recon.max().item():.4f}")
@@ -198,6 +207,23 @@ class NDMStaticTransInr(nn.Module):
         # Initialize time step parameters
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
+
+        # --- FIXED DEBUG PRINT ---
+        if True and random.random() < probability_threshold:
+            # Calculate magnitudes based on the existing coefficients
+            signal_component = (alpha_t * theta_prime).abs().mean()
+            noise_component = (sigma_t * (theta_t - alpha_t * theta_prime) / sigma_t.clamp(min=1e-6)).abs().mean()
+            
+            # A simpler way to see the noise magnitude if you don't want to back-calculate:
+            # noise_component = (theta_t - alpha_t * theta_prime).abs().mean()
+
+            ratio = signal_component / noise_component.clamp(min=1e-8)
+            print(f"--- DEBUG SNR (Step {t_idx[0].item()}) ---")
+            print(f"Signal Magnitude: {signal_component:.6f}")
+            print(f"Noise Magnitude:  {noise_component:.6f}")
+            print(f"SNR Ratio:        {ratio:.4f}")
+            print(f"---------------------------------------")
+        # -------------------------
 
         # Given predicted noise eps_hat, we can compute the noise-free estimate of theta
         # at time step t_idx, which we call theta_prime_hat (basically the reverse of the function _construct_theta_t)
@@ -257,6 +283,8 @@ class NDMStaticTransInr(nn.Module):
         theta_t = torch.randn(n_samples, weight_dim, device=device)
 
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM (Static) Sampling", total=self.T):
+            if t % 100 == 0:
+                print(f"\n\nDEBUG SAMPLE t={t}: mean={theta_t.mean():.4f}, std={theta_t.std():.4f}")
             t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
             t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
 
@@ -272,7 +300,7 @@ class NDMStaticTransInr(nn.Module):
 
             # At t=0, return the clean estimate directly — no further stepping needed
             if t == 0:
-                return theta_t_hat
+                return theta_t_hat * 0.05
 
             # Compute schedule values for previous timestep s = t-1
             s = t - 1
