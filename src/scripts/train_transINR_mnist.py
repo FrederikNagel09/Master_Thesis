@@ -1,21 +1,11 @@
-"""
-train_mnist.py
-==============
-Training script for TransInr on MNIST.
-
-All hyperparameters are declared at the top of this file under
-the CONFIG section — no command-line parsing needed.
-"""
-
 import math
 import os
-import random
 import sys
 import warnings
 
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # noqa: N812
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as T  # noqa: N812
@@ -26,71 +16,43 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 
 sys.path.append(".")
 
-# Local modules (must be in the same directory / on PYTHONPATH)
+
 from src.models.trans_inr import TransInr  # noqa: E402
 
 # =============================================================================
-#  CONFIG — edit everything here
+#  CONFIG
 # =============================================================================
-
-# ---------- Data -------------------------------------------------------------
-DATA_ROOT = "./data"  # Where MNIST will be downloaded
-SUBSET_SIZE = None  # int → use only N training samples;
-# None → use the full 60 000
-
-# ---------- Training ---------------------------------------------------------
+DATA_ROOT = "./data"
+SUBSET_SIZE = 1000
 BATCH_SIZE = 128
-NUM_EPOCHS = 200
+NUM_EPOCHS = 20
 LEARNING_RATE = 1e-4
-LR_WARMUP_STEPS = 2000  # linear warm-up before cosine decay
+LR_WARMUP_STEPS = 2000
 WEIGHT_DECAY = 1e-4
-GRAD_CLIP = 1.0  # max grad norm; 0 to disable
+GRAD_CLIP = 1.0
 SEED = 42
 
-# ---------- Logging / Checkpointing ------------------------------------------
-LOG_EVERY = 50  # log loss every N batches
-EVAL_EVERY = 1  # run validation every N epochs
-SAVE_EVERY = 5  # save checkpoint every N epochs
-CHECKPOINT_DIR = "./src"
-RESUME_CKPT = None  # path to checkpoint to resume from, or None
+# VAE Specifics
+LATENT_CHAN = 16
+LATENT_RES = 16
+KL_WEIGHT_TARGET = 0.0001
+KL_ANNEAL_STEPS = 5000  # Steps to reach full KL weight
 
-# ---------- Model — Tokenizer ------------------------------------------------
-IMAGE_SIZE = 28  # MNIST is 28x28
-IN_CHANNELS = 1  # grayscale
-PATCH_SIZE = 4  # 4x4 patches → (28/4)² = 49 tokens
-# NOTE: IMAGE_SIZE must be divisible by PATCH_SIZE
-
-# ---------- Model — VAE ------------------------------------------------------
-LATENT_DIM = 256  # Size of the bottleneck z
-KL_WEIGHT = 0.0001  # Hyperparameter to balance MSE and KL divergence
-
-# ---------- Model — Transformer ----------------------------------------------
+# Model Arch
+IMAGE_SIZE = 28
+PATCH_SIZE = 2
 DIM = 256
 N_HEAD = 8
 HEAD_DIM = 32
 FF_DIM = 512
 ENCODER_DEPTH = 4
 DECODER_DEPTH = 4
-DROPOUT = 0.0
-UPDATE_STRATEGY = "scale"  # "normalize" | "scale" | "identity"
-
-# ---------- Model — SIREN INR ------------------------------------------------
 SIREN_HIDDEN_DIM = 256
 SIREN_DEPTH = 5
-SIREN_IN_DIM = 2  # (x, y) coordinates
-SIREN_OUT_DIM = 1  # predict grayscale pixel intensity
-SIREN_OMEGA = 30.0
+N_GROUPS = 8
 
-# ---------- Weight-token groups ----------------------------------------------
-N_GROUPS = 8  # number of wtokens per INR layer parameter
-# New Config for the Latent Tokenizer
-LATENT_CHAN = 16  # Dimension of the latent space (z channels)
-LATENT_RES = 16  # Resolution of the latent grid (16x16)
-
+CHECKPOINT_DIR = "./src/train_results"
 # =============================================================================
-#  END CONFIG
-# =============================================================================
-import torch.nn.functional as F  # noqa: E402, N812
 
 
 class MNISTToLatentEncoder(nn.Module):
@@ -98,11 +60,11 @@ class MNISTToLatentEncoder(nn.Module):
         super().__init__()
         self.latent_res = latent_res
         self.enc = nn.Sequential(
-            nn.Conv2d(1, 64, 3, stride=2, padding=1),  # 14x14
+            nn.Conv2d(1, 64, 3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Conv2d(64,128, 3, stride=1, padding=1),  # 14x14
+            nn.Conv2d(64, 128, 3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(128, 64, 3, stride=1, padding=1),  # 14x14
+            nn.Conv2d(128, 64, 3, stride=1, padding=1),
             nn.ReLU(),
         )
         self.fc_mu = nn.Conv2d(64, latent_chan, 1)
@@ -115,158 +77,68 @@ class MNISTToLatentEncoder(nn.Module):
 
     def forward(self, x):
         features = self.enc(x)
-        # Force the resolution to match LATENT_RES (16x16)
         features = F.interpolate(features, size=(self.latent_res, self.latent_res), mode="bilinear")
-
         mu = self.fc_mu(features)
         logvar = self.fc_logvar(features)
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
 
-class TransInrVAE(nn.Module):
-    def __init__(self, encoder, trans_inr, latent_dim, transformer_dim):
-        super().__init__()
-        self.encoder = encoder
-        self.trans_inr = trans_inr
-        self.latent_to_tokens = nn.Linear(latent_dim, transformer_dim)
+class VAE(nn.Module):
+    """Wrapper to hold both models and the config for easy saving/loading."""
 
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.encoder = MNISTToLatentEncoder(latent_chan=config["latent_chan"], latent_res=config["latent_res"])
+
+        tokenizer_cfg = {
+            "target": "src.models.trans_inr_helpers.LatentTokenizer",
+            "params": {
+                "latent_dim": config["latent_chan"],
+                "latent_size": config["latent_res"],
+                "patch_size": config["patch_size"],
+                "dim": config["dim"],
+                "n_head": config["n_head"],
+                "head_dim": config["head_dim"],
+            },
+        }
+        # ... (rest of the inr_cfg and transformer_cfg using config dict keys)
+        # Assuming build_model logic is inside here for brevity
+        self.trans_inr = TransInr(
+            tokenizer=tokenizer_cfg,
+            inr={
+                "target": "src.models.trans_inr_helpers.SIREN",
+                "params": {
+                    "depth": config["siren_depth"],
+                    "in_dim": 2,
+                    "out_dim": 1,
+                    "hidden_dim": config["siren_hidden"],
+                    "omega": 30.0,
+                    "out_bias": 0,
+                },
+            },
+            n_groups=config["n_groups"],
+            data_shape=(config["img_size"], config["img_size"]),
+            transformer={
+                "target": "src.models.trans_inr_helpers.Transformer",
+                "params": {
+                    "dim": config["dim"],
+                    "encoder_depth": config["enc_depth"],
+                    "decoder_depth": config["dec_depth"],
+                    "n_head": config["n_head"],
+                    "head_dim": config["head_dim"],
+                    "ff_dim": config["ff_dim"],
+                    "dropout": 0.0,
+                },
+            },
+            update_strategy="scale",
+        )
 
     def forward(self, x):
-        mu, logvar = self.encoder(x)
-        z = self.reparameterize(mu, logvar)
-
-        # Map z to the embedding space of your Transformer
-        # We treat z as a "global context token" or a seed for the INR
-        z_embed = self.latent_to_tokens(z).unsqueeze(1)
-
-        # Pass to your existing model
-        # Note: You may need to adjust your TransInr.forward to accept
-        # these embeddings instead of raw images.
-        return self.trans_inr(z_embed), mu, logvar
-
-
-@torch.no_grad()
-def plot_reconstructions(model, encoder, dataset, device, n=5):
-    encoder.eval()
-    model.eval()
-    indices = random.sample(range(len(dataset)), n * n)
-
-    # Keep on device for the forward pass
-    raw_images = torch.stack([dataset[i][0] for i in indices]).to(device)
-
-    # Pass through VAE
-    z, _, _ = encoder(raw_images)
-    recons = model(z).cpu()  # Move result to CPU
-    images = raw_images.cpu()  # Move originals to CPU for plotting
-
-    _fig, axes = plt.subplots(n, n * 2 + 1, figsize=(n * 2 * 1.5 + 1, n * 1.5))
-
-    for row in range(n):
-        for col in range(n):
-            i = row * n + col
-            # images[i, 0] is now a CPU tensor, so .numpy() (used by imshow) will work
-            axes[row, col].imshow(images[i, 0], cmap="gray", vmin=-1, vmax=1)
-            axes[row, col].axis("off")
-
-            axes[row, col + n + 1].imshow(recons[i, 0], cmap="gray", vmin=-1, vmax=1)
-            axes[row, col + n + 1].axis("off")
-
-    # Divider column
-    for row in range(n):
-        axes[row, n].axis("off")
-
-    # Titles centered over each grid
-    axes[0, n // 2].set_title("Originals", fontsize=12, fontweight="bold")
-    axes[0, n + 1 + n // 2].set_title("Reconstructions", fontsize=12, fontweight="bold")
-
-    plt.tight_layout()
-    plt.savefig("src/results/trans_inr_reconstructions.png", dpi=150)
-    print("[plot] Saved → reconstructions.png")
-    model.train()
-
-
-def print_model_stats(model):
-    def count(params):
-        return sum(p.numel() for p in params)
-
-    tokenizer_p = count(model.tokenizer.parameters())
-    transformer_p = count(model.transformer.parameters())
-    base_p = count(model.base_params.values())
-    wtoken_p = model.wtokens.numel()
-    postfc_p = count(model.wtoken_postfc.parameters())
-    inr_layers = list(model.inr.param_shapes.items())
-
-    print("\n" + "=" * 50)
-    print("  Model Statistics")
-    print("=" * 50)
-    print(f"  Tokenizer:          {tokenizer_p:>10,} params")
-    print(f"  Transformer:        {transformer_p:>10,} params")
-    print(f"  Base INR params:    {base_p:>10,} params")
-    print(f"  Weight tokens:      {wtoken_p:>10,} params")
-    print(f"  Wtoken post-fc:     {postfc_p:>10,} params")
-    print(f"  {'─'*38}")
-    print(f"  Total:              {tokenizer_p+transformer_p+base_p+wtoken_p+postfc_p:>10,} params")
-    print("\n  INR architecture (SIREN):")
-    for name, shape in inr_layers:
-        print(f"    {name}: {shape[0]-1} → {shape[1]}  ({(shape[0])*shape[1]:,} params incl. bias)")
-    print(f"  N weight-token groups: {model.wtokens.shape[0]}")
-    print("=" * 50 + "\n")
-
-
-def build_model(device):
-    """Construct TransInr from the CONFIG constants above."""
-
-    tokenizer_cfg = {
-        "target": "src.models.trans_inr_helpers.LatentTokenizer",  # Update this path
-        "params": {
-            "latent_dim": LATENT_CHAN,
-            "latent_size": LATENT_RES,
-            "patch_size": 2,  # 14/2 = 7x7 tokens
-            "n_head": N_HEAD,
-            "head_dim": HEAD_DIM,
-        },
-    }
-
-    inr_cfg = {
-        "target": "src.models.trans_inr_helpers.SIREN",
-        "params": {
-            "depth": SIREN_DEPTH,
-            "in_dim": SIREN_IN_DIM,
-            "out_dim": SIREN_OUT_DIM,
-            "hidden_dim": SIREN_HIDDEN_DIM,
-            "omega": SIREN_OMEGA,
-            "out_bias": 0,
-        },
-    }
-
-    transformer_cfg = {
-        "target": "src.models.trans_inr_helpers.Transformer",
-        "params": {
-            "dim": DIM,
-            "encoder_depth": ENCODER_DEPTH,
-            "decoder_depth": DECODER_DEPTH,
-            "n_head": N_HEAD,
-            "head_dim": HEAD_DIM,
-            "ff_dim": FF_DIM,
-            "dropout": DROPOUT,
-        },
-    }
-
-    model = TransInr(
-        tokenizer=tokenizer_cfg,
-        inr=inr_cfg,
-        n_groups=N_GROUPS,
-        data_shape=(IMAGE_SIZE, IMAGE_SIZE),
-        transformer=transformer_cfg,
-        update_strategy=UPDATE_STRATEGY,
-    ).to(device)
-
-    return model
+        z, mu, logvar = self.encoder(x)
+        pred = self.trans_inr(z)
+        return pred, mu, logvar
 
 
 def build_dataloaders():
@@ -372,7 +244,7 @@ def evaluate(encoder, model, loader, criterion, device):
         images = images.to(device)
 
         # New: Get latent from encoder first
-        z, mu, logvar = encoder(images)
+        z, _, _ = encoder(images)
         pred = model(z)
 
         loss = criterion(pred, images)
@@ -382,92 +254,72 @@ def evaluate(encoder, model, loader, criterion, device):
 
 
 def train():
-    # ---- reproducibility --------------------------------------------------
-    torch.manual_seed(SEED)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(SEED)
-
+    # 1. Setup Device & Data
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"[device] {device}")
 
     # ---- data -------------------------------------------------------------
-    train_loader, val_loader, val_full = build_dataloaders()
+    train_loader, _, _ = build_dataloaders()
     steps_per_epoch = len(train_loader)
-    total_steps = steps_per_epoch * NUM_EPOCHS
 
-    # ---- model ------------------------------------------------------------
-    encoder = MNISTToLatentEncoder(latent_chan=LATENT_CHAN, latent_res=LATENT_RES).to(device)
-    trans_inr = build_model(device)
-    # Optimization
-    params = list(encoder.parameters()) + list(trans_inr.parameters())
-    optimizer = optim.AdamW(params, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    # 2. Pack Config
+    cfg = {
+        "latent_chan": LATENT_CHAN,
+        "latent_res": LATENT_RES,
+        "img_size": IMAGE_SIZE,
+        "patch_size": PATCH_SIZE,
+        "dim": DIM,
+        "n_head": N_HEAD,
+        "head_dim": HEAD_DIM,
+        "ff_dim": FF_DIM,
+        "enc_depth": ENCODER_DEPTH,
+        "dec_depth": DECODER_DEPTH,
+        "siren_hidden": SIREN_HIDDEN_DIM,
+        "siren_depth": SIREN_DEPTH,
+        "n_groups": N_GROUPS,
+    }
 
-    criterion = nn.MSELoss()
-
-    optimizer = optim.AdamW(
-        params,
-        lr=LEARNING_RATE,
-        weight_decay=WEIGHT_DECAY,
-    )
-    scheduler = WarmupCosineScheduler(optimizer, LR_WARMUP_STEPS, total_steps)
-
-    start_epoch = 0
-    if RESUME_CKPT is not None:
-        start_epoch = load_checkpoint(RESUME_CKPT, encoder, optimizer, scheduler)
+    model = VAE(cfg).to(device)
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 
     print(f"\n[train] Starting — {NUM_EPOCHS} epochs, " f"{steps_per_epoch} steps/epoch, batch={BATCH_SIZE}\n")
+    global_step = 0
+    for epoch in range(NUM_EPOCHS):
+        model.train()
+        total_recon, total_kl = 0, 0
 
-    # ---- training loop ----------------------------------------------------
-    for epoch in range(start_epoch, NUM_EPOCHS):
-        encoder.train()
-        trans_inr.train()
-        epoch_loss = 0.0
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}")
+        for images, _ in pbar:
+            images = images.to(device)
 
-        with tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", leave=False) as pbar:
-            for step, (images, _) in enumerate(pbar):  # noqa: B007
-                images = images.to(device)  # (B, 1, 28, 28)
+            # KL Annealing logic
+            kl_weight = min(KL_WEIGHT_TARGET, KL_WEIGHT_TARGET * (global_step / KL_ANNEAL_STEPS))
 
-                # Forward
-                # Inside step loop:
-                # 1. Encode image to latent grid
-                z, mu, logvar = encoder(images)
+            pred, mu, logvar = model(images)
 
-                # 2. Decode latent grid back to image via TransInr
-                pred = trans_inr(z)
+            recon_loss = F.mse_loss(pred, images)
+            kl_loss = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3]))
+            loss = recon_loss + kl_weight * kl_loss
 
-                # 3. VAE Loss
-                recon_loss = criterion(pred, images)
-                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-                kl_loss = kl_loss / images.size(0)
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            optimizer.step()
 
-                # Adjust KL_WEIGHT (start small, e.g., 1e-4)
-                loss = recon_loss + (1e-4 * kl_loss)
+            global_step += 1
+            total_recon += recon_loss.item()
+            total_kl += kl_loss.item()
+            pbar.set_postfix(recon=f"{recon_loss.item():.4f}", kl=f"{kl_loss.item():.2f}", kl_w=f"{kl_weight:.2e}")
 
-                pbar.set_postfix(loss=f"{loss.item():.6f}", lr=f"{scheduler.current_lr:.2e}")
+        # Epoch Summary
+        avg_recon = total_recon / len(train_loader)
+        avg_kl = total_kl / len(train_loader)
+        print(f"Epoch {epoch+1} Summary: Recon={avg_recon:.6f} | KL={avg_kl:.6f}")
 
-                # Backward
-                optimizer.zero_grad()
-                loss.backward()
-                if GRAD_CLIP > 0:
-                    nn.utils.clip_grad_norm_(params, GRAD_CLIP)
-                optimizer.step()
-                scheduler.step()
-
-                epoch_loss += loss.item()
-        # ---- epoch summary ------------------------------------------------
-        avg_train = epoch_loss / steps_per_epoch
-
-        # ---- validation ---------------------------------------------------
-        if (epoch + 1) % EVAL_EVERY == 0:
-            val_loss = evaluate(encoder, trans_inr, val_loader, criterion, device)
-            print(f"[epoch {epoch+1:>3}] val_loss={val_loss:.6f}")
-
-    # ---- final checkpoint -------------------------------------------------
-    final_path = os.path.join(CHECKPOINT_DIR, "train_results/transinr_final.pt")
-    save_checkpoint(trans_inr, optimizer, scheduler, NUM_EPOCHS - 1, avg_train, final_path)
-    print("\n[done] Training complete.")
-
-    plot_reconstructions(trans_inr, encoder, val_full, device)
+        # Save everything
+        if (epoch + 1) % 5 == 0:
+            save_path = os.path.join(CHECKPOINT_DIR, "vae_latest.pt")
+            torch.save({"model_state": model.state_dict(), "config": cfg, "epoch": epoch}, save_path)
 
 
 if __name__ == "__main__":
