@@ -40,7 +40,7 @@ SUBSET_SIZE = None  # int → use only N training samples;
 
 # ---------- Training ---------------------------------------------------------
 BATCH_SIZE = 64
-NUM_EPOCHS = 10
+NUM_EPOCHS = 1
 LEARNING_RATE = 1e-4
 LR_WARMUP_STEPS = 1000  # linear warm-up before cosine decay
 WEIGHT_DECAY = 1e-4
@@ -59,6 +59,10 @@ IMAGE_SIZE = 28  # MNIST is 28x28
 IN_CHANNELS = 1  # grayscale
 PATCH_SIZE = 4  # 4x4 patches → (28/4)² = 49 tokens
 # NOTE: IMAGE_SIZE must be divisible by PATCH_SIZE
+
+# ---------- Model — VAE ------------------------------------------------------
+LATENT_DIM = 256  # Size of the bottleneck z
+KL_WEIGHT = 0.0001  # Hyperparameter to balance MSE and KL divergence
 
 # ---------- Model — Transformer ----------------------------------------------
 DIM = 256
@@ -79,27 +83,94 @@ SIREN_OMEGA = 30.0
 
 # ---------- Weight-token groups ----------------------------------------------
 N_GROUPS = 8  # number of wtokens per INR layer parameter
+# New Config for the Latent Tokenizer
+LATENT_CHAN = 16  # Dimension of the latent space (z channels)
+LATENT_RES = 16  # Resolution of the latent grid (16x16)
 
 # =============================================================================
 #  END CONFIG
 # =============================================================================
+import torch.nn.functional as F  # noqa: E402, N812
+
+
+class MNISTToLatentEncoder(nn.Module):
+    def __init__(self, latent_chan=16, latent_res=16):
+        super().__init__()
+        self.latent_res = latent_res
+        self.enc = nn.Sequential(
+            nn.Conv2d(1, 32, 3, stride=2, padding=1),  # 14x14
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 3, stride=1, padding=1),  # 14x14
+            nn.ReLU(),
+        )
+        self.fc_mu = nn.Conv2d(64, latent_chan, 1)
+        self.fc_logvar = nn.Conv2d(64, latent_chan, 1)
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        features = self.enc(x)
+        # Force the resolution to match LATENT_RES (16x16)
+        features = F.interpolate(features, size=(self.latent_res, self.latent_res), mode="bilinear")
+
+        mu = self.fc_mu(features)
+        logvar = self.fc_logvar(features)
+        z = self.reparameterize(mu, logvar)
+        return z, mu, logvar
+
+
+class TransInrVAE(nn.Module):
+    def __init__(self, encoder, trans_inr, latent_dim, transformer_dim):
+        super().__init__()
+        self.encoder = encoder
+        self.trans_inr = trans_inr
+        self.latent_to_tokens = nn.Linear(latent_dim, transformer_dim)
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        mu, logvar = self.encoder(x)
+        z = self.reparameterize(mu, logvar)
+
+        # Map z to the embedding space of your Transformer
+        # We treat z as a "global context token" or a seed for the INR
+        z_embed = self.latent_to_tokens(z).unsqueeze(1)
+
+        # Pass to your existing model
+        # Note: You may need to adjust your TransInr.forward to accept
+        # these embeddings instead of raw images.
+        return self.trans_inr(z_embed), mu, logvar
 
 
 @torch.no_grad()
-def plot_reconstructions(model, dataset, device, n=5):
+def plot_reconstructions(model, encoder, dataset, device, n=5):
+    encoder.eval()
     model.eval()
     indices = random.sample(range(len(dataset)), n * n)
-    images = torch.stack([dataset[i][0] for i in indices]).to(device)
-    recons = model(images).cpu()
-    images = images.cpu()
+
+    # Keep on device for the forward pass
+    raw_images = torch.stack([dataset[i][0] for i in indices]).to(device)
+
+    # Pass through VAE
+    z, _, _ = encoder(raw_images)
+    recons = model(z).cpu()  # Move result to CPU
+    images = raw_images.cpu()  # Move originals to CPU for plotting
 
     _fig, axes = plt.subplots(n, n * 2 + 1, figsize=(n * 2 * 1.5 + 1, n * 1.5))
 
     for row in range(n):
         for col in range(n):
             i = row * n + col
+            # images[i, 0] is now a CPU tensor, so .numpy() (used by imshow) will work
             axes[row, col].imshow(images[i, 0], cmap="gray", vmin=-1, vmax=1)
             axes[row, col].axis("off")
+
             axes[row, col + n + 1].imshow(recons[i, 0], cmap="gray", vmin=-1, vmax=1)
             axes[row, col + n + 1].axis("off")
 
@@ -149,14 +220,13 @@ def build_model(device):
     """Construct TransInr from the CONFIG constants above."""
 
     tokenizer_cfg = {
-        "target": "src.models.trans_inr_helpers.ImageTokenizer",
+        "target": "src.models.trans_inr_helpers.LatentTokenizer",  # Update this path
         "params": {
-            "in_channels": IN_CHANNELS,
-            "image_size": IMAGE_SIZE,
-            "patch_size": PATCH_SIZE,
+            "latent_dim": LATENT_CHAN,
+            "latent_size": LATENT_RES,
+            "patch_size": 2,  # 14/2 = 7x7 tokens
             "n_head": N_HEAD,
             "head_dim": HEAD_DIM,
-            # 'dim' is injected automatically by TransInr via extra_args
         },
     }
 
@@ -292,16 +362,20 @@ def load_checkpoint(path, model, optimizer, scheduler):
 
 
 @torch.no_grad()
-def evaluate(model, loader, criterion, device):
+def evaluate(encoder, model, loader, criterion, device):
+    encoder.eval()
     model.eval()
     total_loss, n = 0.0, 0
     for images, _ in loader:
         images = images.to(device)
-        pred = model(images)  # (B, 1, H, W)
+
+        # New: Get latent from encoder first
+        z, mu, logvar = encoder(images)
+        pred = model(z)
+
         loss = criterion(pred, images)
         total_loss += loss.item() * images.size(0)
         n += images.size(0)
-    model.train()
     return total_loss / n
 
 
@@ -320,12 +394,16 @@ def train():
     total_steps = steps_per_epoch * NUM_EPOCHS
 
     # ---- model ------------------------------------------------------------
-    model = build_model(device)
-    print_model_stats(model)  # ADD this line
+    encoder = MNISTToLatentEncoder(latent_chan=LATENT_CHAN, latent_res=LATENT_RES).to(device)
+    trans_inr = build_model(device)
+    # Optimization
+    params = list(encoder.parameters()) + list(trans_inr.parameters())
+    optimizer = optim.AdamW(params, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+
     criterion = nn.MSELoss()
 
     optimizer = optim.AdamW(
-        model.parameters(),
+        params,
         lr=LEARNING_RATE,
         weight_decay=WEIGHT_DECAY,
     )
@@ -333,13 +411,14 @@ def train():
 
     start_epoch = 0
     if RESUME_CKPT is not None:
-        start_epoch = load_checkpoint(RESUME_CKPT, model, optimizer, scheduler)
+        start_epoch = load_checkpoint(RESUME_CKPT, encoder, optimizer, scheduler)
 
     print(f"\n[train] Starting — {NUM_EPOCHS} epochs, " f"{steps_per_epoch} steps/epoch, batch={BATCH_SIZE}\n")
 
     # ---- training loop ----------------------------------------------------
     for epoch in range(start_epoch, NUM_EPOCHS):
-        model.train()
+        encoder.train()
+        trans_inr.train()
         epoch_loss = 0.0
 
         with tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", leave=False) as pbar:
@@ -347,8 +426,20 @@ def train():
                 images = images.to(device)  # (B, 1, 28, 28)
 
                 # Forward
-                pred = model(images)  # (B, 1, 28, 28)
-                loss = criterion(pred, images)
+                # Inside step loop:
+                # 1. Encode image to latent grid
+                z, mu, logvar = encoder(images)
+
+                # 2. Decode latent grid back to image via TransInr
+                pred = trans_inr(z)
+
+                # 3. VAE Loss
+                recon_loss = criterion(pred, images)
+                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+                kl_loss = kl_loss / images.size(0)
+
+                # Adjust KL_WEIGHT (start small, e.g., 1e-4)
+                loss = recon_loss + (1e-4 * kl_loss)
 
                 pbar.set_postfix(loss=f"{loss.item():.6f}", lr=f"{scheduler.current_lr:.2e}")
 
@@ -356,7 +447,7 @@ def train():
                 optimizer.zero_grad()
                 loss.backward()
                 if GRAD_CLIP > 0:
-                    nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+                    nn.utils.clip_grad_norm_(params, GRAD_CLIP)
                 optimizer.step()
                 scheduler.step()
 
@@ -366,15 +457,15 @@ def train():
 
         # ---- validation ---------------------------------------------------
         if (epoch + 1) % EVAL_EVERY == 0:
-            val_loss = evaluate(model, val_loader, criterion, device)
+            val_loss = evaluate(encoder, trans_inr, val_loader, criterion, device)
             print(f"[epoch {epoch+1:>3}] val_loss={val_loss:.6f}")
 
     # ---- final checkpoint -------------------------------------------------
     final_path = os.path.join(CHECKPOINT_DIR, "train_results/transinr_final.pt")
-    save_checkpoint(model, optimizer, scheduler, NUM_EPOCHS - 1, avg_train, final_path)
+    save_checkpoint(trans_inr, optimizer, scheduler, NUM_EPOCHS - 1, avg_train, final_path)
     print("\n[done] Training complete.")
 
-    plot_reconstructions(model, val_full, device)
+    plot_reconstructions(trans_inr, encoder, val_full, device)
 
 
 if __name__ == "__main__":
