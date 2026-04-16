@@ -27,7 +27,6 @@ import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
-from src_old.models.ndm__inr_time import WeightEncoder  # noqa: F401
 
 
 class WeightVAE(nn.Module):
@@ -200,7 +199,7 @@ class NDMStaticTransInr(nn.Module):
         l_prior = (t_idx == self.T - 1).float() * self._l_prior(theta_prime=z)
 
         # Total loss
-        elbo = l_diff + l_prior + l_rec + (0.01 * l_vae_kl)  # Weight KL properly
+        elbo = l_diff + l_prior + l_rec + (0.5 * l_vae_kl)  # Weight KL properly
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
