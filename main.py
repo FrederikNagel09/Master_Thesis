@@ -143,12 +143,12 @@ python main.py \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 25 \
+    --inr_hidden_dim 32 \
     --inr_layers 4 \
     --trans_dim 256 \
     --trans_n_head 4 \
     --trans_head_dim 32 \
-    --trans_ff_dim 256 \
+    --trans_ff_dim 512 \
     --trans_enc_depth 4 \
     --trans_dec_depth 4 \
     --trans_patch_size 4 \
@@ -158,8 +158,8 @@ python main.py \
     --transformer_chunk_size 128 \
     --transformer_d_model 256 \
     --transformer_n_heads 4 \
-    --transformer_n_layers 4 \
-    --transformer_d_ff 256 \
+    --transformer_n_layers 6 \
+    --transformer_d_ff 512 \
     --transformer_dropout 0.1 \
     --noise_t_embed 128
 

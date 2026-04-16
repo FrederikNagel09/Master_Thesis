@@ -39,10 +39,10 @@ SUBSET_SIZE = None  # int → use only N training samples;
 # None → use the full 60 000
 
 # ---------- Training ---------------------------------------------------------
-BATCH_SIZE = 64
-NUM_EPOCHS = 1
+BATCH_SIZE = 128
+NUM_EPOCHS = 200
 LEARNING_RATE = 1e-4
-LR_WARMUP_STEPS = 1000  # linear warm-up before cosine decay
+LR_WARMUP_STEPS = 2000  # linear warm-up before cosine decay
 WEIGHT_DECAY = 1e-4
 GRAD_CLIP = 1.0  # max grad norm; 0 to disable
 SEED = 42
@@ -98,9 +98,11 @@ class MNISTToLatentEncoder(nn.Module):
         super().__init__()
         self.latent_res = latent_res
         self.enc = nn.Sequential(
-            nn.Conv2d(1, 32, 3, stride=2, padding=1),  # 14x14
+            nn.Conv2d(1, 64, 3, stride=2, padding=1),  # 14x14
             nn.ReLU(),
-            nn.Conv2d(32, 64, 3, stride=1, padding=1),  # 14x14
+            nn.Conv2d(64,128, 3, stride=1, padding=1),  # 14x14
+            nn.ReLU(),
+            nn.Conv2d(128, 64, 3, stride=1, padding=1),  # 14x14
             nn.ReLU(),
         )
         self.fc_mu = nn.Conv2d(64, latent_chan, 1)
