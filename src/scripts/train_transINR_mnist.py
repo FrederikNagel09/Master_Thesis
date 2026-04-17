@@ -18,25 +18,40 @@ sys.path.append(".")
 
 
 from src.models.trans_inr import TransInr  # noqa: E402
+from src.utility.evaluation import run_evaluation  # noqa: E402
 
 # =============================================================================
 #  CONFIG
 # =============================================================================
 DATA_ROOT = "./data"
-SUBSET_SIZE = 1000
+SUBSET_SIZE = None  # or None for 60,000
+DATASET_TOTAL = SUBSET_SIZE if SUBSET_SIZE is not None else 60000
 BATCH_SIZE = 128
-NUM_EPOCHS = 20
+NUM_EPOCHS = 100
+
+# --- Calculate Total Steps ---
+# We use math.ceil because the last partial batch still counts as a step
+steps_per_epoch = math.ceil(DATASET_TOTAL / BATCH_SIZE)
+TOTAL_TRAINING_STEPS = steps_per_epoch * NUM_EPOCHS
+
+# --- Dynamic Ratios (Adjust these percentages as needed) ---
+WARMUP_RATIO = 0.05  # 5% of training
+KL_ANNEAL_RATIO = 0.15  # 15% of training
+
+# --- Updated Hyperparameters ---
+LR_WARMUP_STEPS = int(TOTAL_TRAINING_STEPS * WARMUP_RATIO)
+KL_ANNEAL_STEPS = int(TOTAL_TRAINING_STEPS * KL_ANNEAL_RATIO)
+
 LEARNING_RATE = 1e-4
-LR_WARMUP_STEPS = 2000
 WEIGHT_DECAY = 1e-4
 GRAD_CLIP = 1.0
 SEED = 42
 
+
 # VAE Specifics
 LATENT_CHAN = 16
 LATENT_RES = 16
-KL_WEIGHT_TARGET = 0.0001
-KL_ANNEAL_STEPS = 5000  # Steps to reach full KL weight
+KL_WEIGHT_TARGET = 0.01
 
 # Model Arch
 IMAGE_SIZE = 28
@@ -320,6 +335,8 @@ def train():
         if (epoch + 1) % 5 == 0:
             save_path = os.path.join(CHECKPOINT_DIR, "vae_latest.pt")
             torch.save({"model_state": model.state_dict(), "config": cfg, "epoch": epoch}, save_path)
+
+    run_evaluation(model=model, config=cfg, output_path="src/results/vae_final_evaluation.png", device=device, data_root=DATA_ROOT)
 
 
 if __name__ == "__main__":
