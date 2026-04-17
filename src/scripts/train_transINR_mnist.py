@@ -27,7 +27,7 @@ DATA_ROOT = "./data"
 SUBSET_SIZE = None  # or None for 60,000
 DATASET_TOTAL = SUBSET_SIZE if SUBSET_SIZE is not None else 60000
 BATCH_SIZE = 128
-NUM_EPOCHS = 100
+NUM_EPOCHS = 200
 
 # --- Calculate Total Steps ---
 # We use math.ceil because the last partial batch still counts as a step
@@ -36,7 +36,7 @@ TOTAL_TRAINING_STEPS = steps_per_epoch * NUM_EPOCHS
 
 # --- Dynamic Ratios (Adjust these percentages as needed) ---
 WARMUP_RATIO = 0.05  # 5% of training
-KL_ANNEAL_RATIO = 0.15  # 15% of training
+KL_ANNEAL_RATIO = 0.30  # 30% of training
 
 # --- Updated Hyperparameters ---
 LR_WARMUP_STEPS = int(TOTAL_TRAINING_STEPS * WARMUP_RATIO)
@@ -49,8 +49,8 @@ SEED = 42
 
 
 # VAE Specifics
-LATENT_CHAN = 16
-LATENT_RES = 16
+LATENT_CHAN = 64
+LATENT_RES = 8
 KL_WEIGHT_TARGET = 0.01
 
 # Model Arch
@@ -62,7 +62,7 @@ HEAD_DIM = 32
 FF_DIM = 512
 ENCODER_DEPTH = 4
 DECODER_DEPTH = 4
-SIREN_HIDDEN_DIM = 256
+SIREN_HIDDEN_DIM = 64
 SIREN_DEPTH = 5
 N_GROUPS = 8
 
@@ -70,33 +70,75 @@ CHECKPOINT_DIR = "./src/train_results"
 # =============================================================================
 
 
-class MNISTToLatentEncoder(nn.Module):
-    def __init__(self, latent_chan=16, latent_res=16):
+class ResBlock(nn.Module):
+    def __init__(self, channels):
         super().__init__()
-        self.latent_res = latent_res
-        self.enc = nn.Sequential(
-            nn.Conv2d(1, 64, 3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, 3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 64, 3, stride=1, padding=1),
-            nn.ReLU(),
+        self.net = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(channels)
         )
-        self.fc_mu = nn.Conv2d(64, latent_chan, 1)
-        self.fc_logvar = nn.Conv2d(64, latent_chan, 1)
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
 
     def forward(self, x):
-        features = self.enc(x)
-        features = F.interpolate(features, size=(self.latent_res, self.latent_res), mode="bilinear")
-        mu = self.fc_mu(features)
-        logvar = self.fc_logvar(features)
+        return F.relu(x + self.net(x))
+
+class ImprovedMNISTEncoder(nn.Module):
+    def __init__(self, latent_chan=64, latent_res=8):
+        super().__init__()
+        self.latent_res = latent_res
+        
+        # 1. Initial Feature Extraction (28x28 -> 14x14)
+        self.initial = nn.Sequential(
+            nn.Conv2d(1, 64, 3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True)
+        )
+        
+        # 2. Deep Feature Extraction (14x14)
+        self.res_layers = nn.Sequential(
+            ResBlock(64),
+            nn.Conv2d(64, 128, 3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            ResBlock(128),
+        )
+
+        # 3. FIXED: Replace Adaptive Pool with a Strided Conv (14x14 -> 8x8)
+        # We use a kernel_size of 3 and stride of 2, but adjust padding 
+        # specifically to hit exactly 8x8 from 14x14.
+        self.downsample = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=4, stride=2, padding=2), # Result: 8x8
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(128)
+        )
+        
+        # 4. Final Projection to Latent Space
+        self.fc_mu = nn.Conv2d(128, latent_chan, 1)
+        self.fc_logvar = nn.Conv2d(128, latent_chan, 1)
+    
+    def reparameterize(self, mu, logvar):
+        """Restored missing method: Sample from the distribution."""
+        if self.training:
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            return mu + eps * std
+        return mu
+
+    def forward(self, x):
+        x = self.initial(x)
+        x = self.res_layers(x)
+        
+        # Use the learnable downsample instead of adaptive pool
+        x = self.downsample(x) 
+        
+        mu = self.fc_mu(x)
+        logvar = self.fc_logvar(x)
         z = self.reparameterize(mu, logvar)
+        
         return z, mu, logvar
+
 
 
 class VAE(nn.Module):
@@ -105,7 +147,7 @@ class VAE(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.encoder = MNISTToLatentEncoder(latent_chan=config["latent_chan"], latent_res=config["latent_res"])
+        self.encoder = ImprovedMNISTEncoder(latent_chan=config["latent_chan"], latent_res=config["latent_res"])
 
         tokenizer_cfg = {
             "target": "src.models.trans_inr_helpers.LatentTokenizer",
@@ -312,7 +354,7 @@ def train():
 
             pred, mu, logvar = model(images)
 
-            recon_loss = F.mse_loss(pred, images)
+            recon_loss = F.l1_loss(pred, images)
             kl_loss = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3]))
             loss = recon_loss + kl_weight * kl_loss
 
