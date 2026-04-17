@@ -23,9 +23,9 @@ from src.models.trans_inr import TransInr  # noqa: E402
 #  CONFIG
 # =============================================================================
 DATA_ROOT = "./data"
-SUBSET_SIZE = 1000
+SUBSET_SIZE = None
 BATCH_SIZE = 128
-NUM_EPOCHS = 20
+NUM_EPOCHS = 40
 LEARNING_RATE = 1e-4
 LR_WARMUP_STEPS = 2000
 WEIGHT_DECAY = 1e-4
@@ -35,7 +35,7 @@ SEED = 42
 # VAE Specifics
 LATENT_CHAN = 16
 LATENT_RES = 16
-KL_WEIGHT_TARGET = 0.0001
+KL_WEIGHT_TARGET = 0.01
 KL_ANNEAL_STEPS = 5000  # Steps to reach full KL weight
 
 # Model Arch
@@ -318,7 +318,7 @@ def train():
 
         # Save everything
         if (epoch + 1) % 5 == 0:
-            save_path = os.path.join(CHECKPOINT_DIR, "vae_latest.pt")
+            save_path = os.path.join(CHECKPOINT_DIR, "vae_transINR_weights_v4.pt")
             torch.save({"model_state": model.state_dict(), "config": cfg, "epoch": epoch}, save_path)
 
 
