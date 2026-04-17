@@ -27,7 +27,7 @@ DATA_ROOT = "./data"
 SUBSET_SIZE = 5000  # or None for 60,000
 DATASET_TOTAL = SUBSET_SIZE if SUBSET_SIZE is not None else 60000
 BATCH_SIZE = 128
-NUM_EPOCHS = 20
+NUM_EPOCHS = 200
 
 # --- Calculate Total Steps ---
 # We use math.ceil because the last partial batch still counts as a step
@@ -35,8 +35,8 @@ steps_per_epoch = math.ceil(DATASET_TOTAL / BATCH_SIZE)
 TOTAL_TRAINING_STEPS = steps_per_epoch * NUM_EPOCHS
 
 # --- Dynamic Ratios (Adjust these percentages as needed) ---
-WARMUP_RATIO = 0.10  # 5% of training
-KL_ANNEAL_RATIO = 0.30  # 15% of training
+WARMUP_RATIO = 0.05  # 5% of training
+KL_ANNEAL_RATIO = 0.30  # 30% of training
 
 # --- Updated Hyperparameters ---
 LR_WARMUP_STEPS = int(TOTAL_TRAINING_STEPS * WARMUP_RATIO)
@@ -49,7 +49,7 @@ SEED = 42
 
 
 # VAE Specifics
-LATENT_CHAN = 32
+LATENT_CHAN = 64
 LATENT_RES = 8
 KL_WEIGHT_TARGET = 0.01
 
@@ -371,7 +371,7 @@ def train():
 
         # Save everything
         if (epoch + 1) % 5 == 0:
-            save_path = os.path.join(CHECKPOINT_DIR, "vae_latest.pt")
+            save_path = os.path.join(CHECKPOINT_DIR, "vae_transINR_weights_v4.pt")
             torch.save({"model_state": model.state_dict(), "config": cfg, "epoch": epoch}, save_path)
 
     run_evaluation(model=model, config=cfg, output_path="src/results/vae_final_evaluation.png", device=device, data_root=DATA_ROOT)
