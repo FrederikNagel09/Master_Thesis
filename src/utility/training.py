@@ -46,7 +46,7 @@ def train(
     grad_clip: float = 1.0,
     # ── Scheduler ────────────────────────────────────────────────────────────
     use_scheduler: bool = True,
-    warmup_steps: int = 5_000,
+    warmup_steps: int = 5_000,  # noqa: ARG001
     peak_lr: float | None = None,
     # ── Logging ──────────────────────────────────────────────────────────────
     log_every_n_steps: int = 20,
@@ -106,7 +106,7 @@ def train(
                 group.setdefault("initial_lr", group["lr"])
         scheduler = _build_scheduler(
             optimizer,
-            warmup_steps=0.1*total_steps,
+            warmup_steps=0.1 * total_steps,
             total_steps=total_steps,
             peak_lr=_peak_lr,
         )
@@ -165,9 +165,15 @@ def train(
         gr, gc = torch.meshgrid(lin, lin, indexing="ij")
         _coords = torch.stack([gr.flatten(), gc.flatten()], dim=-1)  # (img_size^2, 2)
 
+    # This ensures global_mean and global_std are set once and for all
+    model.calibrate_stats(data_loader, device)
+
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
         print(f"\n############## EPOCH: {epoch} ##############\n")
+        if epoch in (2, 5):
+            print("Re-calibrating global stats with model in eval mode...")
+            model.calibrate_stats(data_loader, device)
         for batch in data_loader:
             # ── Forward pass (model-type dispatch) ───────────────────────────
             if model_type == "inr_vae":
@@ -200,7 +206,7 @@ def train(
                     print(f"  Dataset samples shape : {x.shape}")
                     print("================================================================")
                 loss, l_diff, l_prior, l_rec = model.loss(x)
-            
+
             # ── NaN/divergence diagnostics ───────────────────────────────────
             # Always check loss values regardless of debug flag
             loss_is_nan = loss.isnan().any() or loss.isinf().any()
@@ -228,20 +234,21 @@ def train(
                         if g.isnan().any() or g.isinf().any():
                             nan_grad_params.append(name)
                         pnorm = g.norm().item()
-                        total_norm_preclip += pnorm ** 2
+                        total_norm_preclip += pnorm**2
                         if pnorm > max_grad_param[1]:
                             max_grad_param = (name, pnorm)
-                total_norm_preclip = total_norm_preclip ** 0.5
+                total_norm_preclip = total_norm_preclip**0.5
 
-                print("==================== DEBUG: training.py GRADIENTS ====================")
-                print(f"  Total grad norm (pre-clip) : {total_norm_preclip:.4f}")
-                print(f"  Largest grad param         : {max_grad_param[0]} | norm={max_grad_param[1]:.4f}")
-                if nan_grad_params:
-                    print(f"  !! NaN/Inf grads in        : {nan_grad_params}")
-                else:
-                    print(f"  No NaN/Inf grads detected")
-                print("======================================================================")
-            
+                if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                    print("==================== DEBUG: training.py GRADIENTS ====================")
+                    print(f"  Total grad norm (pre-clip) : {total_norm_preclip:.4f}")
+                    print(f"  Largest grad param         : {max_grad_param[0]} | norm={max_grad_param[1]:.4f}")
+                    if nan_grad_params:
+                        print(f"  !! NaN/Inf grads in        : {nan_grad_params}")
+                    else:
+                        print("  No NaN/Inf grads detected")
+                    print("======================================================================")
+
             if grad_clip > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
@@ -267,7 +274,6 @@ def train(
                 print("  Stopping training to inspect state.")
                 print("===============================================================================")
                 raise RuntimeError("NaN detected in loss — stopping early for inspection.")
-
 
             # ── Accumulate ───────────────────────────────────────────────────
             global_step += 1

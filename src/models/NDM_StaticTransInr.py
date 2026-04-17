@@ -106,13 +106,17 @@ class NDMStaticTransInr(nn.Module):
         self.weight_encoder = WeightEncoder
         self.inr = WeightEncoder.inr
 
+        self.weight_dim = self.weight_encoder.weight_dim
+
         self.beta_1 = beta_1
         self.beta_T = beta_T
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor
 
-        # --- NEW: Learnable Scaler ---
-        self.scaler = WeightScaler(WeightEncoder.weight_dim)
+        # Buffers to store the frozen stats
+        self.register_buffer("global_mean", torch.zeros(1, self.weight_dim))
+        self.register_buffer("global_std", torch.ones(1, self.weight_dim))
+        self.register_buffer("is_calibrated", torch.tensor(False))
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
@@ -184,7 +188,7 @@ class NDMStaticTransInr(nn.Module):
         theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
 
         # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
-        theta_prime = self.scaler(theta_prime_raw, reverse=False)
+        theta_prime_norm = self.normalize(theta_prime_raw, reverse=False)
 
         # Prints forwars process statistics for the first batch only, at specific time steps
         if self.i == 0:
@@ -193,7 +197,7 @@ class NDMStaticTransInr(nn.Module):
             t_steps = [999, 900, 800, 700, 600, 500, 400, 300, 200, 100, 0]
 
             # 2. Convert to a long tensor on the correct device
-            t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=theta_prime.device)
+            t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=theta_prime_norm.device)
 
             for t in t_idx_debug:
                 # Use .item() for the index but keep the tensor for schedule lookup
@@ -205,25 +209,25 @@ class NDMStaticTransInr(nn.Module):
                 sigma_t = self.sigma[idx]
 
                 # 4. Generate the noisy sample (Forward Process)
-                epsilon_t = torch.randn_like(theta_prime)
-                # Note: theta_prime is (Batch, Dim), alpha_t is scalar
-                theta_t = alpha_t * theta_prime + sigma_t * epsilon_t
+                epsilon_t = torch.randn_like(theta_prime_norm)
+                # Note: theta_prime_norm is (Batch, Dim), alpha_t is scalar
+                theta_t = alpha_t * theta_prime_norm + sigma_t * epsilon_t
 
                 print(f"DEBUG SAMPLE t={idx:3d}: mean={theta_t.mean():.4f}, std={theta_t.std():.4f}")
 
             print("###############################################\n")
             self.i += 1
 
-        if True and random.random() < probability_threshold + 0.02:
-            print(f"DEBUG SCALED THETA: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
-            print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold + 0.02:
+            print(f"DEBUG SCALED THETA: mean={theta_prime_norm.mean():.4e}, std={theta_prime_norm.std():.4e}")
+            print(f"Debug range of scaled theta_prime: min={theta_prime_norm.min().item():.4f}, max={theta_prime_norm.max().item():.4f}")
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
+        theta_t, epsilon = self._construct_theta_t(theta_prime_norm, t_idx)
 
         # Given theta_t, and theta_prime we compute the three loss terms:
         l_diff = self._l_diff(theta_t, t_norm, epsilon)  # (batch,)
-        l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
+        l_prior = self._l_prior(theta_prime=theta_prime_norm)  # (batch,)
 
         l_rec = self._l_rec(x, theta_prime_raw)
 
@@ -295,11 +299,10 @@ class NDMStaticTransInr(nn.Module):
 
     @torch.no_grad()
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
-        weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
         clip_value = 2.0
         # 1. Start from pure Gaussian noise
-        curr_theta = torch.randn(n_samples, weight_dim, device=device)
+        curr_theta = torch.randn(n_samples, self.weight_dim, device=device)
 
         # The loop runs from T-1 down to 0
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
@@ -346,58 +349,7 @@ class NDMStaticTransInr(nn.Module):
             if t % 100 == 0:
                 print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
 
-        final_weights = self.scaler(curr_theta, reverse=True)
-        return final_weights
-
-    @torch.no_grad()
-    def sample_weight_old(self, n_samples: int = 1) -> torch.Tensor:
-        """
-        Samples a clean weight vector theta_prime by running the reverse diffusion
-        process in weight space.
-
-        Starting from Gaussian noise theta_T, iteratively denoises through T steps
-        using the learned noise predictor. At each step t, the predicted clean weights
-        theta_t_hat are recovered from the noisy theta_t, and the posterior mean mu
-        is computed to step from t to s = t-1:
-
-            theta_t_hat = (theta_t - sigma_t * eps_hat) / alpha_t
-            mu = alpha_s * theta_t_hat + B * (theta_t - alpha_t * theta_t_hat)
-
-        where B = sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t.
-
-        Returns the predicted clean weight vector theta_t_hat at t=0.
-        """
-        weight_dim = self.weight_encoder.weight_dim
-        device = self.sqrt_alpha_cumprod.device
-
-        # 1. Start from pure Gaussian noise
-        curr_theta = torch.randn(n_samples, weight_dim, device=device)
-
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            if t % 100 == 0:
-                print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
-
-            t_norm = torch.full((n_samples,), t / (self.T - 1), device=device)
-
-            # 2. Predict noise
-            eps_hat = self.noise_predictor(curr_theta, t_norm)
-
-            # 3. Retrieve schedule parameters
-            alpha = self.alpha[t]  # This is (1 - beta_t)
-            alpha_bar = self.alpha_cumprod[t]
-            beta = self.beta[t]
-
-            # 4. Standard DDPM Reverse Step
-            noise = torch.randn_like(curr_theta) if t > 0 else 0
-
-            # The DDPM update formula
-            # x_{t-1} = 1/sqrt(alpha) * (x_t - (1-alpha)/sqrt(1-alpha_bar) * eps_hat) + sigma * noise
-            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
-            curr_theta = (1.0 / torch.sqrt(alpha)) * (curr_theta - coeff * eps_hat) + torch.sqrt(beta) * noise
-
-        # 5. SCALE BACK DOWN for the INR
-        final_weights = self.scaler(curr_theta, reverse=True)
-        # This is crucial because the diffusion was trained on theta/scaling
+        final_weights = self.normalize(curr_theta, reverse=True)
         return final_weights
 
     def _inr_decode(
@@ -472,6 +424,49 @@ class NDMStaticTransInr(nn.Module):
         theta_t = alpha_t * theta_prime + sigma_t * epsilon
 
         return theta_t, epsilon
+
+    def normalize(self, x, reverse=False):
+        if reverse:
+            return (x * self.global_std) + self.global_mean
+        return (x - self.global_mean) / self.global_std
+
+    @torch.no_grad()
+    def calibrate_stats(self, dataloader, device):
+        self.weight_encoder.eval()  # Vital: keep encoder behavior consistent
+        print("Calculating global weight statistics...")
+
+        all_latents = []
+
+        # Wrap the dataloader in tqdm for a progress bar
+        pbar = tqdm(dataloader, desc="Encoding weights", unit="batch")
+
+        for batch in pbar:
+            # Assuming batch is a tensor of weights
+            x = batch[0] if isinstance(batch, list | tuple) else batch
+            weights = x.to(device)
+
+            # Pass through encoder to get the latents
+            latents = self.weight_encoder(weights)
+
+            # Move to CPU immediately to save GPU VRAM during the loop
+            all_latents.append(latents.cpu())
+
+        # Concatenate all collected latents
+        all_latents = torch.cat(all_latents, dim=0)
+
+        # Compute global stats
+        new_mean = all_latents.mean(dim=0, keepdim=True)
+        new_std = all_latents.std(dim=0, keepdim=True) + 1e-6
+
+        # Update the buffers
+        self.global_mean.copy_(new_mean)
+        self.global_std.copy_(new_std)
+        self.is_calibrated = torch.tensor(True)
+
+        print("\nCalibration complete!")
+        print(f"Latent Shape: {all_latents.shape}")
+        print(f"Global Mean: {self.global_mean.mean().item():.4f}")
+        print(f"Global Std:  {self.global_std.mean().item():.4f}")
 
 
 """
