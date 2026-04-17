@@ -126,10 +126,10 @@ python main.py \
 
 ######################### TRANSFORMER ENCODER NDM-INR Training ####################################
 python main.py \
-    --run_name ndm_INR_singleclass \
+    --run_name TransNdmInr_singleclass_v1 \
     --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 30 \
+    --epochs 40 \
     --batch_size 64 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -145,21 +145,21 @@ python main.py \
     --sigma_tilde 1.0 \
     --inr_hidden_dim 64 \
     --inr_layers 5 \
-    --encoder_trans_dim 256 \
-    --encoder_trans_n_head 8 \
+    --encoder_trans_dim 128 \
+    --encoder_trans_n_head 4 \
     --encoder_trans_head_dim 32 \
-    --encoder_trans_ff_dim 1024 \
-    --encoder_trans_enc_depth 6 \
-    --encoder_trans_dec_depth 6 \
+    --encoder_trans_ff_dim 512 \
+    --encoder_trans_enc_depth 3 \
+    --encoder_trans_dec_depth 3 \
     --encoder_trans_patch_size 4 \
     --encoder_trans_n_groups 64 \
     --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
-    --noise_predictor_dim 256 \
-    --noise_predictor_n_head 8 \
+    --noise_predictor_dim 128 \
+    --noise_predictor_n_head 4 \
     --noise_predictor_head_dim 32 \
-    --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 12 \
+    --noise_predictor_ff_dim 512 \
+    --noise_predictor_depth 5 \
     --noise_predictor_dropout 0.1 \
     --noise_predictor_t_embed_dim 256
 
