@@ -34,7 +34,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --sigma_tilde 1.0 \
     --inr_hidden_dim 64 \
     --inr_layers 5 \
-    --encoder_trans_dim 128 \
+    --encoder_trans_dim 256 \
     --encoder_trans_n_head 4 \
     --encoder_trans_head_dim 32 \
     --encoder_trans_ff_dim 512 \
@@ -44,7 +44,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --encoder_trans_n_groups 64 \
     --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
-    --noise_predictor_dim 128 \
+    --noise_predictor_dim 256 \
     --noise_predictor_n_head 4 \
     --noise_predictor_head_dim 32 \
     --noise_predictor_ff_dim 512 \
