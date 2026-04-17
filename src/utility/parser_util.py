@@ -101,17 +101,25 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--num_heads", type=int, default=4)
     p.add_argument("--prior_scaling", type=float, default=1.0)
 
-    # ── TransInr encoder args ─────────────────────────────────────────────────
-    p.add_argument("--trans_dim", type=int, default=256)
-    p.add_argument("--trans_n_head", type=int, default=8)
-    p.add_argument("--trans_head_dim", type=int, default=32)
-    p.add_argument("--trans_ff_dim", type=int, default=512)
-    p.add_argument("--trans_enc_depth", type=int, default=4)
-    p.add_argument("--trans_dec_depth", type=int, default=4)
-    p.add_argument("--trans_patch_size", type=int, default=4)
-    p.add_argument("--trans_n_groups", type=int, default=8)
-    p.add_argument("--trans_update_strategy", type=str, default="normalize", choices=["normalize", "scale", "identity"])
+    # ── TransInr WeightEncoder args ─────────────────────────────────────────────────
+    p.add_argument("--encoder_trans_dim", type=int, default=256)
+    p.add_argument("--encoder_trans_n_head", type=int, default=8)
+    p.add_argument("--encoder_trans_head_dim", type=int, default=32)
+    p.add_argument("--encoder_trans_ff_dim", type=int, default=512)
+    p.add_argument("--encoder_trans_enc_depth", type=int, default=4)
+    p.add_argument("--encoder_trans_dec_depth", type=int, default=4)
+    p.add_argument("--encoder_trans_patch_size", type=int, default=4)
+    p.add_argument("--encoder_trans_n_groups", type=int, default=8)
+    p.add_argument("--encoder_trans_update_strategy", type=str, default="normalize", choices=["normalize", "scale", "identity"])
+    p.add_argument("--encoder_trans_t_embed_dim", type=int, default=128)
 
-    p.add_argument("--trans_t_embed_dim", type=int, default=128)
+    # ── TransInr encoder args ─────────────────────────────────────────────────
+    p.add_argument("--noise_predictor_dim", type=int, default=256)
+    p.add_argument("--noise_predictor_n_head", type=int, default=8)
+    p.add_argument("--noise_predictor_head_dim", type=int, default=32)
+    p.add_argument("--noise_predictor_ff_dim", type=int, default=1024)
+    p.add_argument("--noise_predictor_t_embed_dim", type=int, default=128)
+    p.add_argument("--noise_predictor_depth", type=int, default=4)
+    p.add_argument("--noise_predictor_dropout", type=float, default=0.1)
 
     return p

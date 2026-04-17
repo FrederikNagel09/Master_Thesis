@@ -143,25 +143,25 @@ python main.py \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 25 \
-    --inr_layers 4 \
-    --trans_dim 256 \
-    --trans_n_head 4 \
-    --trans_head_dim 32 \
-    --trans_ff_dim 256 \
-    --trans_enc_depth 4 \
-    --trans_dec_depth 4 \
-    --trans_patch_size 4 \
-    --trans_n_groups 32 \
-    --trans_update_strategy scale \
+    --inr_hidden_dim 64 \
+    --inr_layers 5 \
+    --encoder_trans_dim 256 \
+    --encoder_trans_n_head 8 \
+    --encoder_trans_head_dim 32 \
+    --encoder_trans_ff_dim 1024 \
+    --encoder_trans_enc_depth 6 \
+    --encoder_trans_dec_depth 6 \
+    --encoder_trans_patch_size 4 \
+    --encoder_trans_n_groups 64 \
+    --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
-    --transformer_chunk_size 128 \
-    --transformer_d_model 256 \
-    --transformer_n_heads 4 \
-    --transformer_n_layers 4 \
-    --transformer_d_ff 256 \
-    --transformer_dropout 0.1 \
-    --noise_t_embed 128
+    --noise_predictor_dim 256 \
+    --noise_predictor_n_head 8 \
+    --noise_predictor_head_dim 32 \
+    --noise_predictor_ff_dim 1024 \
+    --noise_predictor_depth 12 \
+    --noise_predictor_dropout 0.1 \
+    --noise_predictor_t_embed_dim 256
 
     
 python main.py \

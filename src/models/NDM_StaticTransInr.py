@@ -121,20 +121,6 @@ class NDMStaticTransInr(nn.Module):
 
         self.i = 0
 
-        # --- Add this debug block ---
-        print("\n" + "=" * 30)
-        print("DIFFUSION SCHEDULE DEBUG")
-        print(f"Beta range: {beta[0]:.6f} to {beta[-1]:.6f}")
-        print("Alpha_cumprod (Signal scale):")
-        print(f"  t=0:   {torch.sqrt(alpha_cumprod[0]):.4f}")
-        print(f"  t={T//2}: {torch.sqrt(alpha_cumprod[T//2]):.4f}")
-        print(f"  t={T-1}: {torch.sqrt(alpha_cumprod[-1]):.4f}")
-        print("Sqrt_1_minus_alpha (Noise scale):")
-        print(f"  t=0:   {torch.sqrt(1 - alpha_cumprod[0]):.4f}")
-        print(f"  t={T//2}: {torch.sqrt(1 - alpha_cumprod[T//2]):.4f}")
-        print(f"  t={T-1}: {torch.sqrt(1 - alpha_cumprod[-1]):.4f}")
-        print("=" * 30 + "\n")
-
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
         self.register_buffer("alpha_cumprod", alpha_cumprod)
@@ -246,7 +232,7 @@ class NDMStaticTransInr(nn.Module):
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = l_diff + 5.0 * l_prior + l_rec
+        elbo = l_diff + l_prior + 5.0 * l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
