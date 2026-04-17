@@ -352,56 +352,6 @@ class NDMStaticTransInr(nn.Module):
         final_weights = self.scaler(curr_theta, reverse=True)
         return final_weights
 
-    @torch.no_grad()
-    def sample_weight_old(self, n_samples: int = 1) -> torch.Tensor:
-        """
-        Samples a clean weight vector theta_prime by running the reverse diffusion
-        process in weight space.
-
-        Starting from Gaussian noise theta_T, iteratively denoises through T steps
-        using the learned noise predictor. At each step t, the predicted clean weights
-        theta_t_hat are recovered from the noisy theta_t, and the posterior mean mu
-        is computed to step from t to s = t-1:
-
-            theta_t_hat = (theta_t - sigma_t * eps_hat) / alpha_t
-            mu = alpha_s * theta_t_hat + B * (theta_t - alpha_t * theta_t_hat)
-
-        where B = sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t.
-
-        Returns the predicted clean weight vector theta_t_hat at t=0.
-        """
-        weight_dim = self.weight_encoder.weight_dim
-        device = self.sqrt_alpha_cumprod.device
-
-        # 1. Start from pure Gaussian noise
-        curr_theta = torch.randn(n_samples, weight_dim, device=device)
-
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            if t % 100 == 0:
-                print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
-
-            t_norm = torch.full((n_samples,), t / (self.T - 1), device=device)
-
-            # 2. Predict noise
-            eps_hat = self.noise_predictor(curr_theta, t_norm)
-
-            # 3. Retrieve schedule parameters
-            alpha = self.alpha[t]  # This is (1 - beta_t)
-            alpha_bar = self.alpha_cumprod[t]
-            beta = self.beta[t]
-
-            # 4. Standard DDPM Reverse Step
-            noise = torch.randn_like(curr_theta) if t > 0 else 0
-
-            # The DDPM update formula
-            # x_{t-1} = 1/sqrt(alpha) * (x_t - (1-alpha)/sqrt(1-alpha_bar) * eps_hat) + sigma * noise
-            coeff = (1 - alpha) / torch.sqrt(1 - alpha_bar)
-            curr_theta = (1.0 / torch.sqrt(alpha)) * (curr_theta - coeff * eps_hat) + torch.sqrt(beta) * noise
-
-        # 5. SCALE BACK DOWN for the INR
-        final_weights = self.scaler(curr_theta, reverse=True)
-        # This is crucial because the diffusion was trained on theta/scaling
-        return final_weights
 
     def _inr_decode(
         self,
