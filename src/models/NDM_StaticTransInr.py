@@ -235,7 +235,7 @@ class NDMStaticTransInr(nn.Module):
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = l_diff + l_prior + 5.0 * l_rec
+        elbo = l_diff + l_prior + 10*l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -256,7 +256,7 @@ class NDMStaticTransInr(nn.Module):
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
 
-        return 0.5 * ((x_flat - x_recon) ** 2).mean(dim=-1)
+        return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
     def _l_diff(self, theta_t, t_norm, epsilon):
         """
@@ -274,8 +274,8 @@ class NDMStaticTransInr(nn.Module):
         # Predict noise at time step t_idx using the noise predictor network
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
-        # 5. SIMPLE MSE LOSS (No variance weighting needed!)
-        return F.mse_loss(eps_hat, epsilon)
+        # 5. SIMPLE MSE LOSS
+        return 0.5 * ((epsilon - eps_hat) ** 2).sum(dim=-1)
 
     def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
         """

@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J TransNdmInr_0_2data            # Job name
+#BSUB -J TransNdmInr_noScheduler            # Job name
 #BSUB -q gpuv100                           # Queue to submit the job to
-#BSUB -W 200                              # Wall time limit (6 hours)
+#BSUB -W 1200                              # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/TransNdmInr_0_2data.out                        # Standard output redirection
-#BSUB -e src/outputs/TransNdmInr_0_2data.err                        # Standard error redirection
+#BSUB -o src/outputs/TransNdmInr_noScheduler.out                        # Standard output redirection
+#BSUB -e src/outputs/TransNdmInr_noScheduler.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,17 +16,16 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py \
-    --run_name TransNdmInr_0_2data \
+    --run_name TransNdmInr_noScheduler \
     --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 40 \
-    --batch_size 64 \
+    --epochs 200 \
+    --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.2 \
-    --use_scheduler \
+    --subset_frac 1.0 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -50,4 +49,5 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --noise_predictor_ff_dim 512 \
     --noise_predictor_depth 6 \
     --noise_predictor_dropout 0.1 \
-    --noise_predictor_t_embed_dim 256
+    --noise_predictor_t_embed_dim 256 
+   
