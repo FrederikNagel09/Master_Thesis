@@ -149,16 +149,16 @@ class NDMStaticTransInr(nn.Module):
         theta = self.sample_weight(n_samples)
         return self.decode_weights(theta, coords)
 
-    def loss(self, x: torch.Tensor):
+    def loss(self, x: torch.Tensor, scale_rec: float = 10.0) -> torch.Tensor:
         """
         Computes the negative ELBO for a batch of input images x.
         """
-        return self.negative_elbo(x)
+        return self.negative_elbo(x, scale_rec=scale_rec)
 
     # -------------------------------------------------------------------------
     # Negative ELBO Computation:
     # -------------------------------------------------------------------------
-    def negative_elbo(self, x: torch.Tensor):
+    def negative_elbo(self, x: torch.Tensor, scale_rec: float = 10.0) -> torch.Tensor:
         """
         Estimates the negative ELBO:
             L = E[ l_diff ] + prior_mask * l_prior + l_rec
@@ -216,7 +216,7 @@ class NDMStaticTransInr(nn.Module):
             print("###############################################\n")
             self.i += 1
 
-        if True and random.random() < probability_threshold + 0.02:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold + 0.02:
             print(f"DEBUG SCALED THETA: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
             print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
 
@@ -234,7 +234,7 @@ class NDMStaticTransInr(nn.Module):
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = l_diff + l_prior + 10 * l_rec
+        elbo = l_diff + l_prior + scale_rec * l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
