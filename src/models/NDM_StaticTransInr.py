@@ -23,6 +23,7 @@ import random
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
@@ -60,6 +61,8 @@ class WeightScaler(nn.Module):
                     self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
 
                 # Use current batch stats for standardization during training
+                print(f"DEBUG WeightScaler Forward: batch mean {batch_mean.mean().item():.4f} and std {batch_mean.std().item():.4f}")
+                print(f"DEBUG WeightScaler Forward: batch std {batch_std.mean().item():.4f} and std {batch_std.std().item():.4f}")
                 return (x - batch_mean) / batch_std
             else:
                 # Use remembered stats for standardization during inference/validation
@@ -67,7 +70,12 @@ class WeightScaler(nn.Module):
 
         else:
             # Re-scaling for INR (Reverse process)
-            # We ALWAYS use the running/remembered stats for sampling
+            print(
+                f"DEBUG WeightScaler Reverse: running mean {self.running_mean.mean().item():.4f} and {self.running_mean.std().item():.4f}"
+            )
+            print(
+                f"DEBUG WeightScaler Reverse: running std {self.running_std.mean().item():.4f} and std {self.running_std.std().item():.4f}"
+            )
             return (x * self.running_std) + self.running_mean
 
 
@@ -149,16 +157,16 @@ class NDMStaticTransInr(nn.Module):
         theta = self.sample_weight(n_samples)
         return self.decode_weights(theta, coords)
 
-    def loss(self, x: torch.Tensor, scale_rec: float = 10.0) -> torch.Tensor:
+    def loss(self, x: torch.Tensor) -> torch.Tensor:
         """
         Computes the negative ELBO for a batch of input images x.
         """
-        return self.negative_elbo(x, scale_rec=scale_rec)
+        return self.negative_elbo(x)
 
     # -------------------------------------------------------------------------
     # Negative ELBO Computation:
     # -------------------------------------------------------------------------
-    def negative_elbo(self, x: torch.Tensor, scale_rec: float = 10.0) -> torch.Tensor:
+    def negative_elbo(self, x: torch.Tensor) -> torch.Tensor:
         """
         Estimates the negative ELBO:
             L = E[ l_diff ] + prior_mask * l_prior + l_rec
@@ -189,7 +197,7 @@ class NDMStaticTransInr(nn.Module):
         theta_prime = self.scaler(theta_prime_raw, reverse=False)
 
         # Prints forwars process statistics for the first batch only, at specific time steps
-        if self.i == 0:
+        if self.i == 1:
             print("\n######### Forward Process Statistics: #########")
             # 1. Define the steps we want to see
             t_steps = [999, 900, 800, 700, 600, 500, 400, 300, 200, 100, 0]
@@ -234,7 +242,7 @@ class NDMStaticTransInr(nn.Module):
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = l_diff + l_prior + scale_rec * l_rec
+        elbo = l_diff + l_prior + 5.0 * l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -255,7 +263,7 @@ class NDMStaticTransInr(nn.Module):
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
 
-        return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
+        return 0.5 * ((x_flat - x_recon) ** 2).mean(dim=-1)
 
     def _l_diff(self, theta_t, t_norm, epsilon):
         """
@@ -274,7 +282,7 @@ class NDMStaticTransInr(nn.Module):
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
         # 5. SIMPLE MSE LOSS
-        return 0.5 * ((epsilon - eps_hat) ** 2).sum(dim=-1)
+        return F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)
 
     def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
         """

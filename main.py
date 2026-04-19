@@ -135,8 +135,7 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 1.0 \
-    --single_class \
+    --subset_frac 0.2 \
     --use_scheduler \
     --peak_lr 1e-4 \
     --T 1000 \

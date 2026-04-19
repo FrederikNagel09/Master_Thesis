@@ -32,27 +32,6 @@ if TYPE_CHECKING:
 # =============================================================================
 # Universal training loop
 # =============================================================================
-def get_rec_scale(epoch: int, total_epochs: int, scale_start: float = 10.0, scale_end: float = 0.1) -> float:
-    """
-    Computes the reconstruction loss scale for a given epoch.
-
-    Args:
-        epoch: Current epoch (1-indexed)
-        total_epochs: Total number of training epochs
-        scale_start: Initial reconstruction scale
-        scale_end: Final reconstruction scale after decay
-    Returns:
-        float: The reconstruction loss scale for this epoch
-    """
-    progress = epoch / total_epochs  # normalized progress in [0, 1]
-
-    if progress < 0.5:
-        return scale_start
-    elif progress < 0.65:
-        t = (progress - 0.5) / (0.65 - 0.5)  # t in [0, 1] over the decay window
-        return scale_start + t * (scale_end - scale_start)
-    else:
-        return scale_end
 
 
 def train(
@@ -190,9 +169,6 @@ def train(
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
         print(f"\n############## EPOCH: {epoch} ##############\n")
-
-        scale_rec = get_rec_scale(epoch, total_epochs=epochs)
-
         for batch in data_loader:
             # ── Forward pass (model-type dispatch) ───────────────────────────
             if model_type == "inr_vae":
@@ -220,7 +196,7 @@ def train(
                 x = batch[0] if isinstance(batch, list | tuple) else batch
                 x = x.to(device)
 
-                loss, l_diff, l_prior, l_rec = model.loss(x, scale_rec=scale_rec)
+                loss, l_diff, l_prior, l_rec = model.loss(x)
 
             # ── NaN/divergence diagnostics ───────────────────────────────────
             # Always check loss values regardless of debug flag
@@ -306,7 +282,7 @@ def train(
                 diff=f"{l_diff.item():.4f}",
                 prior=f"{l_prior.item():.4f}",
                 rec=f"{l_rec.item():.4f}",
-                lr=f"{scale_rec:.2e}",
+                lr=f"{current_lr:.2e}",
             )
             progress_bar.update()
 
