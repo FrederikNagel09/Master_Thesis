@@ -306,7 +306,7 @@ def train(
                 diff=f"{l_diff.item():.4f}",
                 prior=f"{l_prior.item():.4f}",
                 rec=f"{l_rec.item():.4f}",
-                lr=f"{current_lr:.2e}",
+                lr=f"{scale_rec:.2e}",
             )
             progress_bar.update()
 
