@@ -180,7 +180,7 @@ class NDMTemporalTransInr(nn.Module):
         prior_mask = 1.0 * (t_idx == self.T - 1).float()
         elbo = l_diff + prior_mask * l_prior + 5.0 * l_rec
 
-        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
     # Loss term Helpers:
@@ -192,16 +192,16 @@ class NDMTemporalTransInr(nn.Module):
         The idea is for this loss term to push the Weight Encoder to produce Theta prime weights that create good reconstructed images.
         Essentially we want the weight encoder to procuse good weights that the diffusion process, then can learn to recreate.
         """
-        # rec_mask = (t_idx == 0).float()
+        B = x.shape[0]  # noqa: N806
+        t_zero = torch.zeros(B, device=x.device)          # t_norm = 0 for all
+        theta_0 = self.weight_encoder(x, t_zero)           # F_phi(x, 0)
 
-        x_recon = self._inr_decode(z_t)
-        x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
+        x_recon = self._inr_decode(theta_0)
+        x_flat = x.reshape(B, -1).clamp(-1, 1)
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
-
-        l_rec = 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)  # (batch,)
-        l_rec = (l_rec).mean()
-        return l_rec
+            
+        return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)  # (B,)
 
     def _l_diff(self, x, theta_t, t_idx, t_norm, theta_prime_t):
         """
@@ -268,7 +268,7 @@ class NDMTemporalTransInr(nn.Module):
 
     @torch.no_grad()
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
-        shape = (n_samples, self.data_dim)
+        shape = (n_samples, self.weight_encoder.weight_dim)  # (n_samples, weight_dim)
         device = self.sqrt_alpha_cumprod.device
         z_t = torch.randn(shape, device=device)
 
@@ -290,7 +290,7 @@ class NDMTemporalTransInr(nn.Module):
             x_hat = self._inr_decode(theta_hat)  # (n_samples, data_dim)
 
             if t == 0:
-                z_t = x_hat
+                z_t = theta_hat
                 break
 
             s = t - 1
