@@ -112,6 +112,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--encoder_trans_n_groups", type=int, default=8)
     p.add_argument("--encoder_trans_update_strategy", type=str, default="normalize", choices=["normalize", "scale", "identity"])
     p.add_argument("--encoder_trans_t_embed_dim", type=int, default=128)
+    p.add_argument("--encoder_time_freq_dim", type=int, default=128)
 
     # ── TransInr encoder args ─────────────────────────────────────────────────
     p.add_argument("--noise_predictor_dim", type=int, default=256)

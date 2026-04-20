@@ -11,7 +11,7 @@ Supported model names (args.model):
     "ndm_inr"   - NeuralDiffusionModel with INR reconstruction
 """
 
-import torch.nn as nn
+import torch.nn as nn  # noqa: I001
 
 from src.models.NDM_INR import (
     INR,
@@ -27,7 +27,8 @@ from src.models.NDM_INR import (
     TransformerStaticWeightEncoder,
     TransformerTemporalWeightEncoder,
 )
-from src.models.trans_inr_encoder import TransInrNoisePredictor
+from src.models.trans_inr_encoder import TransInrNoisePredictor, TransInrTemporalEncoder
+from src.models.trans_inr import make_coord_grid
 
 # =============================================================================
 # Public API
@@ -72,7 +73,7 @@ def build_model(args, data_config: dict) -> nn.Module:
 # =============================================================================
 # Printing functions:
 # =============================================================================
-def print_encoder_stats(model):
+def print_encoder_stats(model, mode="Static"):
     def count(params):
         return sum(p.numel() for p in params)
 
@@ -83,7 +84,11 @@ def print_encoder_stats(model):
     wtoken_p = model.wtokens.numel()
     postfc_p = count(model.wtoken_postfc.parameters())
 
-    total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p
+    if mode == "Temporal":
+        time_embedding = count(model.time_mlp.parameters())
+        total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p + time_embedding
+    else:
+        total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p
     inr_total = sum(s[0] * s[1] for s in model.inr.param_shapes.values())
 
     print("\n" + "=" * 60)
@@ -91,6 +96,7 @@ def print_encoder_stats(model):
     print("=" * 60)
     print(f"Architecture: {model.transformer.__class__.__name__}")
     print(f"Weight Dim (Total INR params): {model.weight_dim:,}")
+    print(f"Encoder Mode: {mode}")
     print("-" * 60)
 
     print("Learnable Parameters:")
@@ -99,6 +105,8 @@ def print_encoder_stats(model):
     print(f"  Weight Tokens (N_w):  {wtoken_p:>12,} params")
     print(f"  Base INR Weights:     {base_p:>12,} params")
     print(f"  Wtoken Post-FC:       {postfc_p:>12,} params")
+    if mode == "Temporal":
+        print(f"  Time MLP:            {time_embedding:>12,} params")
     print(f"  {'─'*44}")
     print(f"  Total Learnable:      {total_learnable:>12,} params")
 
@@ -669,29 +677,23 @@ def _build_ndm_transinr(args, data_config: dict):
 def _build_ndm_temporal_transinr(args, data_config: dict):
     """
     Build NDMTemporalTransInr:
-        TransInrTemporalEncoder as F_phi(x, t) + NDM diffusion in weight space.
+        TransInrEncoder as F(x, t) + NDM diffusion in weight space.
     """
-    from src.models.NDM_TemporalTransInr import NDMTemporalTransInr
-    from src.models.trans_inr import make_coord_grid
-    from src.models.trans_inr_temporal_encoder import TransInrTemporalEncoder
-    from src.utility.model_builders import build_noise_predictor
 
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
 
-    # ── TransInr config ───────────────────────────────────────────────────────
-    dim = getattr(args, "trans_dim", 256)
-    n_head = getattr(args, "trans_n_head", 8)
-    head_dim = getattr(args, "trans_head_dim", 32)
-    ff_dim = getattr(args, "trans_ff_dim", 512)
-    enc_depth = getattr(args, "trans_enc_depth", 4)
-    dec_depth = getattr(args, "trans_dec_depth", 4)
-    patch_size = getattr(args, "trans_patch_size", 4)
-    n_groups = getattr(args, "trans_n_groups", 8)
-    update_strat = getattr(args, "trans_update_strategy", "normalize")
-    t_embed_dim = getattr(args, "trans_t_embed_dim", 128)
-
+    # ── TransInrEncoder config ────────────────────────────────────────────────
+    encoder_dim = getattr(args, "encoder_trans_dim", 256)
+    encoder_n_head = getattr(args, "encoder_trans_n_head", 8)
+    encoder_head_dim = getattr(args, "encoder_trans_head_dim", 32)
+    encoder_ff_dim = getattr(args, "encoder_trans_ff_dim", 512)
+    encoder_enc_depth = getattr(args, "encoder_trans_enc_depth", 4)
+    encoder_dec_depth = getattr(args, "encoder_trans_dec_depth", 4)
+    encoder_patch_size = getattr(args, "encoder_trans_patch_size", 4)
+    encoder_n_groups = getattr(args, "encoder_trans_n_groups", 8)
+    encoder_update_strat = getattr(args, "encoder_trans_update_strategy", "scale")
     inr_hidden = getattr(args, "inr_hidden_dim", 256)
     inr_layers = getattr(args, "inr_layers", 5)
 
@@ -700,10 +702,9 @@ def _build_ndm_temporal_transinr(args, data_config: dict):
         "params": {
             "in_channels": channels,
             "image_size": img_size,
-            "patch_size": patch_size,
-            "n_head": n_head,
-            "head_dim": head_dim,
-            # dim injected via extra_args
+            "patch_size": encoder_patch_size,
+            "n_head": encoder_n_head,
+            "head_dim": encoder_head_dim,
         },
     }
 
@@ -721,51 +722,57 @@ def _build_ndm_temporal_transinr(args, data_config: dict):
     transformer_cfg = {
         "target": "src.models.trans_inr_helpers.Transformer",
         "params": {
-            "dim": dim,
-            "encoder_depth": enc_depth,
-            "decoder_depth": dec_depth,
-            "n_head": n_head,
-            "head_dim": head_dim,
-            "ff_dim": ff_dim,
+            "dim": encoder_dim,
+            "encoder_depth": encoder_enc_depth,
+            "decoder_depth": encoder_dec_depth,
+            "n_head": encoder_n_head,
+            "head_dim": encoder_head_dim,
+            "ff_dim": encoder_ff_dim,
         },
     }
 
     encoder = TransInrTemporalEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
-        n_groups=n_groups,
+        n_groups=encoder_n_groups,
         transformer=transformer_cfg,
-        update_strategy=update_strat,
-        t_embed_dim=t_embed_dim,
+        update_strategy=encoder_update_strat,
         in_channels=channels,
         img_size=img_size,
+        time_freq_dim=getattr(args, "encoder_time_freq_dim", 16),
     )
 
     weight_dim = encoder.weight_dim
-    print(f"  TransInrTemporalEncoder weight_dim : {weight_dim:,}")
+    print_encoder_stats(encoder, mode="Temporal")  # not model
 
-    # ── Noise predictor ───────────────────────────────────────────────────────
-    network = build_noise_predictor(
-        variant=getattr(args, "predictor_variant", "mlp"),
+    # ── TransInrNoisePredictor config ─────────────────────────────────────────
+    # Since we are now Encoder-only, we combine the depths or pick the max.
+    # Let's combine them to maintain the total layer count.
+    noise_predictor_depth = getattr(args, "noise_predictor_depth", 4)
+
+    network = TransInrNoisePredictor(
         weight_dim=weight_dim,
-        hidden_dim=getattr(args, "noise_hidden_dim", 512),
-        n_blocks=getattr(args, "noise_n_blocks", 4),
-        t_embed_dim=getattr(args, "noise_t_embed", 128),
-        chunk_size=getattr(args, "transformer_chunk_size", 32),
-        d_model=getattr(args, "transformer_d_model", 256),
-        n_heads=getattr(args, "transformer_n_heads", 8),
-        n_layers=getattr(args, "transformer_n_layers", 4),
-        d_ff=getattr(args, "transformer_d_ff", 1024),
-        dropout=getattr(args, "transformer_dropout", 0.1),
+        dim=getattr(args, "noise_predictor_dim", 256),
+        depth=noise_predictor_depth,
+        n_head=getattr(args, "noise_predictor_n_head", 8),
+        head_dim=getattr(args, "noise_predictor_head_dim", 32),
+        ff_dim=getattr(args, "noise_predictor_ff_dim", 1024),
+        chunk_size=getattr(args, "noise_predictor_chunk_size", 32),
+        t_embed_dim=getattr(args, "noise_predictor_t_embed", 128),
+        dropout=getattr(args, "dropout", 0.0),
     )
+
+    print_noise_predictor_stats(network)
+
+    from src.models.NDM_TemporalTransInr import NDMTemporalTransInr
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
 
     # ── Assemble ──────────────────────────────────────────────────────────────
     model = NDMTemporalTransInr(
-        network=network,
-        encoder=encoder,
+        NoisePredictor=network,
+        WeightEncoder=encoder,
         coord_grid=coord_grid,
         beta_1=args.beta_1,
         beta_T=args.beta_T,
@@ -774,12 +781,6 @@ def _build_ndm_temporal_transinr(args, data_config: dict):
         data_dim=data_dim,
         img_size=img_size,
     )
-
-    enc_params = sum(p.numel() for p in encoder.parameters())
-    net_params = sum(p.numel() for p in network.parameters())
-    print(f"    Encoder (TransInrTemporal) : {enc_params:,}")
-    print(f"    Noise predictor            : {net_params:,}")
-
     return model
 
 
@@ -789,7 +790,6 @@ def _build_ndm_static_transinr(args, data_config: dict):
         TransInrEncoder as W(x) + NDM diffusion in weight space.
     """
     from src.models.NDM_StaticTransInr import NDMStaticTransInr
-    from src.models.trans_inr import make_coord_grid
     from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor
 
     channels = data_config["channels"]
