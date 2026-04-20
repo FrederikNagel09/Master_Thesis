@@ -192,9 +192,13 @@ class NDMStaticTransInr(nn.Module):
 
         # Send image through Weight Encoder to get Theta_prime
         theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
+        l_reg = theta_prime_raw.pow(2).mean()
+        print(f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+
 
         # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
         theta_prime = self.scaler(theta_prime_raw, reverse=False)
+        print(f"DEBUG normalized: mean={theta_prime.mean():.4f}, std={theta_prime.std():.4f}, min={theta_prime.min():.4f}, max={theta_prime.max():.4f}")
 
         # Prints forwars process statistics for the first batch only, at specific time steps
         if self.i == 1:
@@ -242,7 +246,7 @@ class NDMStaticTransInr(nn.Module):
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = l_diff + l_prior + 5.0 * l_rec
+        elbo = l_diff + l_prior + 5.0 * l_rec + 0.01 * l_reg
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -307,7 +311,7 @@ class NDMStaticTransInr(nn.Module):
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
         weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
-        clip_value = 2.0
+        clip_value = 10.0
         # 1. Start from pure Gaussian noise
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
@@ -328,10 +332,11 @@ class NDMStaticTransInr(nn.Module):
             # This formula projects the current noisy sample back to the "signal"
             sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
             pred_x0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
-
+            print(f"DEBUG pred_x0 before clipping: mean={pred_x0.mean():.4f}, std={pred_x0.std():.4f}, min={pred_x0.min():.4f}, max={pred_x0.max():.4f}")
             # 5. The "Safety Rail": Clip predicted weights to the training distribution
             # Since your weights were scaled to std ~1, 2.0 captures most of the signal
             pred_x0 = torch.clamp(pred_x0, -clip_value, clip_value)
+            print(f"DEBUG pred_x0 after clipping: mean={pred_x0.mean():.4f}, std={pred_x0.std():.4f}, min={pred_x0.min():.4f}, max={pred_x0.max():.4f}")    
 
             # 6. Step back to z_{t-1}
             if t > 0:
