@@ -164,37 +164,42 @@ python main.py \
 
     
 python main.py \
-    --run_name ndm_static_transinr_learn_scale  \
-    --model ndm_static_transinr\
+    --run_name TransNdmInr_temporal_v1 \
+    --model ndm_temporal_transinr\
     --dataset mnist \
-    --epochs 50 \
+    --epochs 40 \
     --batch_size 128 \
-    --lr 5e-5 \
+    --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.1 \
+    --subset_frac 0.2 \
     --use_scheduler \
-    --peak_lr 5e-5 \
-    --T 500 \
+    --peak_lr 1e-4 \
+    --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 64 \
     --inr_layers 4 \
-    --trans_dim 256 \
-    --trans_n_head 4 \
-    --trans_head_dim 32 \
-    --trans_ff_dim 128 \
-    --trans_enc_depth 4 \
-    --trans_dec_depth 4 \
-    --trans_patch_size 4 \
-    --trans_n_groups 32 \
-    --trans_update_strategy scale \
-    --predictor_variant mlp \
-    --noise_hidden_dim 256 \
-    --noise_n_blocks 6 \
-    --noise_t_embed 512 
+    --encoder_trans_dim 128 \
+    --encoder_trans_n_head 4 \
+    --encoder_trans_head_dim 32 \
+    --encoder_trans_ff_dim 512 \
+    --encoder_trans_enc_depth 4 \
+    --encoder_trans_dec_depth 4 \
+    --encoder_trans_patch_size 4 \
+    --encoder_trans_n_groups 64 \
+    --encoder_time_freq_dim 128 \
+    --encoder_trans_update_strategy scale \
+    --predictor_variant transformer \
+    --noise_predictor_dim 128 \
+    --noise_predictor_n_head 4 \
+    --noise_predictor_head_dim 32 \
+    --noise_predictor_ff_dim 512 \
+    --noise_predictor_depth 6 \
+    --noise_predictor_dropout 0.1 \
+    --noise_predictor_t_embed_dim 256
 
 """
 

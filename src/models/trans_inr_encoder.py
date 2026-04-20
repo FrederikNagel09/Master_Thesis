@@ -285,6 +285,198 @@ class TransInrEncoder(nn.Module):
         return flat
 
 
+class TransInrTemporalEncoder(nn.Module):
+    """
+    TransInr repurposed as a temporal weight encoder W(x, t).
+    Forward pass returns a flat weight vector (B, weight_dim).
+    The SIREN is exposed as self.inr so the NDM can use it for decoding.
+
+    Args
+    ----
+    tokenizer        : config dict for ImageTokenizer
+    inr              : config dict for SIREN
+    n_groups         : number of wtoken groups per INR parameter
+    transformer      : config dict for Transformer (enc+dec)
+    update_strategy  : one of {"normalize", "scale", "identity"}
+    time_freq_dim    : number of sinusoidal frequencies for time embedding
+    """
+
+    def __init__(
+        self,
+        tokenizer: dict,
+        inr: dict,
+        n_groups: int,
+        transformer: dict,
+        update_strategy: str = "normalize",
+        in_channels: int = 1,
+        img_size: int = 28,
+        time_freq_dim: int = 128,
+    ):
+        super().__init__()
+        dim = transformer["params"]["dim"]
+        self.in_channels = in_channels
+        self.img_size = img_size
+
+        # ── Time embedding ─────────────────────────────────────────────────────
+        # Sinusoidal features → learned projection to dim
+        self.time_freq_dim = time_freq_dim
+        self.time_mlp = nn.Sequential(
+            nn.Linear(time_freq_dim * 2, dim),
+            nn.SiLU(),
+            nn.Linear(dim, dim),
+        )
+        # Fixed frequency bands — not a parameter
+        freqs = torch.arange(1, time_freq_dim + 1, dtype=torch.float32)
+        self.register_buffer("time_freqs", freqs)  # (time_freq_dim,)
+
+        # ── Sub-modules ───────────────────────────────────────────────────────
+        self.tokenizer = instantiate_from_config(tokenizer, extra_args={"dim": dim})
+        self.inr: SIREN = instantiate_from_config(inr)
+        self.transformer = instantiate_from_config(transformer)
+
+        # ── Base INR parameters + wtoken machinery ────────────────────────────
+        self.base_params = nn.ParameterDict()
+        self.wtoken_postfc = nn.ModuleDict()
+        self.wtoken_rng: dict[str, tuple[int, int]] = {}
+        n_wtokens = 0
+        for name, shape in self.inr.param_shapes.items():
+            self.base_params[name] = nn.Parameter(self.inr.init_wb(shape, name=name))
+            g = min(n_groups, shape[1])
+            assert shape[1] % g == 0, f"n_groups={n_groups} must divide shape[1]={shape[1]} for layer {name}"
+            self.wtoken_postfc[name] = nn.Sequential(
+                nn.LayerNorm(dim),
+                nn.Linear(dim, shape[0] - 1),
+            )
+            self.wtoken_rng[name] = (n_wtokens, n_wtokens + g)
+            n_wtokens += g
+        self.wtokens = nn.Parameter(torch.randn(n_wtokens, dim))
+        self.update_strategy = update_strategies[update_strategy]
+
+        self._weight_dim = sum(shape[0] * shape[1] for shape in self.inr.param_shapes.values())
+        self._param_names: list[str] = list(self.inr.param_shapes.keys())
+        self._param_shapes: dict[str, tuple[int, int]] = dict(self.inr.param_shapes)
+
+        nparams = (
+            sum(p.numel() for p in self.transformer.parameters())
+            + sum(p.numel() for p in self.tokenizer.parameters())
+            + sum(p.numel() for p in self.base_params.values())
+            + self.wtokens.numel()
+            + sum(p.numel() for p in self.wtoken_postfc.parameters())
+            + sum(p.numel() for p in self.time_mlp.parameters())
+        )
+        print(f"TransInrTemporalEncoder — total parameters: {nparams / 1e6:.3f}M")
+        print(f"TransInrTemporalEncoder — weight_dim: {self._weight_dim}")
+
+    # -------------------------------------------------------------------------
+    # Time embedding
+    # -------------------------------------------------------------------------
+    def _time_embedding(self, t_norm: torch.Tensor) -> torch.Tensor:
+        """
+        Sinusoidal time embedding projected to transformer dim.
+        Args:  t_norm : (B,) continuous time in [0, 1]
+        Returns: (B, 1, dim) — ready to broadcast over token sequence
+        """
+        # (B, time_freq_dim) — sin and cos features over log-spaced frequencies
+        angles = t_norm[:, None] * self.time_freqs[None, :] * torch.pi  # (B, F)
+        t_emb = torch.cat([angles.sin(), angles.cos()], dim=-1)  # (B, 2F)
+        t_emb = self.time_mlp(t_emb)  # (B, dim)
+        return t_emb.unsqueeze(1)  # (B, 1, dim)
+
+    # -------------------------------------------------------------------------
+    # Public properties
+    # -------------------------------------------------------------------------
+    @property
+    def weight_dim(self) -> int:
+        """Flat weight vector dimension — matches NDMStaticINR's expected weight_dim."""
+        return self._weight_dim
+
+    # -------------------------------------------------------------------------
+    # Flatten / inflate helpers
+    # -------------------------------------------------------------------------
+    def _flatten_params(self, param_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Flatten an ordered param dict into a single vector per batch item.
+        Args:    param_dict : {name: (B, shape[0], shape[1])}
+        Returns: flat       : (B, weight_dim)
+        """
+        parts = []
+        for name in self._param_names:
+            wb = param_dict[name]
+            B = wb.shape[0]  # noqa: N806
+            parts.append(wb.reshape(B, -1))
+        return torch.cat(parts, dim=1)
+
+    def inflate(self, flat_weights: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Inflate a flat weight vector back into a param dict.
+        Args:    flat_weights : (B, weight_dim)
+        Returns: param_dict   : {name: (B, shape[0], shape[1])}
+        """
+        B = flat_weights.shape[0]  # noqa: N806
+        param_dict = {}
+        offset = 0
+        for name in self._param_names:
+            s0, s1 = self._param_shapes[name]
+            n = s0 * s1
+            chunk = flat_weights[:, offset : offset + n]
+            param_dict[name] = chunk.reshape(B, s0, s1)
+            offset += n
+        return param_dict
+
+    # -------------------------------------------------------------------------
+    # Forward — (image, t) → flat weight vector
+    # -------------------------------------------------------------------------
+    def forward(self, x: torch.Tensor, t_norm: torch.Tensor, **kwargs) -> torch.Tensor:
+        """
+        Args
+        ----
+        x      : (B, C, H, W) or (B, C*H*W)  raw image tensor
+        t_norm : (B,)  continuous timestep in [0, 1]
+        Returns
+        -------
+        flat_weights : (B, weight_dim)
+        """
+        # ── 0. Flat → spatial if needed ───────────────────────────────────────
+        if x.dim() == 2:
+            x = x.view(x.shape[0], self.in_channels, self.img_size, self.img_size)
+
+        # 1. Tokenise image → (B, N_patch, dim)
+        dtokens = self.tokenizer(x, **kwargs)
+        B = dtokens.shape[0]  # noqa: N806
+
+        # 2. Time embedding → (B, 1, dim), inject into both token streams
+        t_emb = self._time_embedding(t_norm)  # (B, 1, dim)
+        wtokens = einops.repeat(self.wtokens, "n d -> b n d", b=B)
+        dtokens = dtokens + t_emb  # broadcast over N_patch
+        wtokens = wtokens + t_emb  # broadcast over N_w
+
+        # 3. Transformer: image tokens → encoder, wtokens → decoder
+        cls_name = self.transformer.__class__.__name__
+        if cls_name == "Transformer":
+            trans_out = self.transformer(src=dtokens, tgt=wtokens)
+        elif cls_name == "TransformerEncoder":
+            combined = torch.cat([dtokens, wtokens], dim=1)
+            full_out = self.transformer(combined)
+            trans_out = full_out[:, -self.wtokens.shape[0] :, :]
+        else:
+            raise ValueError(f"Unsupported transformer class: {cls_name}")
+
+        # 4. Modulate base INR parameters with transformer output
+        param_dict = {}
+        for name, shape in self.inr.param_shapes.items():  # noqa: B007
+            wb = einops.repeat(self.base_params[name], "n m -> b n m", b=B)
+            w = wb[:, :-1, :]  # weight rows  (B, shape[0]-1, shape[1])
+            b = wb[:, -1:, :]  # bias row     (B, 1,          shape[1])
+            l, r = self.wtoken_rng[name]  # noqa: E741
+            x_mod = self.wtoken_postfc[name](trans_out[:, l:r, :])
+            x_mod = x_mod.transpose(-1, -2)
+            w = self.update_strategy(w, x_mod)
+            param_dict[name] = torch.cat([w, b], dim=1)
+
+        # 5. Flatten to a single vector per batch item
+        return self._flatten_params(param_dict)
+
+
 class TransInrNoisePredictor(nn.Module):
     """ """
 
