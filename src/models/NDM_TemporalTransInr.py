@@ -178,7 +178,7 @@ class NDMTemporalTransInr(nn.Module):
         l_rec = self._l_rec(x, z_t, t_idx)  # scalar
 
         prior_mask = 1.0 * (t_idx == self.T - 1).float()
-        elbo = l_diff + prior_mask * l_prior + 5.0 * l_rec
+        elbo = l_diff + prior_mask * l_prior + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -193,14 +193,14 @@ class NDMTemporalTransInr(nn.Module):
         Essentially we want the weight encoder to procuse good weights that the diffusion process, then can learn to recreate.
         """
         B = x.shape[0]  # noqa: N806
-        t_zero = torch.zeros(B, device=x.device)          # t_norm = 0 for all
-        theta_0 = self.weight_encoder(x, t_zero)           # F_phi(x, 0)
+        t_zero = torch.zeros(B, device=x.device)  # t_norm = 0 for all
+        theta_0 = self.weight_encoder(x, t_zero)  # F_phi(x, 0)
 
         x_recon = self._inr_decode(theta_0)
         x_flat = x.reshape(B, -1).clamp(-1, 1)
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
-            
+
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)  # (B,)
 
     def _l_diff(self, x, theta_t, t_idx, t_norm, theta_prime_t):
@@ -279,14 +279,14 @@ class NDMTemporalTransInr(nn.Module):
         T_minus_1 = max(self.T - 1, 1)  # noqa: N806
 
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T, leave=False):
-            t_norm = torch.full((n_samples, 1), t / T_minus_1, device=device)
+            t_norm = torch.full((n_samples, 1), t / T_minus_1, device=device)  # (n, 1) for noise_predictor
+            t_norm_flat = torch.full((n_samples,), t / T_minus_1, device=device)  # (n,) for weight_encoder
 
             # --- Predict x_hat ---
             eps_hat = self.noise_predictor(z_t, t_norm)
             alpha_t = alpha[t]
             sigma_t = sigma[t]
             theta_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-
             x_hat = self._inr_decode(theta_hat)  # (n_samples, data_dim)
 
             if t == 0:
@@ -294,12 +294,12 @@ class NDMTemporalTransInr(nn.Module):
                 break
 
             s = t - 1
-            s_norm = torch.full((n_samples, 1), s / T_minus_1, device=device)
+            s_norm_flat = torch.full((n_samples,), s / T_minus_1, device=device)  # (n,) for weight_encoder
 
             # --- Batch both F_phi calls into one forward pass ---
             x_hat_2x = torch.cat([x_hat, x_hat], dim=0)  # (2*n, data_dim)
-            t_norm_2x = torch.cat([s_norm, t_norm], dim=0)  # (2*n, 1)
-            Fx_2x = self.weight_encoder(x_hat_2x, t_norm_2x)  # (2*n, data_dim)  # noqa: N806
+            t_norm_2x = torch.cat([s_norm_flat, t_norm_flat], dim=0)  # (2*n,)
+            Fx_2x = self.weight_encoder(x_hat_2x, t_norm_2x)  # (2*n, weight_dim)  # noqa: N806
             Fx_hat_s, Fx_hat_t = Fx_2x.chunk(2, dim=0)  # noqa: N806
 
             # --- Pre-looked-up scalars, no .view() reshaping needed ---

@@ -25,7 +25,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 1.0 \
+    --subset_frac 0.001 \
     --use_scheduler \
     --peak_lr 1e-4 \
     --T 1000 \
@@ -38,8 +38,8 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --encoder_trans_n_head 4 \
     --encoder_trans_head_dim 32 \
     --encoder_trans_ff_dim 512 \
-    --encoder_trans_enc_depth 4 \
-    --encoder_trans_dec_depth 4 \
+    --encoder_trans_enc_depth 3 \
+    --encoder_trans_dec_depth 3 \
     --encoder_trans_patch_size 4 \
     --encoder_trans_n_groups 64 \
     --encoder_time_freq_dim 128 \
@@ -49,7 +49,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --noise_predictor_n_head 4 \
     --noise_predictor_head_dim 32 \
     --noise_predictor_ff_dim 512 \
-    --noise_predictor_depth 6 \
+    --noise_predictor_depth 4 \
     --noise_predictor_dropout 0.1 \
     --noise_predictor_t_embed_dim 256
    
