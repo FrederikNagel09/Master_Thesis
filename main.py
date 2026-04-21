@@ -152,7 +152,7 @@ python main.py \
     --encoder_trans_dec_depth 3 \
     --encoder_trans_patch_size 4 \
     --encoder_trans_n_groups 64 \
-    --encoder_trans_update_strategy scale \
+    --encoder_trans_update_strategy normalize \
     --predictor_variant transformer \
     --noise_predictor_dim 128 \
     --noise_predictor_n_head 4 \
