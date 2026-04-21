@@ -184,53 +184,56 @@ class NDMStaticTransInr(nn.Module):
         # Normalize time step to [0, 1] for network input
         t_norm = t_idx.float() / (self.T - 1)
 
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:  # print debug info for ~0.1% of batches
-            print("==================== DEBUG: NDM_INR.py ====================")
-            print(f"t_norm (normalized time): {t_norm.min():.4f} to {t_norm.max():.4f}")
-            print(f"t_idx (time step indices): {t_idx.min().item()} to {t_idx.max().item()}")
-            print("================================================================")
-
         # Send image through Weight Encoder to get Theta_prime
         theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
-        l_reg = theta_prime_raw.pow(2).mean()
-        print(f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
-
 
         # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
         theta_prime = self.scaler(theta_prime_raw, reverse=False)
-        print(f"DEBUG normalized: mean={theta_prime.mean():.4f}, std={theta_prime.std():.4f}, min={theta_prime.min():.4f}, max={theta_prime.max():.4f}")
 
-        # Prints forwars process statistics for the first batch only, at specific time steps
-        if self.i == 1:
-            print("\n######### Forward Process Statistics: #########")
-            # 1. Define the steps we want to see
-            t_steps = [999, 900, 800, 700, 600, 500, 400, 300, 200, 100, 0]
+        if GLOBAL_DEBUG_BOOL:
+            print(
+                f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
+                f"std={theta_prime_raw.std():.4f}, "
+                f"min={theta_prime_raw.min():.4f}, "
+                f"max={theta_prime_raw.max():.4f}"
+            )
+            print(
+                f"DEBUG normalized: mean={theta_prime.mean():.4f}, "
+                f"std={theta_prime.std():.4f}, "
+                f"min={theta_prime.min():.4f}, "
+                f"max={theta_prime.max():.4f}"
+            )
 
-            # 2. Convert to a long tensor on the correct device
-            t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=theta_prime.device)
+            # Prints forwars process statistics for the first batch only, at specific time steps
+            if self.i == 1:
+                print("\n######### Forward Process Statistics: #########")
+                # 1. Define the steps we want to see
+                t_steps = [999, 900, 800, 700, 600, 500, 400, 300, 200, 100, 0]
 
-            for t in t_idx_debug:
-                # Use .item() for the index but keep the tensor for schedule lookup
-                idx = t.item()
+                # 2. Convert to a long tensor on the correct device
+                t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=theta_prime.device)
 
-                # 3. Retrieve schedule parameters for this specific step
-                # We use [idx] to get the scalar, then unsqueeze to handle broadcasting
-                alpha_t = self.sqrt_alpha_cumprod[idx]
-                sigma_t = self.sigma[idx]
+                for t in t_idx_debug:
+                    # Use .item() for the index but keep the tensor for schedule lookup
+                    idx = t.item()
 
-                # 4. Generate the noisy sample (Forward Process)
-                epsilon_t = torch.randn_like(theta_prime)
-                # Note: theta_prime is (Batch, Dim), alpha_t is scalar
-                theta_t = alpha_t * theta_prime + sigma_t * epsilon_t
+                    # 3. Retrieve schedule parameters for this specific step
+                    # We use [idx] to get the scalar, then unsqueeze to handle broadcasting
+                    alpha_t = self.sqrt_alpha_cumprod[idx]
+                    sigma_t = self.sigma[idx]
 
-                print(f"DEBUG SAMPLE t={idx:3d}: mean={theta_t.mean():.4f}, std={theta_t.std():.4f}")
+                    # 4. Generate the noisy sample (Forward Process)
+                    epsilon_t = torch.randn_like(theta_prime)
+                    # Note: theta_prime is (Batch, Dim), alpha_t is scalar
+                    theta_t = alpha_t * theta_prime + sigma_t * epsilon_t
 
-            print("###############################################\n")
-            self.i += 1
+                    print(f"DEBUG SAMPLE t={idx:3d}: mean={theta_t.mean():.4f}, std={theta_t.std():.4f}")
 
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold + 0.02:
-            print(f"DEBUG SCALED THETA: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
-            print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
+                print("###############################################\n")
+                self.i += 1
+
+                print(f"DEBUG SCALED THETA: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
+                print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
         theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
@@ -245,8 +248,7 @@ class NDMStaticTransInr(nn.Module):
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
-        # Combine to get ELBO (mean over batch)
-        elbo = (self.T - 2) *l_diff + l_prior + l_rec 
+        elbo = l_diff + l_prior + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -267,7 +269,7 @@ class NDMStaticTransInr(nn.Module):
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
 
-        return 0.5 * ((x_flat - x_recon) ** 2).mean(dim=-1)
+        return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
     def _l_diff(self, theta_t, t_norm, epsilon):
         """
@@ -286,7 +288,7 @@ class NDMStaticTransInr(nn.Module):
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
         # 5. SIMPLE MSE LOSS
-        return F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)
+        return F.mse_loss(eps_hat, epsilon, reduction="none").sum(dim=-1)
 
     def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
         """
@@ -311,7 +313,7 @@ class NDMStaticTransInr(nn.Module):
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
         weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
-        clip_value = 10.0
+        clip_value = 3
         # 1. Start from pure Gaussian noise
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
@@ -331,12 +333,11 @@ class NDMStaticTransInr(nn.Module):
             # 4. Predict the clean weights (x0)
             # This formula projects the current noisy sample back to the "signal"
             sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
-            pred_x0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
-            print(f"DEBUG pred_x0 before clipping: mean={pred_x0.mean():.4f}, std={pred_x0.std():.4f}, min={pred_x0.min():.4f}, max={pred_x0.max():.4f}")
-            # 5. The "Safety Rail": Clip predicted weights to the training distribution
-            # Since your weights were scaled to std ~1, 2.0 captures most of the signal
-            pred_x0 = torch.clamp(pred_x0, -clip_value, clip_value)
-            print(f"DEBUG pred_x0 after clipping: mean={pred_x0.mean():.4f}, std={pred_x0.std():.4f}, min={pred_x0.min():.4f}, max={pred_x0.max():.4f}")    
+
+            theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
+
+            # 5. Clip predicted weights to the training distribution
+            theta_0_clipped = torch.clamp(theta_0, -clip_value, clip_value)
 
             # 6. Step back to z_{t-1}
             if t > 0:
@@ -346,7 +347,7 @@ class NDMStaticTransInr(nn.Module):
                 coeff_x0 = (torch.sqrt(alpha_bar_prev) * beta) / (1.0 - alpha_bar)
                 coeff_xt = (torch.sqrt(alpha) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar)
 
-                mean = coeff_x0 * pred_x0 + coeff_xt * curr_theta
+                mean = coeff_x0 * theta_0_clipped + coeff_xt * curr_theta
 
                 # Use the posterior variance (more stable than raw beta)
                 sigma = torch.sqrt(beta * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
@@ -355,11 +356,22 @@ class NDMStaticTransInr(nn.Module):
                 curr_theta = mean + sigma * noise
             else:
                 # At t=0, the denoised sample is just our predicted x0
-                curr_theta = pred_x0
+                curr_theta = theta_0_clipped
 
-            # Debug prints to verify the explosion is gone
-            if t % 100 == 0:
-                print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
+            if GLOBAL_DEBUG_BOOL:
+                print(
+                    "DEBUG theta_0 before clipping: "
+                    f"mean={theta_0.mean():.4f}, std={theta_0.std():.4f}, "
+                    f"min={theta_0.min():.4f}, max={theta_0.max():.4f}"
+                )
+                print(
+                    "DEBUG theta_0 after clipping: "
+                    f"mean={theta_0_clipped.mean():.4f}, std={theta_0_clipped.std():.4f}, "
+                    f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
+                )
+                # Debug prints to verify the explosion is gone
+                if t % 100 == 0:
+                    print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
 
         final_weights = self.scaler(curr_theta, reverse=True)
         return final_weights
