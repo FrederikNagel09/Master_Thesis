@@ -29,56 +29,6 @@ from tqdm import tqdm
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
 
-class WeightScaler(nn.Module):
-    def __init__(self, dim, momentum=0.1):
-        super().__init__()
-        self.dim = dim
-        self.momentum = momentum
-
-        # register_buffer ensures these stay with the model but are NOT trainable parameters
-        self.register_buffer("running_mean", torch.zeros(1, dim))
-        self.register_buffer("running_std", torch.ones(1, dim))
-
-    def forward(self, x, reverse=False, training=True):
-        """
-        x: (batch_size, dim)
-        reverse: False for encoding (to N(0,1)), True for decoding (back to INR scale)
-        training: If True, updates the running stats.
-        """
-        if not reverse:
-            if training:
-                # Calculate current batch stats
-                # Using keepdim=True to ensure broadcasting works smoothly
-                batch_mean = x.mean(dim=0, keepdim=True)
-                batch_std = x.std(dim=0, keepdim=True) + 1e-6
-
-                if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                    print(f"DEBUG WeightScaler Batch Mean: {batch_mean.mean().item():.4f}, Batch Std: {batch_std.mean().item():.4f}")
-
-                # Update running statistics (Exponential Moving Average)
-                with torch.no_grad():
-                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean
-                    self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
-
-                # Use current batch stats for standardization during training
-                print(f"DEBUG WeightScaler Forward: batch mean {batch_mean.mean().item():.4f} and std {batch_mean.std().item():.4f}")
-                print(f"DEBUG WeightScaler Forward: batch std {batch_std.mean().item():.4f} and std {batch_std.std().item():.4f}")
-                return (x - batch_mean) / batch_std
-            else:
-                # Use remembered stats for standardization during inference/validation
-                return (x - self.running_mean) / self.running_std
-
-        else:
-            # Re-scaling for INR (Reverse process)
-            print(
-                f"DEBUG WeightScaler Reverse: running mean {self.running_mean.mean().item():.4f} and {self.running_mean.std().item():.4f}"
-            )
-            print(
-                f"DEBUG WeightScaler Reverse: running std {self.running_std.mean().item():.4f} and std {self.running_std.std().item():.4f}"
-            )
-            return (x * self.running_std) + self.running_mean
-
-
 class NDMStaticTransInr(nn.Module):
     """
     NDMStaticINR with TransInrEncoder as W(x) and the TransInr SIREN
@@ -120,9 +70,6 @@ class NDMStaticTransInr(nn.Module):
         self.beta_T = beta_T
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor
-
-        # --- NEW: Learnable Scaler ---
-        self.scaler = WeightScaler(WeightEncoder.weight_dim)
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
@@ -185,18 +132,9 @@ class NDMStaticTransInr(nn.Module):
         t_norm = t_idx.float() / (self.T - 1)
 
         # Send image through Weight Encoder to get Theta_prime
-        theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
-
-        # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
-        theta_prime = self.scaler(theta_prime_raw, reverse=False)
+        theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
 
         if GLOBAL_DEBUG_BOOL:
-            print(
-                f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
-                f"std={theta_prime_raw.std():.4f}, "
-                f"min={theta_prime_raw.min():.4f}, "
-                f"max={theta_prime_raw.max():.4f}"
-            )
             print(
                 f"DEBUG normalized: mean={theta_prime.mean():.4f}, "
                 f"std={theta_prime.std():.4f}, "
@@ -242,7 +180,7 @@ class NDMStaticTransInr(nn.Module):
         l_diff = self._l_diff(theta_t, t_norm, epsilon)  # (batch,)
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
 
-        l_rec = self._l_rec(x, theta_prime_raw)
+        l_rec = self._l_rec(x, theta_prime)
 
         # apply prior mask and scaling:
         prior_mask = (t_idx == self.T - 1).float()
@@ -373,8 +311,7 @@ class NDMStaticTransInr(nn.Module):
                 if t % 100 == 0:
                     print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
 
-        final_weights = self.scaler(curr_theta, reverse=True)
-        return final_weights
+        return curr_theta
 
     def _inr_decode(
         self,
@@ -448,41 +385,3 @@ class NDMStaticTransInr(nn.Module):
         theta_t = alpha_t * theta_prime + sigma_t * epsilon
 
         return theta_t, epsilon
-
-
-"""
-        # Initialize time step parameters
-        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
-        sigma_t = self.sigma[t_idx].unsqueeze(1)
-
-        # --- FIXED DEBUG PRINT ---
-        if True and random.random() < probability_threshold:
-            # Calculate magnitudes based on the existing coefficients
-            signal_component = (alpha_t * theta_prime).abs().mean()
-            noise_component = (sigma_t * (theta_t - alpha_t * theta_prime) / sigma_t.clamp(min=1e-6)).abs().mean()
-            
-            # A simpler way to see the noise magnitude if you don't want to back-calculate:
-            # noise_component = (theta_t - alpha_t * theta_prime).abs().mean()
-
-            ratio = signal_component / noise_component.clamp(min=1e-8)
-            print(f"--- DEBUG SNR (Step {t_idx[0].item()}) ---")
-            print(f"Signal Magnitude: {signal_component:.6f}")
-            print(f"Noise Magnitude:  {noise_component:.6f}")
-            print(f"SNR Ratio:        {ratio:.4f}")
-            print(f"---------------------------------------")
-        # -------------------------
-
-        # Given predicted noise eps_hat, we can compute the noise-free estimate of theta
-        # at time step t_idx, which we call theta_prime_hat (basically the reverse of the function _construct_theta_t)
-        theta_prime_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-
-        # Compute ELBO variance weighting term:
-        s_idx = (t_idx - 1).clamp(min=0)
-        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)
-
-        # Compute the simplified L_diff as the squared error between theta_prime_hat and theta_prime, weighted by the variance term.
-        diff = theta_prime - theta_prime_hat
-        l_diff = (diff**2).mean(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
-
-        return l_diff
-        """
