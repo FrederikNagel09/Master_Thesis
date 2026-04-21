@@ -19,13 +19,13 @@ python /zhome/66/4/156534/Master_Thesis/main.py \
     --run_name Static-Transformer-NDM-INR_scaling-fix \
     --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 5 \
+    --epochs 100 \
     --batch_size 64 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.01 \
+    --subset_frac 1.0 \
     --use_scheduler \
     --peak_lr 1e-4 \
     --T 1000 \
