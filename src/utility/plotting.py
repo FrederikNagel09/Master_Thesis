@@ -556,7 +556,7 @@ def plot_reconstruction_progression(
             weights = model.weight_encoder(x_spatial)  # ← spatial reshape
         else:
             t0_norm = torch.zeros(x.shape[0], device=device)
-            weights = model.weight_encoder(x, t0_norm)  # static MLP/CNN encoder
+            weights = model.weight_encoder(x)  # static MLP/CNN encoder
         x_recon = model._inr_decode(weights)  # (3, data_dim)
     model.train()
 
