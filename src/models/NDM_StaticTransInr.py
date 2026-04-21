@@ -246,7 +246,7 @@ class NDMStaticTransInr(nn.Module):
         l_prior = prior_mask * l_prior
 
         # Combine to get ELBO (mean over batch)
-        elbo = l_diff + l_prior + 5.0 * l_rec + 0.01 * l_reg
+        elbo = (self.T - 2) *l_diff + l_prior + l_rec 
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
