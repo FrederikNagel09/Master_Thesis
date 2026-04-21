@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL
+# from src.configs.general_config import GLOBAL_DEBUG_BOOL
 
 # ---------------------------------------------------------------------------
 # Image Tokenizer  (replaces LatentTokenizer)
@@ -154,12 +154,6 @@ class SIREN(nn.Module):
         self.params = None
         self.out_bias = out_bias
 
-        if GLOBAL_DEBUG_BOOL:
-            print("==================== DEBUG: SIREN init ====================")
-            print(f"  depth: {depth}, in_dim: {in_dim}, out_dim: {out_dim}, hidden_dim: {hidden_dim}")
-            print(f"  param_shapes: {self.param_shapes}")
-            print("================================================================")
-
     def siren_activation(self, x):
         return torch.sin(self.omega * x)
 
@@ -194,6 +188,66 @@ class SIREN(nn.Module):
         return x
 
     def get_last_layer(self):
+        return self.params[f"wb{self.depth - 1}"]
+
+
+class MLP_INR(nn.Module):  # noqa: N801
+    def __init__(self, depth, in_dim, out_dim, hidden_dim, out_bias=0):
+        """omega kept in signature for drop-in compatibility, not used."""
+        super().__init__()
+        self.depth = depth
+        self.param_shapes = dict()  # noqa: C408
+        self.out_bias = out_bias
+
+        last_dim = in_dim
+        for i in range(depth):
+            cur_dim = hidden_dim if i < depth - 1 else out_dim
+            self.param_shapes[f"wb{i}"] = (last_dim + 1, cur_dim)
+            last_dim = cur_dim
+
+        self.params = None
+
+    def init_wb(self, shape: tuple, name: str) -> torch.Tensor:  # noqa: ARG002
+        """
+        Initialise a weight+bias matrix using Kaiming uniform (He init).
+
+        Args:
+            shape: (fan_in + 1, fan_out) — rows are [weights | bias]
+            name:  parameter name e.g. 'wb0' (unused, kept for API parity)
+        Returns:
+            Tensor of shape `shape`, detached.
+        """
+        fan_in = shape[0] - 1
+        weight = torch.empty(shape[1], fan_in)
+        nn.init.kaiming_uniform_(weight, a=0, mode="fan_in", nonlinearity="relu")
+        bias = torch.zeros(shape[1], 1)
+        return torch.cat([weight, bias], dim=1).t().detach()
+
+    def set_params(self, params: dict) -> None:
+        """Set externally generated parameters (e.g. from a hypernetwork)."""
+        self.params = params
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the MLP INR.
+
+        Args:
+            x: (B, *query_shape, in_dim)
+        Returns:
+            Tensor of shape (B, *query_shape, out_dim)
+        """
+        B, query_shape = x.shape[0], x.shape[1:-1]  # noqa: N806
+        x = x.view(B, -1, x.shape[-1])
+
+        for i in range(self.depth):
+            x = batched_linear_mm(x, self.params[f"wb{i}"])
+            x = F.relu(x) if i < self.depth - 1 else torch.tanh(x)
+
+        x = x.view(B, *query_shape, -1)
+        return x
+
+    def get_last_layer(self) -> torch.Tensor:
+        """Returns the last layer's weight+bias matrix."""
         return self.params[f"wb{self.depth - 1}"]
 
 

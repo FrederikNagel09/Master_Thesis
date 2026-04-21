@@ -821,7 +821,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
     }
 
     inr_cfg = {
-        "target": "src.models.trans_inr_helpers.SIREN",
+        "target": "src.models.trans_inr_helpers.MLP_INR",
         "params": {
             "depth": inr_layers,
             "in_dim": 2,
