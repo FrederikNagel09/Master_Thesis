@@ -249,7 +249,7 @@ class NDMStaticTransInr(nn.Module):
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
-        elbo = l_diff + l_prior + l_rec
+        elbo = (self.T - 2) * l_diff + l_prior + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
