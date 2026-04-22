@@ -209,7 +209,7 @@ class MLP_INR(nn.Module):  # noqa: N801
             cur_dim = hidden_dim if i < depth - 1 else out_dim
             self.param_shapes[f"wb{i}"] = (last_dim + 1, cur_dim)
             last_dim = cur_dim
-
+        print("\n ######## NORMAL MLP INR ########## \n")
         self.params = None
 
     def init_wb(self, shape: tuple, name: str) -> torch.Tensor:  # noqa: ARG002

@@ -61,8 +61,8 @@ class WeightScaler(nn.Module):
                     self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
 
                 # Use current batch stats for standardization during training
-                print(f"DEBUG WeightScaler Forward: batch mean {batch_mean.mean().item():.4f} and std {batch_mean.std().item():.4f}")
-                print(f"DEBUG WeightScaler Forward: batch std {batch_std.mean().item():.4f} and std {batch_std.std().item():.4f}")
+                #print(f"DEBUG WeightScaler Forward: batch mean {batch_mean.mean().item():.4f} and std {batch_mean.std().item():.4f}")
+                #print(f"DEBUG WeightScaler Forward: batch std {batch_std.mean().item():.4f} and std {batch_std.std().item():.4f}")
                 return (x - batch_mean) / batch_std
             else:
                 # Use remembered stats for standardization during inference/validation
@@ -70,12 +70,12 @@ class WeightScaler(nn.Module):
 
         else:
             # Re-scaling for INR (Reverse process)
-            print(
-                f"DEBUG WeightScaler Reverse: running mean {self.running_mean.mean().item():.4f} and {self.running_mean.std().item():.4f}"
-            )
-            print(
-                f"DEBUG WeightScaler Reverse: running std {self.running_std.mean().item():.4f} and std {self.running_std.std().item():.4f}"
-            )
+            #print(
+                #f"DEBUG WeightScaler Reverse: running mean {self.running_mean.mean().item():.4f} and {self.running_mean.std().item():.4f}"
+            #)
+            #print(
+                #f"DEBUG WeightScaler Reverse: running std {self.running_std.mean().item():.4f} and std {self.running_std.std().item():.4f}"
+            #)
             return (x * self.running_std) + self.running_mean
 
 
