@@ -226,7 +226,7 @@ class NDMStaticTransInr(nn.Module):
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
         # 5. SIMPLE MSE LOSS
-        return F.mse_loss(eps_hat, epsilon, reduction="none").sum(dim=-1)
+        return F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)
 
     def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
         """
