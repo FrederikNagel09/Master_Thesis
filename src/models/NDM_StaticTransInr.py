@@ -290,7 +290,7 @@ class NDMStaticTransInr(nn.Module):
 
         scaling = self.beta[t_idx] / (2 * self.alpha[t_idx] * self.sigma_sq[t_idx])  # (batch,)
 
-        mse = F.mse_loss(eps_hat, epsilon, reduction="none").sum(dim=-1)  # (batch,)
+        mse = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)  # (batch,)
 
         return scaling * mse
 
