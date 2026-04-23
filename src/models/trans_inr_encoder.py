@@ -93,50 +93,34 @@ update_strategies = {
 # ---------------------------------------------------------------------------
 
 
-class TransInrEncoder(nn.Module):
+class INRModulator(nn.Module):
     """
-    TransInr repurposed as a static weight encoder  W(x).
-
-    Forward pass returns a flat weight vector (B, weight_dim) instead of
-    decoded pixel values.  The SIREN is exposed as self.inr so that the NDM
-    can use it for decoding after diffusion.
-
+    Modulates base INR parameters with (denoised) transformer output and
+    exposes the SIREN for subsequent decoding.
+    Receives flat trans_out (B, N_w * dim), inflates it, modulates base_params,
+    and returns flat INR weights (B, weight_dim).
     Args
     ----
-    tokenizer        : config dict for ImageTokenizer
     inr              : config dict for SIREN
     n_groups         : number of wtoken groups per INR parameter
-    transformer      : config dict for Transformer (enc+dec)
+    dim              : transformer token dimension (must match encoder)
     update_strategy  : one of {"normalize", "scale", "identity"}
     """
 
     def __init__(
         self,
-        tokenizer: dict,
         inr: dict,
         n_groups: int,
-        transformer: dict,
+        dim: int,
         update_strategy: str = "normalize",
-        in_channels: int = 1,
-        img_size: int = 28,
     ):
         super().__init__()
-
-        dim = transformer["params"]["dim"]
-        # ── Dataset shape (for flat→spatial reshape) ──────────────────────────
-        self.in_channels = in_channels
-        self.img_size = img_size
-
-        # ── Sub-modules ───────────────────────────────────────────────────────
-        self.tokenizer = instantiate_from_config(tokenizer, extra_args={"dim": dim})
         self.inr: SIREN = instantiate_from_config(inr)
-        self.transformer = instantiate_from_config(transformer)
+        self._dim = dim
 
-        # ── Base INR parameters + wtoken machinery ────────────────────────────
         self.base_params = nn.ParameterDict()
         self.wtoken_postfc = nn.ModuleDict()
         self.wtoken_rng: dict[str, tuple[int, int]] = {}
-
         n_wtokens = 0
         for name, shape in self.inr.param_shapes.items():
             self.base_params[name] = nn.Parameter(self.inr.init_wb(shape, name=name))
@@ -149,67 +133,41 @@ class TransInrEncoder(nn.Module):
             self.wtoken_rng[name] = (n_wtokens, n_wtokens + g)
             n_wtokens += g
 
-        self.wtokens = nn.Parameter(torch.randn(n_wtokens, dim))
+        self._n_wtokens = n_wtokens
         self.update_strategy = update_strategies[update_strategy]
 
-        # ── Flat weight_dim: sum of all wb tensor sizes ───────────────────────
-        # Each wb has shape (in_dim+1, out_dim) so numel = shape[0]*shape[1]
         self._weight_dim = sum(shape[0] * shape[1] for shape in self.inr.param_shapes.values())
-
-        # Store param shapes and names in order for inflate/deflate
         self._param_names: list[str] = list(self.inr.param_shapes.keys())
         self._param_shapes: dict[str, tuple[int, int]] = dict(self.inr.param_shapes)
 
-        nparams = (
-            sum(p.numel() for p in self.transformer.parameters())
-            + sum(p.numel() for p in self.tokenizer.parameters())
-            + sum(p.numel() for p in self.base_params.values())
-            + self.wtokens.numel()
-            + sum(p.numel() for p in self.wtoken_postfc.parameters())
-        )
-        print(f"TransInrEncoder — total parameters: {nparams / 1e6:.3f}M")
-        print(f"TransInrEncoder — weight_dim: {self._weight_dim}")
-
-    # -------------------------------------------------------------------------
-    # Public properties
-    # -------------------------------------------------------------------------
+        nparams = sum(p.numel() for p in self.base_params.values()) + sum(p.numel() for p in self.wtoken_postfc.parameters())
+        print(f"INRModulator — total parameters: {nparams / 1e6:.3f}M")
+        print(f"INRModulator — weight_dim: {self._weight_dim}")
 
     @property
     def weight_dim(self) -> int:
-        """Flat weight vector dimension — matches NDMStaticINR's expected weight_dim."""
+        """Flat INR weight dimension — output of modulation, input to SIREN."""
         return self._weight_dim
 
-    # -------------------------------------------------------------------------
-    # Flatten / inflate helpers
-    # -------------------------------------------------------------------------
-
-    def _flatten_params(self, param_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+    def inflate_trans_out(self, flat_trans_out: torch.Tensor) -> torch.Tensor:
         """
-        Flatten an ordered param dict into a single vector per batch item.
-
+        Reshape flat trans_out back to token sequence.
         Args
         ----
-        param_dict : {name: (B, shape[0], shape[1])}
-
+        flat_trans_out : (B, N_w * dim)
         Returns
         -------
-        flat : (B, weight_dim)
+        trans_out : (B, N_w, dim)
         """
-        parts = []
-        for name in self._param_names:
-            wb = param_dict[name]  # (B, shape[0], shape[1])
-            B = wb.shape[0]  # noqa: N806
-            parts.append(wb.reshape(B, -1))  # (B, shape[0]*shape[1])
-        return torch.cat(parts, dim=1)  # (B, weight_dim)
+        B = flat_trans_out.shape[0]  # noqa: N806
+        return flat_trans_out.reshape(B, self._n_wtokens, self._dim)
 
-    def inflate(self, flat_weights: torch.Tensor) -> dict[str, torch.Tensor]:
+    def inflate_weights(self, flat_weights: torch.Tensor) -> dict[str, torch.Tensor]:
         """
-        Inflate a flat weight vector back into a param dict.
-
+        Inflate flat INR weight vector back into a param dict.
         Args
         ----
         flat_weights : (B, weight_dim)
-
         Returns
         -------
         param_dict : {name: (B, shape[0], shape[1])}
@@ -220,69 +178,130 @@ class TransInrEncoder(nn.Module):
         for name in self._param_names:
             s0, s1 = self._param_shapes[name]
             n = s0 * s1
-            chunk = flat_weights[:, offset : offset + n]  # (B, n)
-            param_dict[name] = chunk.reshape(B, s0, s1)
+            param_dict[name] = flat_weights[:, offset : offset + n].reshape(B, s0, s1)
             offset += n
         return param_dict
 
-    # -------------------------------------------------------------------------
-    # Forward — image → flat weight vector
-    # -------------------------------------------------------------------------
-
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, flat_trans_out: torch.Tensor) -> torch.Tensor:
         """
+        Modulate base INR params with denoised transformer output.
         Args
         ----
-        x : (B, C, H, W)  raw image tensor
-
+        flat_trans_out : (B, N_w * dim)  denoised, denormalized trans_out
         Returns
         -------
         flat_weights : (B, weight_dim)
         """
-        # ── 0. Flat → spatial if needed ───────────────────────────────────────
-        if x.dim() == 2:
-            x = x.view(x.shape[0], self.in_channels, self.img_size, self.img_size)
-        # 1. Tokenise image → (B, N_patch, dim)
-        dtokens = self.tokenizer(x, **kwargs)
-        B = dtokens.shape[0]  # noqa: N806
+        trans_out = self.inflate_trans_out(flat_trans_out)  # (B, N_w, dim)
+        B = trans_out.shape[0]  # noqa: N806
 
-        # 2. Expand wtokens to batch → (B, N_w, dim)
-        wtokens = einops.repeat(self.wtokens, "n d -> b n d", b=B)
-
-        # 3. Transformer: image tokens → encoder, wtokens → decoder
-        cls_name = self.transformer.__class__.__name__
-        if cls_name == "Transformer":
-            trans_out = self.transformer(src=dtokens, tgt=wtokens)
-        elif cls_name == "TransformerEncoder":
-            combined = torch.cat([dtokens, wtokens], dim=1)
-            full_out = self.transformer(combined)
-            trans_out = full_out[:, -self.wtokens.shape[0] :, :]
-        else:
-            raise ValueError(f"Unsupported transformer class: {cls_name}")
-
-        # 4. Modulate base INR parameters with transformer output
         param_dict = {}
         for name, shape in self.inr.param_shapes.items():  # noqa: B007
             wb = einops.repeat(self.base_params[name], "n m -> b n m", b=B)
-            w = wb[:, :-1, :]  # weight rows   (B, shape[0]-1, shape[1])
-            b = wb[:, -1:, :]  # bias row       (B, 1,          shape[1])
+            w = wb[:, :-1, :]  # (B, shape[0]-1, shape[1])
+            b = wb[:, -1:, :]  # (B, 1, shape[1])
 
             l, r = self.wtoken_rng[name]  # noqa: E741
             x_mod = self.wtoken_postfc[name](trans_out[:, l:r, :])
             x_mod = x_mod.transpose(-1, -2)  # (B, shape[0]-1, g)
-            # print(f"[{name}] trans_out slice: min={trans_out[:, l:r, :].min():.4f}, max={trans_out[:, l:r, :].max():.4f}")
-            # print(f"[{name}] x_mod: min={x_mod.min():.4f}, max={x_mod.max():.4f}")
+
             w = self.update_strategy(w, x_mod)
-            # After update_strategy
-            # print(f"[{name}] w after update: min={w.min():.4f}, max={w.max():.4f}, nan={w.isnan().any()}")
-
             param_dict[name] = torch.cat([w, b], dim=1)  # (B, shape[0], shape[1])
-            ##print(f"[{name}] param_dict entry: min={param_dict[name].min():.4f}, max={param_dict[name].max():.4f}")
 
-        # 5. Flatten to a single vector per batch item
-        flat = self._flatten_params(param_dict)
-        # print(f"flat_weights: min={flat.min():.4f}, max={flat.max():.4f}, nan={flat.isnan().any()}")
-        return flat
+        # Flatten all params into a single vector
+        parts = [param_dict[name].reshape(B, -1) for name in self._param_names]
+        return torch.cat(parts, dim=1)  # (B, weight_dim)
+
+
+class TransInrEncoder(nn.Module):
+    """
+    TransInr repurposed as a static weight encoder W(x).
+    Forward pass returns a flat transformer output vector (B, N_w * dim)
+    intended for normalization → diffusion → INRModulator.
+    Args
+    ----
+    tokenizer       : config dict for ImageTokenizer
+    inr             : config dict for SIREN (used only for param_shapes + n_wtokens)
+    n_groups        : number of wtoken groups per INR parameter
+    transformer     : config dict for Transformer (enc+dec)
+    in_channels     : image channels
+    img_size        : spatial size of image
+    """
+
+    def __init__(
+        self,
+        tokenizer: dict,
+        inr: dict,
+        n_groups: int,
+        transformer: dict,
+        in_channels: int = 1,
+        img_size: int = 28,
+    ):
+        super().__init__()
+        dim = transformer["params"]["dim"]
+        self.in_channels = in_channels
+        self.img_size = img_size
+        self._dim = dim
+
+        self.tokenizer = instantiate_from_config(tokenizer, extra_args={"dim": dim})
+        self.transformer = instantiate_from_config(transformer)
+
+        # Build wtokens — one group per INR layer, no postfc here
+        _inr_tmp = instantiate_from_config(inr)  # temp instance just for param_shapes
+        n_wtokens = 0
+        self.wtoken_rng: dict[str, tuple[int, int]] = {}
+        for name, shape in _inr_tmp.param_shapes.items():
+            g = min(n_groups, shape[1])
+            assert shape[1] % g == 0, f"n_groups={n_groups} must divide shape[1]={shape[1]} for layer {name}"
+            self.wtoken_rng[name] = (n_wtokens, n_wtokens + g)
+            n_wtokens += g
+        self._n_wtokens = n_wtokens
+        self.wtokens = nn.Parameter(torch.randn(n_wtokens, dim))
+
+        # Flat dim of trans_out for the diffusion model to know
+        self._trans_out_dim = n_wtokens * dim
+
+        nparams = (
+            sum(p.numel() for p in self.transformer.parameters())
+            + sum(p.numel() for p in self.tokenizer.parameters())
+            + self.wtokens.numel()
+        )
+        print(f"TransInrEncoder — total parameters: {nparams / 1e6:.3f}M")
+        print(f"TransInrEncoder — trans_out_dim: {self._trans_out_dim}")
+
+    @property
+    def trans_out_dim(self) -> int:
+        """Flat trans_out dimension — input dim for diffusion."""
+        return self._trans_out_dim
+
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        """
+        Encode image to flat transformer output.
+        Args
+        ----
+        x : (B, C, H, W) or (B, C*H*W)
+        Returns
+        -------
+        flat_trans_out : (B, N_w * dim)
+        """
+        if x.dim() == 2:
+            x = x.view(x.shape[0], self.in_channels, self.img_size, self.img_size)
+
+        dtokens = self.tokenizer(x, **kwargs)  # (B, N_patch, dim)
+        B = dtokens.shape[0]  # noqa: N806
+        wtokens = einops.repeat(self.wtokens, "n d -> b n d", b=B)  # (B, N_w, dim)
+
+        cls_name = self.transformer.__class__.__name__
+        if cls_name == "Transformer":
+            trans_out = self.transformer(src=dtokens, tgt=wtokens)  # (B, N_w, dim)
+        elif cls_name == "TransformerEncoder":
+            combined = torch.cat([dtokens, wtokens], dim=1)
+            full_out = self.transformer(combined)
+            trans_out = full_out[:, -self._n_wtokens :, :]
+        else:
+            raise ValueError(f"Unsupported transformer class: {cls_name}")
+
+        return trans_out.reshape(B, -1)  # (B, N_w * dim)
 
 
 class TransInrTemporalEncoder(nn.Module):
