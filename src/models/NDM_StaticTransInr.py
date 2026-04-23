@@ -29,6 +29,49 @@ from tqdm import tqdm
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
 
+class WeightScaler(nn.Module):
+    def __init__(self, dim, momentum=0.1):
+        super().__init__()
+        self.dim = dim
+        self.momentum = momentum
+
+        # register_buffer ensures these stay with the model but are NOT trainable parameters
+        self.register_buffer("running_mean", torch.zeros(1, dim))
+        self.register_buffer("running_std", torch.ones(1, dim))
+
+    def forward(self, x, reverse=False, training=True):
+        """
+        x: (batch_size, dim)
+        reverse: False for encoding (to N(0,1)), True for decoding (back to INR scale)
+        training: If True, updates the running stats.
+        """
+        if not reverse:
+            if training:
+                # Calculate current batch stats
+                # Using keepdim=True to ensure broadcasting works smoothly
+                batch_mean = x.mean(dim=0, keepdim=True)
+                batch_std = x.std(dim=0, keepdim=True) + 1e-6
+
+                # Update running statistics (Exponential Moving Average)
+                with torch.no_grad():
+                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean
+                    self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
+
+                # Use current batch stats for standardization during training
+                if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                    print(f"DEBUG WeightScaler Batch Mean: {batch_mean.mean().item():.4f}")
+                    print(f"DEBUG WeightScaler Running Mean: {self.running_mean.mean().item():.4f}")
+                    print(f"DEBUG WeightScaler Batch Std: {batch_std.mean().item():.4f}")
+                    print(f"DEBUG WeightScaler Running Std: {self.running_std.mean().item():.4f}")
+                return (x - batch_mean) / batch_std
+            else:
+                # Use remembered stats for standardization during inference/validation
+                return (x - self.running_mean) / self.running_std
+
+        else:
+            # Re-scaling for INR (Reverse process)
+            return (x * self.running_std) + self.running_mean
+
 class NDMStaticTransInr(nn.Module):
     """
     NDMStaticINR with TransInrEncoder as W(x) and the TransInr SIREN
