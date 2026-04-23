@@ -61,8 +61,8 @@ class WeightScaler(nn.Module):
                     self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
 
                 # Use current batch stats for standardization during training
-                print(f"DEBUG WeightScaler Forward: batch mean {batch_mean.mean().item():.4f} and std {batch_mean.std().item():.4f}")
-                print(f"DEBUG WeightScaler Forward: batch std {batch_std.mean().item():.4f} and std {batch_std.std().item():.4f}")
+                # print(f"DEBUG WeightScaler Forward: batch mean {batch_mean.mean().item():.4f} and std {batch_mean.std().item():.4f}")
+                # print(f"DEBUG WeightScaler Forward: batch std {batch_std.mean().item():.4f} and std {batch_std.std().item():.4f}")
                 return (x - batch_mean) / batch_std
             else:
                 # Use remembered stats for standardization during inference/validation
@@ -70,12 +70,6 @@ class WeightScaler(nn.Module):
 
         else:
             # Re-scaling for INR (Reverse process)
-            print(
-                f"DEBUG WeightScaler Reverse: running mean {self.running_mean.mean().item():.4f} and {self.running_mean.std().item():.4f}"
-            )
-            print(
-                f"DEBUG WeightScaler Reverse: running std {self.running_std.mean().item():.4f} and std {self.running_std.std().item():.4f}"
-            )
             return (x * self.running_std) + self.running_mean
 
 
@@ -223,7 +217,8 @@ class NDMStaticTransInr(nn.Module):
         -------
         loss : (B,)
         """
-        x_recon = self._inr_decode(trans_out_scaled)
+        flat_weights = self.weight_modulator(trans_out_scaled)
+        x_recon = self._inr_decode(flat_weights)
         x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
@@ -319,40 +314,30 @@ class NDMStaticTransInr(nn.Module):
     # -------------------------------------------------------------------------
     def _inr_decode(
         self,
-        trans_out_scaled: torch.Tensor,
+        flat_weights: torch.Tensor,
         coords: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
-        Modulate scaled trans_out → flat INR weights → SIREN → pixels.
+        Decode flat INR weights → SIREN → pixels.
         Args
         ----
-        trans_out_scaled : (B, trans_out_dim)
-        coords           : optional coord grid; uses trans_coord if None
+        flat_weights : (B, weight_dim)  already modulated
+        coords       : optional coord grid
         Returns
         -------
         pixels : (B, H*W)
         """
-        B = trans_out_scaled.shape[0]  # noqa: N806
+        B = flat_weights.shape[0]  # noqa: N806
 
-        # Modulate → flat INR weights
-        flat_weights = self.weight_modulator(trans_out_scaled)  # (B, weight_dim)
-
-        # Inflate flat weights → param dict → set on SIREN
         param_dict = self.weight_modulator.inflate_weights(flat_weights)
         self.weight_modulator.inr.set_params(param_dict)
 
         if coords is None:  # noqa: SIM108
-            coord = self.trans_coord.unsqueeze(0).expand(B, -1, -1, -1)  # (B, H, W, 2)
+            coord = self.trans_coord.unsqueeze(0).expand(B, -1, -1, -1)
         else:
             coord = coords
 
         pixels = self.weight_modulator.inr(coord)
-
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-            print("==================== DEBUG: _inr_decode ====================")
-            print(f"Pixel value range: {pixels.min().item():.4f} to {pixels.max().item():.4f}")
-            print("=============================================================")
-
         return pixels.reshape(B, -1)
 
     # -------------------------------------------------------------------------

@@ -554,6 +554,11 @@ def plot_reconstruction_progression(
             # TransInrEncoder expects spatial (B, C, H, W)
             x_spatial = x.view(x.shape[0], channels, img_size, img_size)
             weights = model.weight_encoder(x_spatial)  # ← spatial reshape
+        elif hasattr(model, "weight_modulator"):
+            x_spatial = x.view(x.shape[0], channels, img_size, img_size)
+            trans_out = model.weight_encoder(x_spatial)
+            trans_out_scaled = model.scaler(trans_out, reverse=False)
+            weights = model.weight_modulator(trans_out_scaled)  # → flat INR weights
         else:
             t0_norm = torch.zeros(x.shape[0], device=device)
             weights = model.weight_encoder(x)  # static MLP/CNN encoder

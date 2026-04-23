@@ -873,7 +873,9 @@ def _build_ndm_static_transinr(args, data_config: dict):
         update_strategy=encoder_update_strat,
     )
     print_modulator_stats(modulator)
-
+    print(f"Encoder n_wtokens: {encoder._n_wtokens}, dim: {encoder._dim}")
+    print(f"Encoder trans_out_dim: {encoder.trans_out_dim}")
+    print(f"Modulator n_wtokens: {modulator._n_wtokens}, dim: {modulator._dim}")
     # ── TransInrNoisePredictor ────────────────────────────────────────────────
     # Noise predictor operates on trans_out_dim, not weight_dim
     trans_out_dim = encoder.trans_out_dim
