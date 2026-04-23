@@ -73,46 +73,56 @@ def build_model(args, data_config: dict) -> nn.Module:
 # =============================================================================
 # Printing functions:
 # =============================================================================
-def print_encoder_stats(model, mode="Static"):
+def print_encoder_stats(encoder):
+    """Print TransInrEncoder statistics."""
+
     def count(params):
         return sum(p.numel() for p in params)
 
-    # Component counts
-    tokenizer_p = count(model.tokenizer.parameters())
-    transformer_p = count(model.transformer.parameters())
-    base_p = count(model.base_params.values())
-    wtoken_p = model.wtokens.numel()
-    postfc_p = count(model.wtoken_postfc.parameters())
-
-    if mode == "Temporal":
-        time_embedding = count(model.time_mlp.parameters())
-        total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p + time_embedding
-    else:
-        total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p
-    inr_total = sum(s[0] * s[1] for s in model.inr.param_shapes.values())
+    tokenizer_p = count(encoder.tokenizer.parameters())
+    transformer_p = count(encoder.transformer.parameters())
+    wtoken_p = encoder.wtokens.numel()
+    total = tokenizer_p + transformer_p + wtoken_p
 
     print("\n" + "=" * 60)
-    print(f"{'TransInrEncoder WeightEncoder Statistics':^60}")
+    print(f"{'TransInrEncoder Statistics':^60}")
     print("=" * 60)
-    print(f"Architecture: {model.transformer.__class__.__name__}")
-    print(f"Weight Dim (Total INR params): {model.weight_dim:,}")
-    print(f"Encoder Mode: {mode}")
+    print(f"Architecture: {encoder.transformer.__class__.__name__}")
+    print(f"Trans Out Dim: {encoder.trans_out_dim:,}")
     print("-" * 60)
-
     print("Learnable Parameters:")
     print(f"  Vision Tokenizer:     {tokenizer_p:>12,} params")
     print(f"  Main Transformer:     {transformer_p:>12,} params")
     print(f"  Weight Tokens (N_w):  {wtoken_p:>12,} params")
+    print(f"  {'─'*44}")
+    print(f"  Total Learnable:      {total:>12,} params")
+    print("=" * 60 + "\n")
+
+
+def print_modulator_stats(modulator):
+    """Print INRModulator statistics."""
+
+    def count(params):
+        return sum(p.numel() for p in params)
+
+    base_p = count(modulator.base_params.values())
+    postfc_p = count(modulator.wtoken_postfc.parameters())
+    total = base_p + postfc_p
+    inr_total = sum(s[0] * s[1] for s in modulator.inr.param_shapes.values())
+
+    print("\n" + "=" * 60)
+    print(f"{'INRModulator Statistics':^60}")
+    print("=" * 60)
+    print(f"Weight Dim (Total INR params): {modulator.weight_dim:,}")
+    print("-" * 60)
+    print("Learnable Parameters:")
     print(f"  Base INR Weights:     {base_p:>12,} params")
     print(f"  Wtoken Post-FC:       {postfc_p:>12,} params")
-    if mode == "Temporal":
-        print(f"  Time MLP:            {time_embedding:>12,} params")
     print(f"  {'─'*44}")
-    print(f"  Total Learnable:      {total_learnable:>12,} params")
-
+    print(f"  Total Learnable:      {total:>12,} params")
     print("\nGenerated INR Runtime Structure (Non-Learnable Output):")
-    for name, shape in model.inr.param_shapes.items():
-        l, r = model.wtoken_rng[name]  # noqa: E741
+    for name, shape in modulator.inr.param_shapes.items():
+        l, r = modulator.wtoken_rng[name]  # noqa: E741
         n_groups = r - l
         print(f"  {name:<12} {shape[0]}x{shape[1]:<6} | Groups: {n_groups:<3} | Total: {shape[0]*shape[1]:>10,} weights")
     print(f"Total INR Weights: {inr_total:,}")
@@ -787,16 +797,18 @@ def _build_ndm_temporal_transinr(args, data_config: dict):
 def _build_ndm_static_transinr(args, data_config: dict):
     """
     Build NDMStaticTransInr:
-        TransInrEncoder as W(x) + NDM diffusion in weight space.
+        TransInrEncoder (image → flat trans_out) +
+        INRModulator    (flat trans_out → INR weights → SIREN) +
+        NDM diffusion in trans_out space.
     """
     from src.models.NDM_StaticTransInr import NDMStaticTransInr
-    from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor
+    from src.models.trans_inr_encoder import INRModulator, TransInrEncoder, TransInrNoisePredictor
 
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
 
-    # ── TransInrEncoder config ────────────────────────────────────────────────
+    # ── Shared hyperparameters ────────────────────────────────────────────────
     encoder_dim = getattr(args, "encoder_trans_dim", 256)
     encoder_n_head = getattr(args, "encoder_trans_n_head", 8)
     encoder_head_dim = getattr(args, "encoder_trans_head_dim", 32)
@@ -809,6 +821,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
     inr_hidden = getattr(args, "inr_hidden_dim", 256)
     inr_layers = getattr(args, "inr_layers", 5)
 
+    # ── Shared sub-configs (both encoder + modulator need these) ─────────────
     tokenizer_cfg = {
         "target": "src.models.trans_inr_helpers.ImageTokenizer",
         "params": {
@@ -819,7 +832,6 @@ def _build_ndm_static_transinr(args, data_config: dict):
             "head_dim": encoder_head_dim,
         },
     }
-
     inr_cfg = {
         "target": "src.models.trans_inr_helpers.SIREN",
         "params": {
@@ -830,7 +842,6 @@ def _build_ndm_static_transinr(args, data_config: dict):
             "out_bias": 0.5,
         },
     }
-
     transformer_cfg = {
         "target": "src.models.trans_inr_helpers.Transformer",
         "params": {
@@ -843,28 +854,33 @@ def _build_ndm_static_transinr(args, data_config: dict):
         },
     }
 
+    # ── TransInrEncoder ───────────────────────────────────────────────────────
     encoder = TransInrEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
         n_groups=encoder_n_groups,
         transformer=transformer_cfg,
-        update_strategy=encoder_update_strat,
         in_channels=channels,
         img_size=img_size,
     )
-
-    weight_dim = encoder.weight_dim
     print_encoder_stats(encoder)
 
-    # ── TransInrNoisePredictor config ─────────────────────────────────────────
-    # Since we are now Encoder-only, we combine the depths or pick the max.
-    # Let's combine them to maintain the total layer count.
-    noise_predictor_depth = getattr(args, "noise_predictor_depth", 4)
+    # ── INRModulator ──────────────────────────────────────────────────────────
+    modulator = INRModulator(
+        inr=inr_cfg,
+        n_groups=encoder_n_groups,
+        dim=encoder_dim,
+        update_strategy=encoder_update_strat,
+    )
+    print_modulator_stats(modulator)
 
+    # ── TransInrNoisePredictor ────────────────────────────────────────────────
+    # Noise predictor operates on trans_out_dim, not weight_dim
+    trans_out_dim = encoder.trans_out_dim
     network = TransInrNoisePredictor(
-        weight_dim=weight_dim,
+        weight_dim=trans_out_dim,
         dim=getattr(args, "noise_predictor_dim", 256),
-        depth=noise_predictor_depth,
+        depth=getattr(args, "noise_predictor_depth", 4),
         n_head=getattr(args, "noise_predictor_n_head", 8),
         head_dim=getattr(args, "noise_predictor_head_dim", 32),
         ff_dim=getattr(args, "noise_predictor_ff_dim", 1024),
@@ -872,7 +888,6 @@ def _build_ndm_static_transinr(args, data_config: dict):
         t_embed_dim=getattr(args, "noise_predictor_t_embed", 128),
         dropout=getattr(args, "dropout", 0.0),
     )
-
     print_noise_predictor_stats(network)
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
@@ -882,6 +897,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
     model = NDMStaticTransInr(
         NoisePredictor=network,
         WeightEncoder=encoder,
+        WeightModulator=modulator,
         coord_grid=coord_grid,
         beta_1=args.beta_1,
         beta_T=args.beta_T,
