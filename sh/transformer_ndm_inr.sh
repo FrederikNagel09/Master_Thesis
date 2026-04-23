@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J Static-Transformer-NDM-INR_siren-fix            # Job name
+#BSUB -J Static-Transformer-NDM-INR_siren-fix_withscaling            # Job name
 #BSUB -q gpuv100                           # Queue to submit the job to
 #BSUB -W 300                              # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Static-Transformer-NDM-INR_siren-fix.out                        # Standard output redirection
-#BSUB -e src/outputs/Static-Transformer-NDM-INR_siren-fix.err                        # Standard error redirection
+#BSUB -o src/outputs/Static-Transformer-NDM-INR_siren-fix_withscaling.out                        # Standard output redirection
+#BSUB -e src/outputs/Static-Transformer-NDM-INR_siren-fix_withscaling.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,7 +16,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py \
-    --run_name Static-Transformer-NDM-INR_siren-fix \
+    --run_name Static-Transformer-NDM-INR_siren-fix_withscaling \
     --model ndm_static_transinr\
     --dataset mnist \
     --epochs 100 \

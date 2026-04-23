@@ -115,7 +115,7 @@ class NDMStaticTransInr(nn.Module):
         self.sigma_tilde_factor = sigma_tilde_factor
 
         # --- NEW: Learnable Scaler ---
-        #self.scaler = WeightScaler(WeightEncoder.weight_dim)
+        self.scaler = WeightScaler(WeightEncoder.weight_dim)
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
@@ -181,7 +181,7 @@ class NDMStaticTransInr(nn.Module):
         theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
 
         # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
-        #theta_prime = self.scaler(theta_prime_raw, reverse=False)
+        theta_prime = self.scaler(theta_prime_raw, reverse=False)
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print(
