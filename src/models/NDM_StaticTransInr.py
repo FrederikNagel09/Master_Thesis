@@ -114,6 +114,9 @@ class NDMStaticTransInr(nn.Module):
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor
 
+        # --- NEW: Learnable Scaler ---
+        #self.scaler = WeightScaler(WeightEncoder.weight_dim)
+
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
