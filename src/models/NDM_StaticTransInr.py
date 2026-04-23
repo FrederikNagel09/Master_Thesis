@@ -134,7 +134,7 @@ class NDMStaticTransInr(nn.Module):
         # Send image through Weight Encoder to get Theta_prime
         theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
 
-        if GLOBAL_DEBUG_BOOL:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print(
                 f"DEBUG normalized: mean={theta_prime.mean():.4f}, "
                 f"std={theta_prime.std():.4f}, "
@@ -143,7 +143,7 @@ class NDMStaticTransInr(nn.Module):
             )
 
             # Prints forwars process statistics for the first batch only, at specific time steps
-            if self.i == 1:
+            if self.i == 0:
                 print("\n######### Forward Process Statistics: #########")
                 # 1. Define the steps we want to see
                 t_steps = [999, 900, 800, 700, 600, 500, 400, 300, 200, 100, 0]
@@ -296,7 +296,7 @@ class NDMStaticTransInr(nn.Module):
                 # At t=0, the denoised sample is just our predicted x0
                 curr_theta = theta_0_clipped
 
-            if GLOBAL_DEBUG_BOOL:
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
                 print(
                     "DEBUG theta_0 before clipping: "
                     f"mean={theta_0.mean():.4f}, std={theta_0.std():.4f}, "
@@ -307,9 +307,10 @@ class NDMStaticTransInr(nn.Module):
                     f"mean={theta_0_clipped.mean():.4f}, std={theta_0_clipped.std():.4f}, "
                     f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
                 )
-                # Debug prints to verify the explosion is gone
-                if t % 100 == 0:
-                    print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
+            # Debug prints to verify the explosion is gone
+                
+            if t % 100 == 0:
+                print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
 
         return curr_theta
 
