@@ -129,13 +129,13 @@ python main.py \
     --run_name TransNdmInr_singleclass_v2 \
     --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 40 \
+    --epochs 45 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.2 \
+    --subset_frac 0.05 \
     --use_scheduler \
     --peak_lr 1e-4 \
     --T 1000 \
@@ -151,7 +151,7 @@ python main.py \
     --encoder_trans_enc_depth 4 \
     --encoder_trans_dec_depth 4 \
     --encoder_trans_patch_size 4 \
-    --encoder_trans_n_groups 64 \
+    --encoder_trans_n_groups 8 \
     --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
     --noise_predictor_dim 128 \
