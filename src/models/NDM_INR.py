@@ -9,9 +9,15 @@ from tqdm import tqdm
 
 sys.path.append(".")
 
+from typing import TYPE_CHECKING
+
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
 from src.models.INR import INR, SirenINR  # noqa: F401
+from src.models.trans_inr_encoder import instantiate_from_config
+
+if TYPE_CHECKING:
+    from src.models.trans_inr_helpers import SIREN
 
 
 # =============================================================================
@@ -298,43 +304,74 @@ class MLPTemporalWeightEncoder(nn.Module):
 
 class MLPStaticWeightEncoder(nn.Module):
     """
-    MLP-based transformation network W(x).
-    Maps a flattened image x (784-dim) to a weight vector in the INR
-    parameter space (weight_dim). No time conditioning.
+    MLP-based weight encoder W(x).
+    Maps a flattened image x (data_dim) to a flat INR weight vector (weight_dim).
+    Owns the SIREN instance so NDM can decode after diffusion via inflate().
 
     Architecture
     ------------
-    [x (data_dim)]  ->  MLP  ->  weight vector (weight_dim)
+    [x (data_dim)] -> MLP -> flat weight vector (weight_dim)
     """
 
     def __init__(
         self,
+        inr: dict,  # config dict for SIREN (same format as TransInrEncoder)
         data_dim: int = 784,
-        weight_dim: int = 501,
         hidden_dims: list = None,  # noqa: RUF013
+        in_channels: int = 1,
+        img_size: int = 28,
     ):
         super().__init__()
         if hidden_dims is None:
             hidden_dims = [512, 512, 512]
 
+        self.in_channels = in_channels
+        self.img_size = img_size
+
+        # ── SIREN (owned for decoding, same as TransInrEncoder) ───────────────
+        self.inr: SIREN = instantiate_from_config(inr)
+        self._param_names: list[str] = list(self.inr.param_shapes.keys())
+        self._param_shapes: dict[str, tuple[int, int]] = dict(self.inr.param_shapes)
+        self._weight_dim = sum(s[0] * s[1] for s in self.inr.param_shapes.values())
+
+        # ── MLP ───────────────────────────────────────────────────────────────
         layers = []
         in_dim = data_dim
         for h_dim in hidden_dims:
             layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
             in_dim = h_dim
-        layers.append(nn.Linear(in_dim, weight_dim))
+        layers.append(nn.Linear(in_dim, self._weight_dim))
         self.net = nn.Sequential(*layers)
-        self.weight_dim = weight_dim
+
+    @property
+    def weight_dim(self) -> int:
+        """Flat weight vector dimension — matches NDMStaticINR's expected weight_dim."""
+        return self._weight_dim
+
+    def inflate(self, flat_weights: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Inflate a flat weight vector back into a param dict.
+
+        Args:   flat_weights (B, weight_dim)
+        Returns: {name: (B, shape[0], shape[1])}
+        """
+        B = flat_weights.shape[0]  # noqa: N806
+        param_dict = {}
+        offset = 0
+        for name in self._param_names:
+            s0, s1 = self._param_shapes[name]
+            n = s0 * s1
+            param_dict[name] = flat_weights[:, offset : offset + n].reshape(B, s0, s1)
+            offset += n
+        return param_dict
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Parameters
-        ----------
-        x : (batch, data_dim)   flattened input image
-        Returns
-        -------
-        (batch, weight_dim)  weight vector in INR parameter space
+        Args:    x (B, data_dim) or (B, C, H, W)
+        Returns: flat_weights (B, weight_dim)
         """
+        if x.dim() != 2:
+            x = x.view(x.shape[0], -1)
         return self.net(x)
 
 

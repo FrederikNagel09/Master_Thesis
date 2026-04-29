@@ -62,6 +62,8 @@ def build_model(args, data_config: dict) -> nn.Module:
         model = _build_ndm_temporal_transinr(args, data_config)
     elif name == "ndm_static_transinr":
         model = _build_ndm_static_transinr(args, data_config)
+    elif name == "ndm_static_mlpinr":
+        model = _build_ndm_static_mlpinr(args, data_config)
     else:
         raise ValueError(f"Unknown model '{args.model}'. Choose from: 'ndm', 'inr_vae', 'ndm_inr'.")
 
@@ -153,6 +155,48 @@ def print_noise_predictor_stats(model):
         print("  Generic or Legacy Noise Predictor detected.")
         print(f"  Total parameters: {total:,}")
 
+    print("=" * 60 + "\n")
+
+
+def print_mlp_encoder_stats(model):
+    total = sum(p.numel() for p in model.parameters())
+    inr_total = sum(s[0] * s[1] for s in model.inr.param_shapes.values())
+
+    print("\n" + "=" * 60)
+    print(f"{'MLPStaticWeightEncoder Statistics':^60}")
+    print("=" * 60)
+    print(f"  Weight Dim (INR params):  {model.weight_dim:,}")
+    print(f"  MLP Hidden Dims:          {[l.out_features for l in model.net if isinstance(l, nn.Linear)][:-1]}")  # noqa: E741
+    print("-" * 60)
+    print(f"  MLP Total:                {total - inr_total:>12,} params")
+    print("-" * 60)
+    print("INR Structure (output target):")
+    for name, shape in model.inr.param_shapes.items():
+        print(f"  {name:<12} {shape[0]}x{shape[1]:<6} | Total: {shape[0]*shape[1]:>10,} weights")
+    print(f"  Total INR Weights:        {inr_total:,}")
+    print("=" * 60 + "\n")
+
+
+def print_mlp_noise_predictor_stats(model):
+    def count(params):
+        return sum(p.numel() for p in params)
+
+    total = count(model.parameters())
+
+    print("\n" + "=" * 60)
+    print(f"{'MLPNoisePredictor ε_θ Statistics':^60}")
+    print("=" * 60)
+    print(f"  Weight Dim:  {model.weight_dim:<10} | Hidden Dim: {model.hidden_dim}")
+    print(f"  N Blocks:    {model.n_blocks:<10}")
+    print("-" * 60)
+    print("Learnable Parameters:")
+    print(f"  Time Embedding:    {count(model.time_embed.parameters()):>12,} params")
+    print(f"  Time Projection:   {count(model.time_proj.parameters()):>12,} params")
+    print(f"  Input Projection:  {count(model.input_proj.parameters()):>12,} params")
+    print(f"  Residual Blocks:   {count(model.blocks.parameters()) + count(model.t_projs.parameters()):>12,} params")
+    print(f"  Output Projection: {count(model.output_proj.parameters()):>12,} params")
+    print(f"  {'─'*44}")
+    print(f"  Total Predictor:   {total:>12,} params")
     print("=" * 60 + "\n")
 
 
@@ -879,6 +923,58 @@ def _build_ndm_static_transinr(args, data_config: dict):
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
 
     # ── Assemble ──────────────────────────────────────────────────────────────
+    model = NDMStaticTransInr(
+        NoisePredictor=network,
+        WeightEncoder=encoder,
+        coord_grid=coord_grid,
+        beta_1=args.beta_1,
+        beta_T=args.beta_T,
+        T=args.T,
+        sigma_tilde_factor=args.sigma_tilde,
+        data_dim=data_dim,
+        img_size=img_size,
+    )
+    return model
+
+
+def _build_ndm_static_mlpinr(args, data_config: dict):
+    from src.models.NDM_INR import MLPStaticWeightEncoder, NoisePredictor
+    from src.models.NDM_StaticTransInr import NDMStaticTransInr
+
+    data_dim = data_config["data_dim"]
+    img_size = data_config["img_size"]
+    channels = data_config["channels"]
+
+    inr_cfg = {
+        "target": "src.models.trans_inr_helpers.SIREN",
+        "params": {
+            "depth": getattr(args, "inr_layers", 3),
+            "in_dim": 2,
+            "out_dim": channels,
+            "hidden_dim": getattr(args, "inr_hidden_dim", 32),
+            "out_bias": 0.5,
+        },
+    }
+
+    encoder = MLPStaticWeightEncoder(
+        inr=inr_cfg,
+        data_dim=data_dim,
+        hidden_dims=getattr(args, "f_phi_hidden", [512, 512, 512]),
+        in_channels=channels,
+        img_size=img_size,
+    )
+    print_mlp_encoder_stats(encoder)
+
+    network = NoisePredictor(
+        weight_dim=encoder.weight_dim,
+        hidden_dim=getattr(args, "noise_hidden_dim", 512),
+        n_blocks=getattr(args, "noise_n_blocks", 4),
+        t_embed_dim=getattr(args, "noise_t_embed", 128),
+    )
+    print_mlp_noise_predictor_stats(network)
+
+    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
+
     model = NDMStaticTransInr(
         NoisePredictor=network,
         WeightEncoder=encoder,
