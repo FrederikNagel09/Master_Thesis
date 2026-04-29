@@ -239,7 +239,8 @@ class NDMStaticTransInr(nn.Module):
         theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
 
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_t, t_norm, epsilon)  # (batch,)
+        l_diff = self._l_diff(theta_t, t_norm, epsilon, t_idx)  # (batch,)
+
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
 
         l_rec = self._l_rec(x, theta_prime_raw)
@@ -248,7 +249,7 @@ class NDMStaticTransInr(nn.Module):
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
-        elbo = l_diff + l_prior + l_rec
+        elbo = (self.T - 1) * l_diff + l_prior + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -271,7 +272,7 @@ class NDMStaticTransInr(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, epsilon):
+    def _l_diff(self, theta_t, t_norm, epsilon, t_idx):
         """
         Computes L_diff for time-independent W(x).
 
@@ -287,8 +288,11 @@ class NDMStaticTransInr(nn.Module):
         # Predict noise at time step t_idx using the noise predictor network
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
-        # 5. SIMPLE MSE LOSS
-        return F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)
+        scaling = self.beta[t_idx] / (2 * self.alpha[t_idx] * self.sigma_sq[t_idx])  # (batch,)
+
+        mse = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)  # (batch,)
+
+        return scaling * mse
 
     def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
         """
@@ -448,41 +452,3 @@ class NDMStaticTransInr(nn.Module):
         theta_t = alpha_t * theta_prime + sigma_t * epsilon
 
         return theta_t, epsilon
-
-
-"""
-        # Initialize time step parameters
-        alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
-        sigma_t = self.sigma[t_idx].unsqueeze(1)
-
-        # --- FIXED DEBUG PRINT ---
-        if True and random.random() < probability_threshold:
-            # Calculate magnitudes based on the existing coefficients
-            signal_component = (alpha_t * theta_prime).abs().mean()
-            noise_component = (sigma_t * (theta_t - alpha_t * theta_prime) / sigma_t.clamp(min=1e-6)).abs().mean()
-            
-            # A simpler way to see the noise magnitude if you don't want to back-calculate:
-            # noise_component = (theta_t - alpha_t * theta_prime).abs().mean()
-
-            ratio = signal_component / noise_component.clamp(min=1e-8)
-            print(f"--- DEBUG SNR (Step {t_idx[0].item()}) ---")
-            print(f"Signal Magnitude: {signal_component:.6f}")
-            print(f"Noise Magnitude:  {noise_component:.6f}")
-            print(f"SNR Ratio:        {ratio:.4f}")
-            print(f"---------------------------------------")
-        # -------------------------
-
-        # Given predicted noise eps_hat, we can compute the noise-free estimate of theta
-        # at time step t_idx, which we call theta_prime_hat (basically the reverse of the function _construct_theta_t)
-        theta_prime_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-
-        # Compute ELBO variance weighting term:
-        s_idx = (t_idx - 1).clamp(min=0)
-        sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)
-
-        # Compute the simplified L_diff as the squared error between theta_prime_hat and theta_prime, weighted by the variance term.
-        diff = theta_prime - theta_prime_hat
-        l_diff = (diff**2).mean(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
-
-        return l_diff
-        """
