@@ -193,9 +193,9 @@ def _model_to_grid(
         elif model_type == "ndm_inr":
             samples = model.sample(n_samples)  # (N, H*W) in [0, 1]
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
-        elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr"):
+        elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             samples = model.sample(n_samples)  # (N, H*W)
-            samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)  # ← ADD
+            samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)  # ← ADD
 
         else:
             raise ValueError(f"Unknown model_type '{model_type}' for sampling.")
@@ -569,7 +569,7 @@ def plot_reconstruction_progression(
 
     # ── Build new row: [orig_0, orig_1, orig_2, recon_0, recon_1, recon_2] ────
     originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]  # [-1,1] → [0,1]
-    recons = [x_recon[i].clamp(0, 1) for i in range(n_pairs)]  # already [0,1]
+    recons = [(x_recon[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]  # already [0,1]
     new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)  # (6, H, W[,C])
 
     # ── Load existing rows from disk if available ─────────────────────────────

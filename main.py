@@ -164,7 +164,7 @@ python main.py \
 
     
 python main.py \
-    --run_name MlpNdmInr_singleclass_v1 \
+    --run_name MLP-MLP_v1 \
     --model ndm_static_mlpinr \
     --dataset mnist \
     --epochs 5 \

@@ -170,7 +170,7 @@ def run_training(
                 plot_fphi_progression(
                     model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
                 )
-            elif args.model in ("ndm_inr", "ndm_transinr", "ndm_temporal_transinr", "ndm_static_transinr"):
+            elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "ndm_static_transinr"):
                 plot_reconstruction_progression(
                     model,
                     batch,
@@ -223,7 +223,7 @@ def run_training(
 
     print("\n  Training complete...")
     print("  Generating final sample grid …")
-    #plot_final_samples(model, args.model, end_epoch, run_dir, device, data_config)
+    # plot_final_samples(model, args.model, end_epoch, run_dir, device, data_config)
     print("Final sample grid saved to training directory.")
 
     # ── 5. Save ───────────────────────────────────────────────────────────────
