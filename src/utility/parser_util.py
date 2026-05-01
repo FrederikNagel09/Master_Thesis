@@ -40,6 +40,9 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--log_every_n_steps", type=int, default=20)
     p.add_argument("--resume", type=str, default=None, help="Path to a weights.pt checkpoint to resume from")
     p.add_argument("--deactivate_progress_bar", type=bool, default=False)
+    p.add_argument(
+        "--freeze_encoder", type=float, default=None, help="Fraction of training epochs to freeze the encoder for (only for NDM-INR)"
+    )
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
     p.add_argument("--use_scheduler", action="store_true")

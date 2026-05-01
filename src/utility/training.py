@@ -60,6 +60,7 @@ def train(
     history: dict | None = None,
     data_config: dict | None = None,
     deactivate_progress_bar=False,
+    freeze_encoder: float | None = None,
 ) -> nn.Module:
     """
     Train *model* for *epochs* epochs and return the trained model.
@@ -169,6 +170,18 @@ def train(
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
+        # ── Freeze encoder after threshold ───────────────────────────────────
+        if freeze_encoder is not None:
+            elapsed = epoch - start_epoch
+            if elapsed == int(freeze_encoder * epochs):
+                print("############### EPOCH: {epoch} - FREEZING ENCODER ###############")
+                print(f"[Epoch {epoch}] Freezing weight encoder and scaler.")
+                for param in model.weight_encoder.parameters():
+                    param.requires_grad = False
+                for param in model.scaler.parameters():
+                    param.requires_grad = False
+                print("##################################################################\n")
+
         if GLOBAL_DEBUG_BOOL:
             print(f"\n############## EPOCH: {epoch} ##############\n")
         for batch in data_loader:

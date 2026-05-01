@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import torch
-import tqdm
+from tqdm import tqdm
 
 from src.configs.results_config import MODEL_COLORS, MODEL_LABELS
 from src.configs.train_plot_config import _COLORS, _LABELS
@@ -897,7 +898,7 @@ def plot_reconstruction_diffusion_progression(
     channels = data_config["channels"]
     img_size = data_config["img_size"]
 
-    x = batch[1][:n_pairs].to(device)
+    x = batch[0][5 : 5 + n_pairs].to(device)
 
     model.eval()
     with torch.no_grad():
@@ -910,7 +911,7 @@ def plot_reconstruction_diffusion_progression(
 
         # ── Reverse diffusion from t=499 down to t=0 ───────────────────────────
         clip_value = 3
-        for t in tqdm(range(T_NOISE, -1, -1), desc="Denoising Reconstruction", total=T_NOISE + 1):
+        for t in tqdm(range(T_NOISE, -1, -1), desc="Denoising Reconstruction", total=T_NOISE + 1, file=sys.stderr):
             t_norm = torch.full((x.shape[0], 1), t / (model.T - 1), device=device)
             eps_hat = model.noise_predictor(curr_theta, t_norm)
 

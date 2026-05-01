@@ -107,6 +107,10 @@ def run_training(
             "metadata/sample_progression_*.npy",
             "metadata/reconstruction_progression_*.json",
             "metadata/reconstruction_progression_*.npy",
+            "metadata/reconstruction_norm_progression_*.json",
+            "metadata/reconstruction_norm_progression_*.npy",
+            "metadata/reconstruction_diffusion_progression_*.json",
+            "metadata/reconstruction_diffusion_progression_*.npy",
             "weights/weights.pt",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):
@@ -241,6 +245,7 @@ def run_training(
         ),
         data_config=data_config,
         deactivate_progress_bar=args.deactivate_progress_bar,
+        freeze_encoder=args.freeze_encoder if hasattr(args, "freeze_encoder") else None,
     )
 
     print("\n  Training complete...")
