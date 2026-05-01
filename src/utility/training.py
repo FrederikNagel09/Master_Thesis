@@ -153,6 +153,7 @@ def train(
             desc=f"Training {name}",
             unit="step",
             dynamic_ncols=True,
+            file=sys.stderr,
         )
 
     global_step = completed_steps
@@ -168,7 +169,8 @@ def train(
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
-        print(f"\n############## EPOCH: {epoch} ##############\n")
+        if GLOBAL_DEBUG_BOOL:
+            print(f"\n############## EPOCH: {epoch} ##############\n")
         for batch in data_loader:
             # ── Forward pass (model-type dispatch) ───────────────────────────
             if model_type == "inr_vae":

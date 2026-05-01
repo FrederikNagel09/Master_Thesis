@@ -44,6 +44,8 @@ from src.utility.general import (
 from src.utility.model_builders import build_model
 from src.utility.plotting import (
     plot_fphi_progression,
+    plot_reconstruction_diffusion_progression,
+    plot_reconstruction_norm_progression,
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
@@ -98,6 +100,8 @@ def run_training(
             "sample_progression_ep*.png",
             "fphi_progression_ep*.png",
             "reconstruction_progression_ep*.png",
+            "reconstruction_norm_progression_ep*.png",
+            "reconstruction_diffusion_progression_ep*.png",
             "metadata/training_graph_data.json",
             "metadata/sample_progression_*.json",
             "metadata/sample_progression_*.npy",
@@ -179,6 +183,24 @@ def run_training(
                     device,
                     data_config,
                     filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
+                )
+                plot_reconstruction_norm_progression(
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"reconstruction_norm_progression_ep{start_epoch + 1}-{end_epoch}",
+                )
+                plot_reconstruction_diffusion_progression(
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"reconstruction_diffusion_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
 
     # Load existing history for resumed runs; fresh dict otherwise

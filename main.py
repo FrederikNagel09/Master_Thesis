@@ -164,10 +164,10 @@ python main.py \
 
     
 python main.py \
-    --run_name MLP-MLP_v1 \
+    --run_name MLP-MLP_v2 \
     --model ndm_static_mlpinr \
     --dataset mnist \
-    --epochs 5 \
+    --epochs 40 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -206,11 +206,19 @@ def main():
     parser = get_default_parser()
     args = parser.parse_args()
 
-    # Use best available device if not explicitly set
-    if args.device is None:
-        args.device = _get_device()
+    log_file_path = f"src/logs/{args.run_name}.log"
 
-    run_training(args)
+    log_file = open(log_file_path, "w")  # noqa: SIM115
+    sys.stdout = log_file
+    try:
+        # Use best available device if not explicitly set
+        if args.device is None:
+            args.device = _get_device()
+
+        run_training(args)
+    finally:
+        log_file.close()
+        sys.stdout = sys.__stdout__  # restore terminal stdout
 
 
 if __name__ == "__main__":

@@ -193,6 +193,7 @@ class NDMStaticTransInr(nn.Module):
         theta_prime = self.scaler(theta_prime_raw, reverse=False)
 
         if GLOBAL_DEBUG_BOOL:
+            print("==================== DEBUG: Normalization ====================")
             print(
                 f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
                 f"std={theta_prime_raw.std():.4f}, "
@@ -205,9 +206,10 @@ class NDMStaticTransInr(nn.Module):
                 f"min={theta_prime.min():.4f}, "
                 f"max={theta_prime.max():.4f}"
             )
+            print("==============================================================\n")
 
             # Prints forwars process statistics for the first batch only, at specific time steps
-            if self.i == 1:
+            if self.i == 0:
                 print("\n######### Forward Process Statistics: #########")
                 # 1. Define the steps we want to see
                 t_steps = [999, 900, 800, 700, 600, 500, 400, 300, 200, 100, 0]
@@ -251,7 +253,7 @@ class NDMStaticTransInr(nn.Module):
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
-        elbo = (self.T - 1) * l_diff + l_prior + l_rec
+        elbo = (self.T - 1) * l_diff + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 

@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import torch
+import tqdm
 
 from src.configs.results_config import MODEL_COLORS, MODEL_LABELS
 from src.configs.train_plot_config import _COLORS, _LABELS
@@ -665,6 +666,151 @@ def plot_reconstruction_progression(
     plt.close(fig)
 
 
+def plot_reconstruction_norm_progression(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,
+    filename: str = "reconstruction_norm_progression",
+) -> None:
+    """
+    Like plot_reconstruction_progression but passes weights through
+    normalize -> denormalize before INR decode, to sanity-check the scaler.
+    Pipeline: w_raw = F_phi(x) -> w_norm = scaler(w_raw) -> w_denorm = scaler(w_norm, reverse=True) -> INR(w_denorm)
+    Parameters
+    ----------
+    model       : NeuralDiffusionModelINR with model.scaler (WeightScaler), already on device.
+    batch       : Current training batch — list/tuple where batch[0] is images.
+    epoch       : Current epoch, used as the row label.
+    run_dir     : Run results directory.
+    device      : Device string.
+    data_config : Dict with "channels", "img_size", "data_dim".
+    filename    : Base name for the saved png and metadata files.
+    """
+    import json
+
+    os.makedirs(run_dir, exist_ok=True)
+    N_ROWS_TOTAL = 5  # noqa: N806
+    n_cols = 6
+    n_pairs = n_cols // 2
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+
+    x = batch[0][:n_pairs].to(device)
+
+    model.eval()
+    with torch.no_grad():
+        # ── Encode to raw weights (mirrors existing plot) ─────────────────────
+        if hasattr(model, "F_phi"):
+            t0_norm = torch.zeros(x.shape[0], 1, device=device)
+            weights_raw = model.F_phi(x, t0_norm)
+        elif hasattr(model, "W") and hasattr(model.W, "inflate"):
+            x_spatial = x.view(x.shape[0], channels, img_size, img_size)
+            weights_raw = model.weight_encoder(x_spatial)
+        else:
+            t0_norm = torch.zeros(x.shape[0], device=device)
+            weights_raw = model.weight_encoder(x)
+
+        # ── Normalize then denormalize (the sanity check) ─────────────────────
+        weights_norm = model.scaler(weights_raw, reverse=False, training=False)
+        weights_denorm = model.scaler(weights_norm, reverse=True)
+
+        x_recon = model._inr_decode(weights_denorm)
+    model.train()
+
+    def _to_img(tensor_1d):
+        """Flat tensor → numpy HxW or HxWxC in [0,1]."""
+        img = tensor_1d.cpu().numpy().reshape(channels, img_size, img_size)
+        if channels == 1:
+            return img[0]
+        return img.transpose(1, 2, 0)
+
+    originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
+    recons = [(x_recon[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
+    new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)
+
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(rows_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        existing_rows = np.load(rows_path)
+        all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_rows = new_row[None]
+        all_epochs = [epoch]
+
+    np.save(rows_path, all_rows)
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs}, f)
+
+    n_existing = len(all_epochs)
+    blank_shape = (n_cols, *new_row.shape[1:])
+    blank = np.ones(blank_shape)
+    padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
+    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
+
+    label_width = 0.5
+    img_inches = 1.2
+    row_gap = 0.15
+    title_pad = 0.35
+    divider_gap = 0.08
+    fig_w = label_width + n_cols * img_inches + divider_gap
+    fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("white")
+
+    for c, header in enumerate(["", "Originals", "", "", "Reconstructions", ""]):
+        extra = divider_gap if c >= n_pairs else 0.0
+        cx = (label_width + (c + 0.5) * img_inches + extra) / fig_w
+        fig.text(cx, 1.0 - (title_pad * 0.7 / fig_h), header, ha="center", va="center", fontsize=7, color="#555555")
+
+    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+        for c in range(n_cols):
+            extra = divider_gap if c >= n_pairs else 0.0
+            left = (label_width + c * img_inches + extra) / fig_w
+            bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            width = img_inches / fig_w
+            height = img_inches / fig_h
+            ax = fig.add_axes([left, bottom, width, height])
+            if channels == 1:
+                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            else:
+                ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
+            ax.axis("off")
+        fig.text(
+            (label_width * 0.5) / fig_w,
+            1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
+            f"ep {ep}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    divider_x = (label_width + n_pairs * img_inches + divider_gap * 0.5) / fig_w
+    fig.add_artist(
+        plt.Line2D(
+            [divider_x, divider_x],
+            [0.01, 1.0 - title_pad / fig_h],
+            transform=fig.transFigure,
+            color="#cccccc",
+            linewidth=0.8,
+            linestyle="--",
+        )
+    )
+    fig.suptitle("Reconstruction Norm Progression", fontsize=11, fontweight="bold", y=1.02)
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def print_training_summary(
     name: str,
     history: dict,
@@ -714,6 +860,173 @@ def print_training_summary(
         print(f"    rec   : {history['rec'][-1]:.4f}")
         print(sep)
     print()
+
+
+def plot_reconstruction_diffusion_progression(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,
+    filename: str = "reconstruction_diffusion_progression",
+) -> None:
+    """
+    Sanity-check plot: encodes images to weights, noises to t=499, denoises back
+    to t=0, then decodes to pixel space.
+    Pipeline: x -> weight_encoder -> scaler(normalize) -> noise to t=499
+              -> reverse diffusion t=499..0 -> scaler(denormalize) -> INR -> x_recon
+    Parameters
+    ----------
+    model       : NDMStaticTransInr, already on device.
+    batch       : Current training batch — list/tuple where batch[0] is images.
+    epoch       : Current epoch, used as the row label.
+    run_dir     : Run results directory.
+    device      : Device string.
+    data_config : Dict with "channels", "img_size", "data_dim".
+    filename    : Base name for the saved png and metadata files.
+    """
+    import json
+
+    T_NOISE = 499  # forward noise target index  # noqa: N806
+
+    os.makedirs(run_dir, exist_ok=True)
+    N_ROWS_TOTAL = 5  # noqa: N806
+    n_cols = 6
+    n_pairs = n_cols // 2
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+
+    x = batch[1][:n_pairs].to(device)
+
+    model.eval()
+    with torch.no_grad():
+        # ── Encode → normalize → noise to t=499 ───────────────────────────────
+        weights_raw = model.weight_encoder(x)
+        weights_norm = model.scaler(weights_raw, reverse=False, training=False)
+
+        t_idx = torch.full((x.shape[0],), T_NOISE, dtype=torch.long, device=device)
+        curr_theta, _ = model._construct_theta_t(weights_norm, t_idx)
+
+        # ── Reverse diffusion from t=499 down to t=0 ───────────────────────────
+        clip_value = 3
+        for t in tqdm(range(T_NOISE, -1, -1), desc="Denoising Reconstruction", total=T_NOISE + 1):
+            t_norm = torch.full((x.shape[0], 1), t / (model.T - 1), device=device)
+            eps_hat = model.noise_predictor(curr_theta, t_norm)
+
+            alpha_bar = model.alpha_cumprod[t]
+            alpha = model.alpha[t]
+            beta = model.beta[t]
+
+            sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
+            theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
+            theta_0_clipped = torch.clamp(theta_0, -clip_value, clip_value)
+
+            if t > 0:
+                alpha_bar_prev = model.alpha_cumprod[t - 1]
+                coeff_x0 = (torch.sqrt(alpha_bar_prev) * beta) / (1.0 - alpha_bar)
+                coeff_xt = (torch.sqrt(alpha) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar)
+                mean = coeff_x0 * theta_0_clipped + coeff_xt * curr_theta
+                sigma = torch.sqrt(beta * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
+                curr_theta = mean + sigma * torch.randn_like(curr_theta)
+            else:
+                curr_theta = theta_0_clipped
+
+        # ── Denormalize → decode ──────────────────────────────────────────────
+        weights_denorm = model.scaler(curr_theta, reverse=True)
+        x_recon = model._inr_decode(weights_denorm)
+
+    model.train()
+
+    def _to_img(tensor_1d):
+        """Flat tensor → numpy HxW or HxWxC in [0,1]."""
+        img = tensor_1d.cpu().numpy().reshape(channels, img_size, img_size)
+        if channels == 1:
+            return img[0]
+        return img.transpose(1, 2, 0)
+
+    originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
+    recons = [(x_recon[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
+    new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)
+
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(rows_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        existing_rows = np.load(rows_path)
+        all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_rows = new_row[None]
+        all_epochs = [epoch]
+
+    np.save(rows_path, all_rows)
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs}, f)
+
+    n_existing = len(all_epochs)
+    blank_shape = (n_cols, *new_row.shape[1:])
+    blank = np.ones(blank_shape)
+    padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
+    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
+
+    label_width = 0.5
+    img_inches = 1.2
+    row_gap = 0.15
+    title_pad = 0.35
+    divider_gap = 0.08
+    fig_w = label_width + n_cols * img_inches + divider_gap
+    fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("white")
+
+    for c, header in enumerate(["", "Originals", "", "", "Reconstructions", ""]):
+        extra = divider_gap if c >= n_pairs else 0.0
+        cx = (label_width + (c + 0.5) * img_inches + extra) / fig_w
+        fig.text(cx, 1.0 - (title_pad * 0.7 / fig_h), header, ha="center", va="center", fontsize=7, color="#555555")
+
+    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+        for c in range(n_cols):
+            extra = divider_gap if c >= n_pairs else 0.0
+            left = (label_width + c * img_inches + extra) / fig_w
+            bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            width = img_inches / fig_w
+            height = img_inches / fig_h
+            ax = fig.add_axes([left, bottom, width, height])
+            if channels == 1:
+                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            else:
+                ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
+            ax.axis("off")
+        fig.text(
+            (label_width * 0.5) / fig_w,
+            1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
+            f"ep {ep}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    divider_x = (label_width + n_pairs * img_inches + divider_gap * 0.5) / fig_w
+    fig.add_artist(
+        plt.Line2D(
+            [divider_x, divider_x],
+            [0.01, 1.0 - title_pad / fig_h],
+            transform=fig.transFigure,
+            color="#cccccc",
+            linewidth=0.8,
+            linestyle="--",
+        )
+    )
+    fig.suptitle("Reconstruction Diffusion Progression", fontsize=11, fontweight="bold", y=1.02)
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 
 # =============================================================================
