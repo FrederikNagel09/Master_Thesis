@@ -873,10 +873,10 @@ def plot_reconstruction_diffusion_progression(
     filename: str = "reconstruction_diffusion_progression",
 ) -> None:
     """
-    Sanity-check plot: encodes images to weights, noises to t=499, denoises back
-    to t=0, then decodes to pixel space.
-    Pipeline: x -> weight_encoder -> scaler(normalize) -> noise to t=499
-              -> reverse diffusion t=499..0 -> scaler(denormalize) -> INR -> x_recon
+    Sanity-check plot: for each T in [100, 450, 700], encodes images to weights,
+    noises to t=T, denoises back to t=0, then decodes to pixel space.
+    Pipeline: x -> weight_encoder -> scaler(normalize) -> noise to t=T
+              -> reverse diffusion t=T..0 -> scaler(denormalize) -> INR -> x_recon
     Parameters
     ----------
     model       : NDMStaticTransInr, already on device.
@@ -889,40 +889,46 @@ def plot_reconstruction_diffusion_progression(
     """
     import json
 
-    T_NOISE = 499  # forward noise target index  # noqa: N806
-
+    T_VALUES = [100, 450, 700]  # noise levels to evaluate  # noqa: N806
     os.makedirs(run_dir, exist_ok=True)
     N_ROWS_TOTAL = 5  # noqa: N806
-    n_cols = 6
-    n_pairs = n_cols // 2
+    n_pairs = 2
+    n_orig = n_pairs
+    n_recon_cols = n_pairs * len(T_VALUES)
+    n_cols = n_orig + n_recon_cols  # 2 originals + 2*3 reconstructions = 8
     channels = data_config["channels"]
     img_size = data_config["img_size"]
-
     x = batch[0][5 : 5 + n_pairs].to(device)
 
-    model.eval()
-    with torch.no_grad():
-        # ── Encode → normalize → noise to t=499 ───────────────────────────────
+    def _run_diffusion(t_noise: int) -> torch.Tensor:
+        """
+        Encodes x to weights, noises to t=t_noise, denoises back to t=0, decodes.
+
+        Args:
+            t_noise : Timestep index to noise to before reversing.
+        Returns:
+            x_recon : Reconstructed images, same shape as x.
+        """
         weights_raw = model.weight_encoder(x)
         weights_norm = model.scaler(weights_raw, reverse=False, training=False)
-
-        t_idx = torch.full((x.shape[0],), T_NOISE, dtype=torch.long, device=device)
+        t_idx = torch.full((x.shape[0],), t_noise, dtype=torch.long, device=device)
         curr_theta, _ = model._construct_theta_t(weights_norm, t_idx)
 
-        # ── Reverse diffusion from t=499 down to t=0 ───────────────────────────
         clip_value = 3
-        for t in tqdm(range(T_NOISE, -1, -1), desc="Denoising Reconstruction", total=T_NOISE + 1, file=sys.stderr):
+        for t in tqdm(
+            range(t_noise, -1, -1),
+            desc=f"Denoising T={t_noise}",
+            total=t_noise + 1,
+            file=sys.stderr,
+        ):
             t_norm = torch.full((x.shape[0], 1), t / (model.T - 1), device=device)
             eps_hat = model.noise_predictor(curr_theta, t_norm)
-
             alpha_bar = model.alpha_cumprod[t]
             alpha = model.alpha[t]
             beta = model.beta[t]
-
             sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
             theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
             theta_0_clipped = torch.clamp(theta_0, -clip_value, clip_value)
-
             if t > 0:
                 alpha_bar_prev = model.alpha_cumprod[t - 1]
                 coeff_x0 = (torch.sqrt(alpha_bar_prev) * beta) / (1.0 - alpha_bar)
@@ -933,13 +939,15 @@ def plot_reconstruction_diffusion_progression(
             else:
                 curr_theta = theta_0_clipped
 
-        # ── Denormalize → decode ──────────────────────────────────────────────
         weights_denorm = model.scaler(curr_theta, reverse=True)
-        x_recon = model._inr_decode(weights_denorm)
+        return model._inr_decode(weights_denorm)
 
+    model.eval()
+    with torch.no_grad():
+        recons_per_t = [_run_diffusion(t) for t in T_VALUES]
     model.train()
 
-    def _to_img(tensor_1d):
+    def _to_img(tensor_1d: torch.Tensor) -> np.ndarray:
         """Flat tensor → numpy HxW or HxWxC in [0,1]."""
         img = tensor_1d.cpu().numpy().reshape(channels, img_size, img_size)
         if channels == 1:
@@ -947,14 +955,15 @@ def plot_reconstruction_diffusion_progression(
         return img.transpose(1, 2, 0)
 
     originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
-    recons = [(x_recon[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
-    new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)
+    # Shape: (n_cols,) — originals first, then recons grouped by T value
+    all_imgs = originals + [(recons_per_t[t_idx][i] * 0.5 + 0.5).clamp(0, 1) for t_idx in range(len(T_VALUES)) for i in range(n_pairs)]
+    new_row = np.stack([_to_img(t) for t in all_imgs], axis=0)
 
+    # ── Persist rows across epochs ────────────────────────────────────────────
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
     meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
     rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
-
     if os.path.exists(meta_path) and os.path.exists(rows_path):
         with open(meta_path) as f:
             meta = json.load(f)
@@ -964,11 +973,11 @@ def plot_reconstruction_diffusion_progression(
     else:
         all_rows = new_row[None]
         all_epochs = [epoch]
-
     np.save(rows_path, all_rows)
     with open(meta_path, "w") as f:
         json.dump({"epochs": all_epochs}, f)
 
+    # ── Layout constants ──────────────────────────────────────────────────────
     n_existing = len(all_epochs)
     blank_shape = (n_cols, *new_row.shape[1:])
     blank = np.ones(blank_shape)
@@ -978,22 +987,42 @@ def plot_reconstruction_diffusion_progression(
     label_width = 0.5
     img_inches = 1.2
     row_gap = 0.15
-    title_pad = 0.35
+    title_pad = 0.55  # extra height for two-line header
     divider_gap = 0.08
-    fig_w = label_width + n_cols * img_inches + divider_gap
+    n_dividers = len(T_VALUES) + 1  # one before originals group, one before each T group
+
+    fig_w = label_width + n_cols * img_inches + n_dividers * divider_gap
     fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
-    for c, header in enumerate(["", "Originals", "", "", "Reconstructions", ""]):
-        extra = divider_gap if c >= n_pairs else 0.0
-        cx = (label_width + (c + 0.5) * img_inches + extra) / fig_w
-        fig.text(cx, 1.0 - (title_pad * 0.7 / fig_h), header, ha="center", va="center", fontsize=7, color="#555555")
+    # Column index → (group_label, divider_offset_from_left)
+    # Groups: orig(0-1), T=100(2-3), T=450(4-5), T=700(6-7)
+    group_starts = [0, n_orig] + [n_orig + t * n_pairs for t in range(1, len(T_VALUES))]
+    group_labels = ["Originals"] + [f"T={t}" for t in T_VALUES]
 
+    def _col_x(col: int) -> float:
+        """Compute figure-space x-center for a given column index."""
+        # Count how many dividers precede this column
+        n_div = sum(1 for gs in group_starts[1:] if col >= gs)
+        return (label_width + (col + 0.5) * img_inches + n_div * divider_gap) / fig_w
+
+    def _col_left(col: int) -> float:
+        """Compute figure-space left edge for a given column index."""
+        n_div = sum(1 for gs in group_starts[1:] if col >= gs)
+        return (label_width + col * img_inches + n_div * divider_gap) / fig_w
+
+    # ── Group header labels ───────────────────────────────────────────────────
+    header_y = 1.0 - (title_pad * 0.4 / fig_h)
+    for g_idx, (g_start, g_label) in enumerate(zip(group_starts, group_labels, strict=False)):
+        g_end = g_start + (n_orig if g_idx == 0 else n_pairs)
+        cx = (_col_x(g_start) + _col_x(g_end - 1)) / 2
+        fig.text(cx, header_y, g_label, ha="center", va="center", fontsize=7, color="#555555")
+
+    # ── Image axes ───────────────────────────────────────────────────────────
     for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
         for c in range(n_cols):
-            extra = divider_gap if c >= n_pairs else 0.0
-            left = (label_width + c * img_inches + extra) / fig_w
+            left = _col_left(c)
             bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
             width = img_inches / fig_w
             height = img_inches / fig_h
@@ -1003,6 +1032,8 @@ def plot_reconstruction_diffusion_progression(
             else:
                 ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
             ax.axis("off")
+
+        # Row epoch label
         fig.text(
             (label_width * 0.5) / fig_w,
             1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
@@ -1013,17 +1044,21 @@ def plot_reconstruction_diffusion_progression(
             color="#333333",
         )
 
-    divider_x = (label_width + n_pairs * img_inches + divider_gap * 0.5) / fig_w
-    fig.add_artist(
-        plt.Line2D(
-            [divider_x, divider_x],
-            [0.01, 1.0 - title_pad / fig_h],
-            transform=fig.transFigure,
-            color="#cccccc",
-            linewidth=0.8,
-            linestyle="--",
+    # ── Dividers between groups ───────────────────────────────────────────────
+    divider_ys = [0.01, 1.0 - title_pad / fig_h]
+    for g_start in group_starts[1:]:
+        div_x = _col_left(g_start) - divider_gap * 0.5 / fig_w
+        fig.add_artist(
+            plt.Line2D(
+                [div_x, div_x],
+                divider_ys,
+                transform=fig.transFigure,
+                color="#cccccc",
+                linewidth=0.8,
+                linestyle="--",
+            )
         )
-    )
+
     fig.suptitle("Reconstruction Diffusion Progression", fontsize=11, fontweight="bold", y=1.02)
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")

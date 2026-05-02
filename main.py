@@ -162,9 +162,10 @@ python main.py \
     --noise_predictor_dropout 0.1 \
     --noise_predictor_t_embed_dim 256
 
+    --freeze_encoder 0.2 \
     
 python main.py \
-    --run_name MLP-MLP_Test-two-stage-training \
+    --run_name MLP-MLP_Test-diffusion-recon \
     --model ndm_static_mlpinr \
     --dataset mnist \
     --epochs 5 \
@@ -173,9 +174,8 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 1.0 \
+    --subset_frac 0.33 \
     --use_scheduler \
-    --freeze_encoder 0.2 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \
