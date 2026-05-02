@@ -165,16 +165,16 @@ python main.py \
     --freeze_encoder 0.2 \
     
 python main.py \
-    --run_name MLP-MLP_Test-diffusion-recon \
+    --run_name MLP-MLP_v3 \
     --model ndm_static_mlpinr \
     --dataset mnist \
-    --epochs 5 \
+    --epochs 40 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.33 \
+    --subset_frac 1.0 \
     --use_scheduler \
     --peak_lr 1e-4 \
     --T 1000 \

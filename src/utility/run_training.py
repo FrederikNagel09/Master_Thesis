@@ -22,6 +22,7 @@ Directory layout produced per run
 
 import argparse
 import os
+import random
 import sys
 from datetime import datetime
 
@@ -30,7 +31,7 @@ import torch.nn as nn
 
 sys.path.append(".")
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 from src.utility.dataset_builders import build_dataset
 from src.utility.general import (
     _get_device,
@@ -135,7 +136,7 @@ def run_training(
     print(f"  Batches per epoch : {len(data_loader)}")
 
     # Check dataset stats for sanity and for building model
-    if GLOBAL_DEBUG_BOOL:
+    if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
         print("==================== DEBUG: run_training.py ====================")
         print(f"  Dataset samples shape : {dataset[0][0].shape}")
         print(f"  Dataset samples range : [{dataset[0][0].min().item():.4f}, {dataset[0][0].max().item():.4f}]")

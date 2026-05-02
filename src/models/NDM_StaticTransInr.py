@@ -192,7 +192,7 @@ class NDMStaticTransInr(nn.Module):
         # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
         theta_prime = self.scaler(theta_prime_raw, reverse=False)
 
-        if GLOBAL_DEBUG_BOOL:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
                 f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
@@ -366,20 +366,21 @@ class NDMStaticTransInr(nn.Module):
                 # At t=0, the denoised sample is just our predicted x0
                 curr_theta = theta_0_clipped
 
-            if GLOBAL_DEBUG_BOOL:
-                print(
-                    "DEBUG theta_0 before clipping: "
-                    f"mean={theta_0.mean():.4f}, std={theta_0.std():.4f}, "
-                    f"min={theta_0.min():.4f}, max={theta_0.max():.4f}"
-                )
-                print(
-                    "DEBUG theta_0 after clipping: "
-                    f"mean={theta_0_clipped.mean():.4f}, std={theta_0_clipped.std():.4f}, "
-                    f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
-                )
+            if GLOBAL_DEBUG_BOOL:  # noqa: SIM102
                 # Debug prints to verify the explosion is gone
-                if t % 100 == 0:
+                if t % 100 == 0 or t == self.T - 1:
+                    print(f"==================== DEBUG: Sampling Process T={t}====================")
                     print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
+                    print(
+                        "DEBUG theta_0 before clipping: "
+                        f"mean={theta_0.mean():.4f}, std={theta_0.std():.4f}, "
+                        f"min={theta_0.min():.4f}, max={theta_0.max():.4f}"
+                    )
+                    print(
+                        "DEBUG theta_0 after clipping: "
+                        f"mean={theta_0_clipped.mean():.4f}, std={theta_0_clipped.std():.4f}, "
+                        f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
+                    )
 
         final_weights = self.scaler(curr_theta, reverse=True)
         return final_weights
