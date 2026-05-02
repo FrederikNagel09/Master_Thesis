@@ -241,7 +241,11 @@ class NDMStaticTransInr(nn.Module):
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
         theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
-
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("==================== DEBUG: Construct Theta_t ====================")
+            print(f"DEBUG epsilon: mean={epsilon.mean():.4f}, std={epsilon.std():.4f}")
+            print(f"DEBUG epsilon: min={epsilon.min():.4f}, max={epsilon.max():.4f}")
+            print("================================================================\n")
         # Given theta_t, and theta_prime we compute the three loss terms:
         l_diff = self._l_diff(theta_t, t_norm, epsilon, t_idx)  # (batch,)
 
@@ -321,7 +325,7 @@ class NDMStaticTransInr(nn.Module):
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
         weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
-        clip_value = 3
+        clip_value = 5
         # 1. Start from pure Gaussian noise
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
@@ -343,6 +347,21 @@ class NDMStaticTransInr(nn.Module):
             sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
 
             theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
+            if GLOBAL_DEBUG_BOOL:
+                print(f"DEBUG sqrt_one_minus_alpha_bar: {sqrt_one_minus_alpha_bar}")
+                print(f"DEBUG torch.sqrt(alpha_bar):    {torch.sqrt(alpha_bar)}")
+                # Debug prints to verify the explosion is gone
+                if t % 100 == 0 or t == self.T - 1:
+                    print(f"==================== DEBUG: Theta_0 Computation T={t} ====================")
+                    print(f"DEBUG eps_hat: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}")
+                    print(f"DEBUG eps_hat: min={eps_hat.min():.4f}, max={eps_hat.max():.4f}")
+                    print("")
+                    print(f"DEBUG curr_theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
+                    print(f"DEBUG curr_theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
+                    print("")
+                    print(f"DEBUG theta_0 before clipping: mean={theta_0.mean():.4f}, std={theta_0.std():.4f}")
+                    print(f"DEBUG theta_0 before clipping: min={theta_0.min():.4f}, max={theta_0.max():.4f}")
+                    print("================================================================")
 
             # 5. Clip predicted weights to the training distribution
             theta_0_clipped = torch.clamp(theta_0, -clip_value, clip_value)
