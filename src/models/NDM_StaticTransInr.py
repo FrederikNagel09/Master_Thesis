@@ -191,7 +191,7 @@ class NDMStaticTransInr(nn.Module):
 
         # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
         theta_prime = self.scaler(theta_prime_raw, reverse=False)
-
+        theta_prime_sg = theta_prime.detach()  # Detach for loss computations that shouldn't backprop through the scaler
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
@@ -240,7 +240,7 @@ class NDMStaticTransInr(nn.Module):
                 print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
+        theta_t, epsilon = self._construct_theta_t(theta_prime_sg, t_idx)
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Construct Theta_t ====================")
             print(f"DEBUG epsilon: mean={epsilon.mean():.4f}, std={epsilon.std():.4f}")
@@ -249,7 +249,7 @@ class NDMStaticTransInr(nn.Module):
         # Given theta_t, and theta_prime we compute the three loss terms:
         l_diff = self._l_diff(theta_t, t_norm, epsilon, t_idx)  # (batch,)
 
-        l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
+        l_prior = self._l_prior(theta_prime=theta_prime_sg)  # (batch,)
 
         l_rec = self._l_rec(x, theta_prime_raw)
 
@@ -257,7 +257,7 @@ class NDMStaticTransInr(nn.Module):
         prior_mask = (t_idx == self.T - 1).float()
         l_prior = prior_mask * l_prior
 
-        elbo = (self.T - 1) * l_diff + l_rec
+        elbo = (self.T - 2) * l_diff + l_rec + l_prior
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -325,7 +325,7 @@ class NDMStaticTransInr(nn.Module):
     def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
         weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
-        clip_value = 5
+        clip_value = 3
         # 1. Start from pure Gaussian noise
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
@@ -347,6 +347,7 @@ class NDMStaticTransInr(nn.Module):
             sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
 
             theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
+
             if GLOBAL_DEBUG_BOOL:
                 print(f"DEBUG sqrt_one_minus_alpha_bar: {sqrt_one_minus_alpha_bar}")
                 print(f"DEBUG torch.sqrt(alpha_bar):    {torch.sqrt(alpha_bar)}")
