@@ -62,7 +62,7 @@ def decode(encoder: MLPStaticWeightEncoder, flat_weights: torch.Tensor, coord_gr
         recon (B, C, H, W) in [-1, 1] due to SIREN tanh output
     """
     B = flat_weights.shape[0]  # noqa: N806
-    H, W, _ = coord_grid.shape  # noqa: N806
+    _, _, _ = coord_grid.shape
 
     param_dict = encoder.inflate(flat_weights)
     encoder.inr.set_params(param_dict)
