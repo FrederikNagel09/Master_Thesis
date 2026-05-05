@@ -126,24 +126,23 @@ python main.py \
 
 ######################### TRANSFORMER ENCODER NDM-INR Training ####################################
 python main.py \
-    --run_name TransNdmInr_singleclass_v2 \
+    --run_name TransNdmInr_test_v11 \
     --model ndm_static_transinr\
     --dataset mnist \
-    --epochs 40 \
+    --epochs 200 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.2 \
-    --use_scheduler \
+    --subset_frac 1.0 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \
-    --beta_T 2e-2 \
+    --beta_T 0.004 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 64 \
-    --inr_layers 5 \
+    --inr_hidden_dim 20 \
+    --inr_layers 3 \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 4 \
     --encoder_trans_head_dim 32 \
