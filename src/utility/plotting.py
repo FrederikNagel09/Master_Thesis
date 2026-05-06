@@ -889,13 +889,13 @@ def plot_reconstruction_diffusion_progression(
     """
     import json
 
-    T_VALUES = [100, 450, 700]  # noise levels to evaluate  # noqa: N806
+    T_VALUES = [100, 400, 700, 999]  # noise levels to evaluate  # noqa: N806
     os.makedirs(run_dir, exist_ok=True)
     N_ROWS_TOTAL = 5  # noqa: N806
     n_pairs = 2
     n_orig = n_pairs
     n_recon_cols = n_pairs * len(T_VALUES)
-    n_cols = n_orig + n_recon_cols  # 2 originals + 2*3 reconstructions = 8
+    n_cols = n_orig + n_recon_cols  # 2 originals + 2*4 reconstructions = 10
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     x = batch[0][5 : 5 + n_pairs].to(device)
