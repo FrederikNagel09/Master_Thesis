@@ -46,7 +46,6 @@ from src.utility.model_builders import build_model
 from src.utility.plotting import (
     plot_fphi_progression,
     plot_reconstruction_diffusion_progression,
-    plot_reconstruction_norm_progression,
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
@@ -196,15 +195,6 @@ def run_training(
                     device,
                     data_config,
                     filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
-                )
-                plot_reconstruction_norm_progression(
-                    model,
-                    batch,
-                    epoch,
-                    run_dir,
-                    device,
-                    data_config,
-                    filename=f"reconstruction_norm_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
                 plot_reconstruction_diffusion_progression(
                     model,
