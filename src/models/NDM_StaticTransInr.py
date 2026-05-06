@@ -182,7 +182,7 @@ class NDMStaticTransInr(nn.Module):
         batch_size = x.shape[0]
 
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
-        t_idx = torch.randint(1, self.T + 1, (batch_size,), device=x.device) - 1
+        t_idx = torch.randint(1, self.T, (batch_size,), device=x.device) - 1
         # Normalize time step to [0, 1] for network input
         t_norm = t_idx.float() / (self.T - 1)
 
@@ -252,10 +252,6 @@ class NDMStaticTransInr(nn.Module):
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
 
         l_rec = self._l_rec(x, theta_prime_raw)
-
-        # apply prior mask and scaling:
-        prior_mask = (t_idx == self.T - 1).float()
-        l_prior = prior_mask * l_prior
 
         elbo = (self.T - 2) * l_diff + l_rec + l_prior
 
