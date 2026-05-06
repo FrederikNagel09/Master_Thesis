@@ -340,8 +340,12 @@ class MLPStaticWeightEncoder(nn.Module):
         for h_dim in hidden_dims:
             layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
             in_dim = h_dim
-        layers.append(nn.Linear(in_dim, self._weight_dim))
+
         self.net = nn.Sequential(*layers)
+
+        # ── Probabilistic Heads ──────────────────────────────────────────────
+        self.fc_mu = nn.Linear(hidden_dims[-1], self._weight_dim)
+        self.fc_logvar = nn.Linear(hidden_dims[-1], self._weight_dim)
 
     @property
     def weight_dim(self) -> int:
@@ -365,6 +369,14 @@ class MLPStaticWeightEncoder(nn.Module):
             offset += n
         return param_dict
 
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        """
+        Samples z = mu + std * epsilon
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:    x (B, data_dim) or (B, C, H, W)
@@ -372,7 +384,14 @@ class MLPStaticWeightEncoder(nn.Module):
         """
         if x.dim() != 2:
             x = x.view(x.shape[0], -1)
-        return self.net(x)
+
+        h = self.net(x)
+
+        mu = self.fc_mu(h)
+
+        logvar = self.fc_logvar(h)
+
+        return self.reparameterize(mu, logvar)
 
 
 ########## CNN Weight Encoders ##########
