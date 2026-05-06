@@ -165,7 +165,7 @@ python main.py \
     --freeze_encoder 0.2 \
     
 python main.py \
-    --run_name MLP-MLP_v13-with-tanh \
+    --run_name MLP-MLP_v14 \
     --model ndm_static_mlpinr \
     --dataset mnist \
     --epochs 40\
