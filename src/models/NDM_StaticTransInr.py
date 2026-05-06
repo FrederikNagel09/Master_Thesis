@@ -276,7 +276,7 @@ class NDMStaticTransInr(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, epsilon, t_idx):
+    def _l_diff(self, theta_t, t_norm, epsilon, t_idx):  # noqa: ARG002
         """
         Computes L_diff for time-independent W(x).
 
@@ -292,11 +292,11 @@ class NDMStaticTransInr(nn.Module):
         # Predict noise at time step t_idx using the noise predictor network
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
-        scaling = self.beta[t_idx] / (2 * self.alpha[t_idx] * self.sigma_sq[t_idx])  # (batch,)
+        # scaling = self.beta[t_idx] / (2 * self.alpha[t_idx] * self.sigma_sq[t_idx])  # (batch,)
 
         mse = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)  # (batch,)
 
-        return mse * scaling
+        return mse
 
     def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
         """
