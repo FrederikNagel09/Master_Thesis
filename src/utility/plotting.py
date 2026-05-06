@@ -1065,6 +1065,168 @@ def plot_reconstruction_diffusion_progression(
     plt.close(fig)
 
 
+def plot_weight_profile_progression(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,
+    filename: str = "weight_profile_progression",
+) -> None:
+    """
+    Plots the raw sequence of weights for a SINGLE sample to see the 'signature'.
+    """
+    import json
+    import os
+
+    os.makedirs(run_dir, exist_ok=True)
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    channels, img_size = data_config["channels"], data_config["img_size"]
+
+    # ── 1. Get One Sample Weight ──────────────────────────────────────────────
+    x = batch[0][0:1].to(device)
+    model.eval()
+    with torch.no_grad():
+        if hasattr(model, "F_phi"):
+            weights = model.F_phi(x, torch.zeros(1, 1, device=device))
+        elif hasattr(model, "W") and hasattr(model.W, "inflate"):
+            weights = model.weight_encoder(x.view(1, channels, img_size, img_size))
+        else:
+            weights = model.weight_encoder(x)
+        weights_np = weights.detach().cpu().numpy().flatten()
+    model.train()
+
+    # ── 2. Persist ────────────────────────────────────────────────────────────
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    rows_path = os.path.join(metadata_dir, f"{filename}_weights.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(rows_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        all_weights = list(np.load(rows_path, allow_pickle=True)) + [weights_np]  # noqa: RUF005
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_weights = [weights_np]
+        all_epochs = [epoch]
+
+    np.save(rows_path, np.array(all_weights, dtype=object))
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs}, f)
+
+    # ── 3. Plotting ───────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(N_ROWS_TOTAL, 1, figsize=(10, 10), sharex=True)
+    fig.patch.set_facecolor("white")
+
+    # Determine consistent Y-limits based on seen data
+    all_vals = np.concatenate(all_weights)
+    y_min, y_max = np.percentile(all_vals, [0.5, 99.5])
+
+    for i in range(N_ROWS_TOTAL):
+        ax = axes[i]
+        if i < len(all_weights):
+            ax.plot(all_weights[i], color="#E67E22", linewidth=0.6)
+            ax.set_ylim(y_min * 1.2, y_max * 1.2)
+            ax.set_ylabel(f"ep {all_epochs[i]}", fontsize=9, fontweight="bold")
+        ax.spines[["top", "right"]].set_visible(False)
+
+    plt.xlabel("Weight Index (0 to N)")
+    fig.suptitle("Weight Vector Profile Progression (Single Sample)", fontsize=12, fontweight="bold", y=0.96)
+    plt.savefig(os.path.join(run_dir, f"{filename}.png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_weight_distribution_progression(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,
+    filename: str = "weight_dist_progression",
+) -> None:
+    """
+    Computes weights for the WHOLE BATCH and plots the collective distribution.
+    """
+    import json
+    import os
+
+    os.makedirs(run_dir, exist_ok=True)
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    channels, img_size = data_config["channels"], data_config["img_size"]
+
+    # ── 1. Get Batch Weights ──────────────────────────────────────────────────
+    x = batch[0].to(device)  # Process full batch
+    model.eval()
+    with torch.no_grad():
+        if hasattr(model, "F_phi"):
+            t = torch.zeros(x.shape[0], 1, device=device)
+            weights = model.F_phi(x, t)
+        elif hasattr(model, "W") and hasattr(model.W, "inflate"):
+            x_spatial = x.view(x.shape[0], channels, img_size, img_size)
+            weights = model.weight_encoder(x_spatial)
+        else:
+            weights = model.weight_encoder(x)
+
+        # Collective weights across the whole batch
+        weights_batch_np = weights.detach().cpu().numpy().flatten()
+    model.train()
+
+    # ── 2. Persist ────────────────────────────────────────────────────────────
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    rows_path = os.path.join(metadata_dir, f"{filename}_weights.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(rows_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        all_weights = list(np.load(rows_path, allow_pickle=True)) + [weights_batch_np]  # noqa: RUF005
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_weights = [weights_batch_np]
+        all_epochs = [epoch]
+
+    np.save(rows_path, np.array(all_weights, dtype=object))
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs}, f)
+
+    # ── 3. Plotting ───────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(N_ROWS_TOTAL, 1, figsize=(7, 10), sharex=True)
+    fig.patch.set_facecolor("white")
+
+    all_vals = np.concatenate(all_weights)
+    x_min, x_max = np.percentile(all_vals, [0.5, 99.5])
+
+    for i in range(N_ROWS_TOTAL):
+        ax = axes[i]
+        if i < len(all_weights):
+            w = all_weights[i]
+            mu, std = np.mean(w), np.std(w)
+            ax.hist(w, bins=100, color="#4A90E2", alpha=0.7, range=(x_min, x_max), density=True)
+            ax.set_ylabel(f"ep {all_epochs[i]}", fontsize=9, fontweight="bold")
+            ax.text(
+                0.98,
+                0.85,
+                f"$\mu$:{mu:.3f}\n$\sigma$:{std:.3f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=8,
+                bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+            )
+        ax.spines[["top", "right"]].set_visible(False)
+
+    plt.xlabel("Weight Value Magnitude (Batch Distribution)")
+    fig.suptitle("Batch Weight Distribution Progression", fontsize=12, fontweight="bold", y=0.96)
+    plt.savefig(os.path.join(run_dir, f"{filename}.png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 # =============================================================================
 # Plotting for FID table (per-model sample quality metrics)
 # =============================================================================

@@ -50,6 +50,8 @@ from src.utility.plotting import (
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
+    plot_weight_distribution_progression,
+    plot_weight_profile_progression,
 )
 from src.utility.training import train
 
@@ -103,6 +105,8 @@ def run_training(
             "reconstruction_progression_ep*.png",
             "reconstruction_norm_progression_ep*.png",
             "reconstruction_diffusion_progression_ep*.png",
+            "weight_profile_progression_ep*.png",
+            "weight_distribution_progression_ep*.png",
             "metadata/training_graph_data.json",
             "metadata/sample_progression_*.json",
             "metadata/sample_progression_*.npy",
@@ -112,6 +116,10 @@ def run_training(
             "metadata/reconstruction_norm_progression_*.npy",
             "metadata/reconstruction_diffusion_progression_*.json",
             "metadata/reconstruction_diffusion_progression_*.npy",
+            "metadata/weight_profile_progression_*.json",
+            "metadata/weight_profile_progression_*.npy",
+            "metadata/weight_distribution_progression_*.json",
+            "metadata/weight_distribution_progression_*.npy",
             "weights/weights.pt",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):
@@ -206,6 +214,24 @@ def run_training(
                     device,
                     data_config,
                     filename=f"reconstruction_diffusion_progression_ep{start_epoch + 1}-{end_epoch}",
+                )
+                plot_weight_profile_progression(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    data_config=data_config,
+                    filename=f"weight_profile_progression_ep{start_epoch + 1}-{end_epoch}",
+                )
+                plot_weight_distribution_progression(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    data_config=data_config,
+                    filename=f"weight_distribution_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
 
     # Load existing history for resumed runs; fresh dict otherwise
