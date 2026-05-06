@@ -188,7 +188,7 @@ class SIREN(nn.Module):
 
         for i in range(self.depth):
             x = batched_linear_mm(x, self.params[f"wb{i}"])
-            x = self.siren_activation(x) if i < self.depth - 1 else x + self.out_bias
+            x = self.siren_activation(x) if i < self.depth - 1 else torch.tanh(x)
 
         x = x.view(B, *query_shape, -1)
         return x
