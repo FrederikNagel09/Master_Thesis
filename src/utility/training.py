@@ -168,18 +168,26 @@ def train(
         gr, gc = torch.meshgrid(lin, lin, indexing="ij")
         _coords = torch.stack([gr.flatten(), gc.flatten()], dim=-1)  # (img_size^2, 2)
 
+    # ── Freeze Noise Predictor if specified ──────────────────────────────────────────
+    if freeze_encoder is not None:
+        print("[Training] Two-stage mode: freezing noise predictor for first phase.")
+        for param in model.noise_predictor.parameters():
+            param.requires_grad = False
+
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
         # ── Freeze encoder after threshold ───────────────────────────────────
         if freeze_encoder is not None:
             elapsed = epoch - start_epoch
             if elapsed == int(freeze_encoder * epochs):
-                print("############### EPOCH: {epoch} - FREEZING ENCODER ###############")
-                print(f"[Epoch {epoch}] Freezing weight encoder and scaler.")
+                print(f"############### EPOCH: {epoch} - FREEZING ENCODER ###############")
+                print(f"[Epoch {epoch}] Freezing weight encoder and scaler. Unfreezing noise predictor.")
                 for param in model.weight_encoder.parameters():
                     param.requires_grad = False
                 for param in model.scaler.parameters():
                     param.requires_grad = False
+                for param in model.noise_predictor.parameters():
+                    param.requires_grad = True
                 print("##################################################################\n")
 
         if GLOBAL_DEBUG_BOOL:

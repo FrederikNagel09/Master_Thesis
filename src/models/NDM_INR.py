@@ -344,6 +344,8 @@ class MLPStaticWeightEncoder(nn.Module):
             layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
             in_dim = h_dim
 
+        layers += [nn.Linear(in_dim, self._weight_dim)]
+
         self.net = nn.Sequential(*layers)
 
     @property
