@@ -165,7 +165,7 @@ python main.py \
     --freeze_encoder 0.2 \
     
 python main.py \
-    --run_name MLP-MLP_v16-testing\
+    --run_name MLP-MLP_v16-Two-stage\
     --model ndm_static_mlpinr \
     --dataset mnist \
     --epochs 40\
@@ -175,6 +175,7 @@ python main.py \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
     --subset_frac 1.0 \
+    --freeze_encoder 0.25 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \

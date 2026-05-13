@@ -55,11 +55,6 @@ class WeightScaler(nn.Module):
                 if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
                     print(f"DEBUG WeightScaler Batch Mean: {batch_mean.mean().item():.4f}, Batch Std: {batch_std.mean().item():.4f}")
 
-                print("self.momentum: ", self.momentum)
-                print("batch_mean: ", batch_mean.shape)
-                print("batch_std: ", batch_std.shape)
-                print("running_mean: ", self.running_mean.shape)
-                print("running_std: ", self.running_std.shape)
                 # Update running statistics (Exponential Moving Average)
                 with torch.no_grad():
                     self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean
