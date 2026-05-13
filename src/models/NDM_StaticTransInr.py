@@ -247,7 +247,7 @@ class NDMStaticTransInr(nn.Module):
             print(f"DEBUG epsilon: min={epsilon.min():.4f}, max={epsilon.max():.4f}")
             print("================================================================\n")
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_t, t_norm, epsilon, t_idx)  # (batch,)
+        l_diff = self._l_diff(theta_t, t_norm, epsilon)  # (batch,)
 
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
 
@@ -276,7 +276,7 @@ class NDMStaticTransInr(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, epsilon, t_idx):
+    def _l_diff(self, theta_t, t_norm, epsilon):
         """
         Computes L_diff for time-independent W(x).
 
@@ -291,8 +291,6 @@ class NDMStaticTransInr(nn.Module):
         """
         # Predict noise at time step t_idx using the noise predictor network
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
-
-        scaling = self.beta[t_idx] / (2 * self.alpha[t_idx] * self.sigma_sq[t_idx])  # (batch,)  # noqa: F841
 
         mse = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)  # (batch,)
 
@@ -324,6 +322,19 @@ class NDMStaticTransInr(nn.Module):
         clip_value = 3
         # 1. Start from pure Gaussian noise
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
+
+        if GLOBAL_DEBUG_BOOL:
+            # Fixed-input time sensitivity check: does eps_hat actually change with t?
+            fixed_theta = torch.randn(1, weight_dim, device=device)
+            t_high = torch.full((1, 1), 999 / (self.T - 1), device=device)
+            t_low = torch.full((1, 1), 0 / (self.T - 1), device=device)
+            eps_high = self.noise_predictor(fixed_theta, t_high)
+            eps_low = self.noise_predictor(fixed_theta, t_low)
+            print("===== TIME SENSITIVITY CHECK =====")
+            print(f"eps_hat @ t=999: mean={eps_high.mean():.4f}, std={eps_high.std():.4f}")
+            print(f"eps_hat @ t=0  : mean={eps_low.mean():.4f},  std={eps_low.std():.4f}")
+            print(f"max abs diff   : {(eps_high - eps_low).abs().max():.4f}")
+            print("==================================")
 
         # The loop runs from T-1 down to 0
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
@@ -393,13 +404,18 @@ class NDMStaticTransInr(nn.Module):
                         f"min={theta_0.min():.4f}, max={theta_0.max():.4f}"
                     )
                     print(
-                        "DEBUG theta_0 after clipping: "
+                        "DEBUG curr_theta after clipping: "
                         f"mean={theta_0_clipped.mean():.4f}, std={theta_0_clipped.std():.4f}, "
                         f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
                     )
 
-        final_weights = self.scaler(curr_theta, reverse=True)
-        return final_weights
+        curr_theta = self.scaler(curr_theta, reverse=True)
+        if GLOBAL_DEBUG_BOOL:
+            print("==================== DEBUG: Final Theta after Reverse Scaling ====================")
+            print(f"DEBUG final theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
+            print(f"DEBUG final theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
+            print("================================================================")
+        return curr_theta
 
     def _inr_decode(
         self,

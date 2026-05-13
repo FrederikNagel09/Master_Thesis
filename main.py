@@ -165,10 +165,10 @@ python main.py \
     --freeze_encoder 0.2 \
     
 python main.py \
-    --run_name MLP-MLP_v14 \
+    --run_name MLP-MLP_v15-updatenoisepred-noTanh\
     --model ndm_static_mlpinr \
     --dataset mnist \
-    --epochs 40\
+    --epochs 50\
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -180,12 +180,12 @@ python main.py \
     --beta_1 1e-4 \
     --beta_T 0.004 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 16 \
-    --inr_layers 3 \
-    --f_phi_hidden 512 512 512 \
+    --inr_hidden_dim 32 \
+    --inr_layers 4 \
+    --f_phi_hidden 512 1024 1024 512 \
     --noise_hidden_dim 512 \
-    --noise_n_blocks 4 \
-    --noise_t_embed 128
+    --noise_n_blocks 6 \
+    --noise_t_embed 512
 
 
 """

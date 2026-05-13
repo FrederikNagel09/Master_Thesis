@@ -1149,7 +1149,20 @@ def plot_weight_distribution_progression(
     filename: str = "weight_dist_progression",
 ) -> None:
     """
-    Computes weights for the WHOLE BATCH and plots the collective distribution.
+    Computes weights for the WHOLE BATCH and plots three distribution progression plots:
+    1. Raw encoder weight vectors across epochs.
+    2. Normalized weight vectors (after scaler) — what the diffusion actually trains on.
+    3. Noised weight vectors at t=T across epochs (should approach N(0,1)).
+
+    Args:
+        model:       Model with weight_encoder, scaler, alpha_cumprod, sigma buffers.
+        batch:       (images, labels) tuple.
+        epoch:       Current epoch number.
+        run_dir:     Directory to save plots and metadata.
+        device:      Device string.
+        data_config: Dict with 'channels' and 'img_size' keys.
+        filename:    Base filename for outputs.
+    Returns: None
     """
     import json
     import os
@@ -1162,7 +1175,7 @@ def plot_weight_distribution_progression(
     channels, img_size = data_config["channels"], data_config["img_size"]
 
     # ── 1. Get Batch Weights ──────────────────────────────────────────────────
-    x = batch[0].to(device)  # Process full batch
+    x = batch[0].to(device)
     model.eval()
     with torch.no_grad():
         if hasattr(model, "F_phi"):
@@ -1174,57 +1187,128 @@ def plot_weight_distribution_progression(
         else:
             weights = model.weight_encoder(x)
 
-        # Collective weights across the whole batch
         weights_batch_np = weights.detach().cpu().numpy().flatten()
+
+        # ── 2. Normalized weights (what diffusion trains on) ──────────────────
+        weights_normalized = model.scaler(weights, reverse=False)
+        weights_normalized_np = weights_normalized.detach().cpu().numpy().flatten()
+
+        # ── 3. Noise weights at t=T ───────────────────────────────────────────
+        T_idx = model.T - 1  # noqa: N806
+        alpha_T = model.sqrt_alpha_cumprod[T_idx]  # noqa: N806
+        sigma_T = model.sigma[T_idx]  # noqa: N806
+        epsilon = torch.randn_like(weights_normalized)
+        theta_T = alpha_T * weights_normalized + sigma_T * epsilon  # noqa: N806
+        theta_T_np = theta_T.detach().cpu().numpy().flatten()  # noqa: N806
+
     model.train()
 
-    # ── 2. Persist ────────────────────────────────────────────────────────────
-    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
-    rows_path = os.path.join(metadata_dir, f"{filename}_weights.npy")
+    # ── 4. Persist raw, normalized, and noised weights ────────────────────────
+    def _load_or_init(meta_path: str, data_path: str, new_data: np.ndarray, new_epoch: int):
+        """Load existing history and append new data, or start fresh."""
+        if os.path.exists(meta_path) and os.path.exists(data_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+            all_data = list(np.load(data_path, allow_pickle=True)) + [new_data]  # noqa: RUF005
+            all_epochs = meta["epochs"] + [new_epoch]
+        else:
+            all_data = [new_data]
+            all_epochs = [new_epoch]
+        np.save(data_path, np.array(all_data, dtype=object))
+        with open(meta_path, "w") as f:
+            json.dump({"epochs": all_epochs}, f)
+        return all_data, all_epochs
 
-    if os.path.exists(meta_path) and os.path.exists(rows_path):
-        with open(meta_path) as f:
-            meta = json.load(f)
-        all_weights = list(np.load(rows_path, allow_pickle=True)) + [weights_batch_np]  # noqa: RUF005
-        all_epochs = meta["epochs"] + [epoch]
-    else:
-        all_weights = [weights_batch_np]
-        all_epochs = [epoch]
+    raw_meta = os.path.join(metadata_dir, f"{filename}_meta.json")
+    raw_data = os.path.join(metadata_dir, f"{filename}_weights.npy")
+    norm_meta = os.path.join(metadata_dir, f"{filename}_normalized_meta.json")
+    norm_data = os.path.join(metadata_dir, f"{filename}_normalized_weights.npy")
+    noised_meta = os.path.join(metadata_dir, f"{filename}_noised_meta.json")
+    noised_data = os.path.join(metadata_dir, f"{filename}_noised_weights.npy")
 
-    np.save(rows_path, np.array(all_weights, dtype=object))
-    with open(meta_path, "w") as f:
-        json.dump({"epochs": all_epochs}, f)
+    all_weights, all_epochs = _load_or_init(raw_meta, raw_data, weights_batch_np, epoch)
+    all_normalized, all_epochs_norm = _load_or_init(norm_meta, norm_data, weights_normalized_np, epoch)
+    all_noised, all_epochs_noised = _load_or_init(noised_meta, noised_data, theta_T_np, epoch)
 
-    # ── 3. Plotting ───────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(N_ROWS_TOTAL, 1, figsize=(7, 10), sharex=True)
-    fig.patch.set_facecolor("white")
+    # ── 5. Plotting helper ────────────────────────────────────────────────────
+    def _plot_progression(
+        all_data: list,
+        epochs: list,
+        title: str,
+        xlabel: str,
+        save_path: str,
+        reference_gaussian: bool = False,
+    ) -> None:
+        """Plot a weight distribution histogram progression across epochs."""
+        fig, axes = plt.subplots(N_ROWS_TOTAL, 1, figsize=(7, 10), sharex=True)
+        fig.patch.set_facecolor("white")
 
-    all_vals = np.concatenate(all_weights)
-    x_min, x_max = np.percentile(all_vals, [0.5, 99.5])
+        all_vals = np.concatenate(all_data)
+        x_min, x_max = np.percentile(all_vals, [0.5, 99.5])
 
-    for i in range(N_ROWS_TOTAL):
-        ax = axes[i]
-        if i < len(all_weights):
-            w = all_weights[i]
-            mu, std = np.mean(w), np.std(w)
-            ax.hist(w, bins=100, color="#4A90E2", alpha=0.7, range=(x_min, x_max), density=True)
-            ax.set_ylabel(f"ep {all_epochs[i]}", fontsize=9, fontweight="bold")
-            ax.text(
-                0.98,
-                0.85,
-                f"$\mu$:{mu:.3f}\n$\sigma$:{std:.3f}",
-                transform=ax.transAxes,
-                ha="right",
-                va="top",
-                fontsize=8,
-                bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
-            )
-        ax.spines[["top", "right"]].set_visible(False)
+        for i in range(N_ROWS_TOTAL):
+            ax = axes[i]
+            if i < len(all_data):
+                w = all_data[i]
+                mu_val, std_val = np.mean(w), np.std(w)
+                ax.hist(w, bins=100, color="#4A90E2", alpha=0.7, range=(x_min, x_max), density=True)
 
-    plt.xlabel("Weight Value Magnitude (Batch Distribution)")
-    fig.suptitle("Batch Weight Distribution Progression", fontsize=12, fontweight="bold", y=0.96)
-    plt.savefig(os.path.join(run_dir, f"{filename}.png"), dpi=150, bbox_inches="tight")
-    plt.close(fig)
+                if reference_gaussian:
+                    xs = np.linspace(x_min, x_max, 300)
+                    gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
+                    ax.plot(
+                        xs,
+                        gaussian,
+                        color="#E25050",
+                        linewidth=1.2,
+                        linestyle="--",
+                        label="N(0,1)",
+                    )
+
+                ax.set_ylabel(f"ep {epochs[i]}", fontsize=9, fontweight="bold")
+                ax.text(
+                    0.98,
+                    0.85,
+                    f"$\mu$:{mu_val:.3f}\n$\sigma$:{std_val:.3f}",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="top",
+                    fontsize=8,
+                    bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+                )
+            ax.spines[["top", "right"]].set_visible(False)
+
+        plt.xlabel(xlabel)
+        fig.suptitle(title, fontsize=12, fontweight="bold", y=0.96)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    # ── 6. Save all three plots ───────────────────────────────────────────────
+    _plot_progression(
+        all_weights,
+        all_epochs,
+        title="Batch Weight Distribution Progression (Raw)",
+        xlabel="Weight Value Magnitude (Batch Distribution)",
+        save_path=os.path.join(run_dir, f"{filename}.png"),
+    )
+
+    _plot_progression(
+        all_normalized,
+        all_epochs_norm,
+        title="Normalized Weight Distribution Progression (Diffusion Input)",
+        xlabel="Weight Value Magnitude (Normalized)",
+        save_path=os.path.join(run_dir, f"{filename}_normalized.png"),
+        reference_gaussian=True,  # diffusion input should be ~N(0,1)
+    )
+
+    _plot_progression(
+        all_noised,
+        all_epochs_noised,
+        title="Noised Weight Distribution at t=T",
+        xlabel="Weight Value (Noised at t=T)",
+        save_path=os.path.join(run_dir, f"{filename}_noised_T.png"),
+        reference_gaussian=True,
+    )
 
 
 # =============================================================================
