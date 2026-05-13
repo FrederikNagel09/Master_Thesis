@@ -114,6 +114,9 @@ class NoisePredictor(nn.Module):
             nn.Linear(hidden_dim, weight_dim),
         )
 
+        nn.init.zeros_(self.output_proj[-1].weight)
+        nn.init.zeros_(self.output_proj[-1].bias)
+
     def forward(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Parameters
@@ -343,10 +346,6 @@ class MLPStaticWeightEncoder(nn.Module):
 
         self.net = nn.Sequential(*layers)
 
-        # ── Probabilistic Heads ──────────────────────────────────────────────
-        self.fc_mu = nn.Linear(hidden_dims[-1], self._weight_dim)
-        self.fc_logvar = nn.Linear(hidden_dims[-1], self._weight_dim)
-
     @property
     def weight_dim(self) -> int:
         """Flat weight vector dimension — matches NDMStaticINR's expected weight_dim."""
@@ -369,14 +368,6 @@ class MLPStaticWeightEncoder(nn.Module):
             offset += n
         return param_dict
 
-    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """
-        Samples z = mu + std * epsilon
-        """
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:    x (B, data_dim) or (B, C, H, W)
@@ -385,13 +376,9 @@ class MLPStaticWeightEncoder(nn.Module):
         if x.dim() != 2:
             x = x.view(x.shape[0], -1)
 
-        h = self.net(x)
+        theta = self.net(x)
 
-        mu = self.fc_mu(h)
-
-        logvar = self.fc_logvar(h)
-
-        return self.reparameterize(mu, logvar)
+        return theta
 
 
 ########## CNN Weight Encoders ##########
