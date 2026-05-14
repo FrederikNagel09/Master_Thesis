@@ -99,6 +99,8 @@ def run_training(
         for fname in [
             "tqdm.log",
             "denoising_trajectory_progression.png",
+            "Forward_noising_progression_*.png",
+            "Reverse_denoising_progression.png",
             "training_graph.png",
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
@@ -123,6 +125,10 @@ def run_training(
             "metadata/weight_distribution_progression_*.npy",
             "metadata/denoising_trajectory_progression_*.json",
             "metadata/denoising_trajectory_progression_*.npy",
+            "metadata/Forward_noising_progression_*.json",
+            "metadata/Forward_noising_progression_*.npy",
+            "metadata/Reverse_denoising_progression_*.json",
+            "metadata/Reverse_denoising_progression_*.npy",
             "weights/weights.pt",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):

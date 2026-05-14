@@ -210,11 +210,11 @@ def _model_to_grid(
 
         elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             if collect_snapshots:
-                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True)
+                raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True)
             else:
-                raw_samples = model.sample(n_samples)
-            # Decode weight samples to images
-            samples = model._inr_decode(raw_samples)
+                raw_samples = model.sample_weight(n_samples)
+            # Use only first n_samples for the image grid
+            samples = model._inr_decode(raw_samples[:n_samples])
             samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
 
         else:
@@ -479,10 +479,16 @@ def plot_denoising_trajectory_progression(
                 w = row_data[c]
                 mu_val, std_val = np.mean(w), np.std(w)
                 ax.hist(w, bins=80, color="#4A90E2", alpha=0.75, density=True)
+
+                # Reference N(0,1)
+                xs = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 300)
+                gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
+                ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--")
+
                 ax.text(
                     0.97,
                     0.93,
-                    f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
+                    f"μ:{mu_val:.2f}\n σ:{std_val:.2f}",  # noqa: RUF001
                     transform=ax.transAxes,
                     ha="right",
                     va="top",
