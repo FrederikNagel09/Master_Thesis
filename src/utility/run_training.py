@@ -187,6 +187,7 @@ def run_training(
                     model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
                 )
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "ndm_static_transinr"):
+                # Just simple reconstruction
                 plot_reconstruction_progression(
                     model,
                     batch,
@@ -196,6 +197,7 @@ def run_training(
                     data_config,
                     filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
+                # noises image to t=n noise and then does "sampling" to get back to reconstruction
                 plot_reconstruction_diffusion_progression(
                     model,
                     batch,
@@ -205,6 +207,7 @@ def run_training(
                     data_config,
                     filename=f"reconstruction_diffusion_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
+                # plots the weight_vector from weightencoder as a line with weightvector dim as x axis and weight value as y axis
                 plot_weight_profile_progression(
                     model=model,
                     batch=batch,
@@ -214,6 +217,10 @@ def run_training(
                     data_config=data_config,
                     filename=f"weight_profile_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
+                # does three weight vector distributions:
+                # 1) Noised_T so the weight vector distribution of the raw weight vector at time T
+                # 2) Normalized so the weight vector distribution of the normalized weight vector
+                # 3) Distribution of raw weight vector from the weight encoder
                 plot_weight_distribution_progression(
                     model=model,
                     batch=batch,

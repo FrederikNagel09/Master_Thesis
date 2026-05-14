@@ -123,8 +123,6 @@ class NDMStaticTransInr(nn.Module):
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor
 
-        # --- NEW: Learnable Scaler ---
-        print(WeightEncoder.weight_dim)
         self.scaler = WeightScaler(WeightEncoder.weight_dim)
 
         # --- Noise schedule ---
@@ -188,18 +186,18 @@ class NDMStaticTransInr(nn.Module):
         t_norm = t_idx.float() / (self.T - 1)
 
         # Send image through Weight Encoder to get Theta_prime
-        theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
+        theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
 
         # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
-        theta_prime = self.scaler(theta_prime_raw, reverse=False)
+        # theta_prime = self.scaler(theta_prime_raw, reverse=False)
         theta_prime_sg = theta_prime.detach()  # Detach for loss computations that shouldn't backprop through the scaler
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
-                f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
-                f"std={theta_prime_raw.std():.4f}, "
-                f"min={theta_prime_raw.min():.4f}, "
-                f"max={theta_prime_raw.max():.4f}"
+                # f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
+                # f"std={theta_prime_raw.std():.4f}, "
+                # f"min={theta_prime_raw.min():.4f}, "
+                # f"max={theta_prime_raw.max():.4f}"
             )
             print(
                 f"DEBUG normalized: mean={theta_prime.mean():.4f}, "
@@ -252,7 +250,7 @@ class NDMStaticTransInr(nn.Module):
 
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
 
-        l_rec = self._l_rec(x, theta_prime_raw)
+        l_rec = self._l_rec(x, theta_prime)
 
         elbo = (self.T - 2) * l_diff + l_rec + l_prior
 
@@ -410,7 +408,7 @@ class NDMStaticTransInr(nn.Module):
                         f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
                     )
 
-        curr_theta = self.scaler(curr_theta, reverse=True)
+        # curr_theta = self.scaler(curr_theta, reverse=True)
         if GLOBAL_DEBUG_BOOL:
             print("==================== DEBUG: Final Theta after Reverse Scaling ====================")
             print(f"DEBUG final theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")

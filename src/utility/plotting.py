@@ -889,7 +889,8 @@ def plot_reconstruction_diffusion_progression(
     """
     import json
 
-    T_VALUES = [100, 400, 700, 999]  # noise levels to evaluate  # noqa: N806
+    T_VALUES = [model.T // 4, model.T // 2, 3 * model.T // 4, model.T - 1]  # noise levels to evaluate  # noqa: N806
+
     os.makedirs(run_dir, exist_ok=True)
     N_ROWS_TOTAL = 5  # noqa: N806
     n_pairs = 2
@@ -910,9 +911,9 @@ def plot_reconstruction_diffusion_progression(
             x_recon : Reconstructed images, same shape as x.
         """
         weights_raw = model.weight_encoder(x)
-        weights_norm = model.scaler(weights_raw, reverse=False, training=False)
+        # weights_norm = model.scaler(weights_raw, reverse=False, training=False)
         t_idx = torch.full((x.shape[0],), t_noise, dtype=torch.long, device=device)
-        curr_theta, _ = model._construct_theta_t(weights_norm, t_idx)
+        curr_theta, _ = model._construct_theta_t(weights_raw, t_idx)
 
         clip_value = 3
         for t in tqdm(
@@ -939,8 +940,8 @@ def plot_reconstruction_diffusion_progression(
             else:
                 curr_theta = theta_0_clipped
 
-        weights_denorm = model.scaler(curr_theta, reverse=True)
-        return model._inr_decode(weights_denorm)
+        # curr_theta = model.scaler(curr_theta, reverse=True)
+        return model._inr_decode(curr_theta)
 
     model.eval()
     with torch.no_grad():
@@ -1190,15 +1191,15 @@ def plot_weight_distribution_progression(
         weights_batch_np = weights.detach().cpu().numpy().flatten()
 
         # ── 2. Normalized weights (what diffusion trains on) ──────────────────
-        weights_normalized = model.scaler(weights, reverse=False)
-        weights_normalized_np = weights_normalized.detach().cpu().numpy().flatten()
+        # weights_normalized = model.scaler(weights, reverse=False)
+        # weights_flatten = weights.detach().cpu().numpy().flatten()
 
         # ── 3. Noise weights at t=T ───────────────────────────────────────────
         T_idx = model.T - 1  # noqa: N806
         alpha_T = model.sqrt_alpha_cumprod[T_idx]  # noqa: N806
         sigma_T = model.sigma[T_idx]  # noqa: N806
-        epsilon = torch.randn_like(weights_normalized)
-        theta_T = alpha_T * weights_normalized + sigma_T * epsilon  # noqa: N806
+        epsilon = torch.randn_like(weights)
+        theta_T = alpha_T * weights + sigma_T * epsilon  # noqa: N806
         theta_T_np = theta_T.detach().cpu().numpy().flatten()  # noqa: N806
 
     model.train()
@@ -1221,13 +1222,13 @@ def plot_weight_distribution_progression(
 
     raw_meta = os.path.join(metadata_dir, f"{filename}_meta.json")
     raw_data = os.path.join(metadata_dir, f"{filename}_weights.npy")
-    norm_meta = os.path.join(metadata_dir, f"{filename}_normalized_meta.json")
-    norm_data = os.path.join(metadata_dir, f"{filename}_normalized_weights.npy")
+    # norm_meta = os.path.join(metadata_dir, f"{filename}_normalized_meta.json")
+    # norm_data = os.path.join(metadata_dir, f"{filename}_normalized_weights.npy")
     noised_meta = os.path.join(metadata_dir, f"{filename}_noised_meta.json")
     noised_data = os.path.join(metadata_dir, f"{filename}_noised_weights.npy")
 
     all_weights, all_epochs = _load_or_init(raw_meta, raw_data, weights_batch_np, epoch)
-    all_normalized, all_epochs_norm = _load_or_init(norm_meta, norm_data, weights_normalized_np, epoch)
+    # all_normalized, all_epochs_norm = _load_or_init(norm_meta, norm_data, weights_normalized_np, epoch)
     all_noised, all_epochs_noised = _load_or_init(noised_meta, noised_data, theta_T_np, epoch)
 
     # ── 5. Plotting helper ────────────────────────────────────────────────────
@@ -1284,6 +1285,7 @@ def plot_weight_distribution_progression(
         plt.close(fig)
 
     # ── 6. Save all three plots ───────────────────────────────────────────────
+    # 3) Distribution of raw weight vector from the weight encoder
     _plot_progression(
         all_weights,
         all_epochs,
@@ -1292,6 +1294,8 @@ def plot_weight_distribution_progression(
         save_path=os.path.join(run_dir, f"{filename}.png"),
     )
 
+    # 2) Normalized so the weight vector distribution of the normalized weight vector
+    """
     _plot_progression(
         all_normalized,
         all_epochs_norm,
@@ -1300,7 +1304,8 @@ def plot_weight_distribution_progression(
         save_path=os.path.join(run_dir, f"{filename}_normalized.png"),
         reference_gaussian=True,  # diffusion input should be ~N(0,1)
     )
-
+    """
+    # 1) Noised_T so the weight vector distribution of the raw weight vector at time T
     _plot_progression(
         all_noised,
         all_epochs_noised,

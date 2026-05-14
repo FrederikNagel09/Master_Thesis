@@ -165,7 +165,7 @@ python main.py \
     --freeze_encoder 0.2 \
     
 python main.py \
-    --run_name MLP-MLP_v16-Two-stage\
+    --run_name MLP-MLP_v16-Two-stage-unnormalize\
     --model ndm_static_mlpinr \
     --dataset mnist \
     --epochs 40\
@@ -188,6 +188,30 @@ python main.py \
     --noise_n_blocks 3 \
     --noise_t_embed 256
 
+
+######### Testing ############  
+python main.py \
+    --run_name test_run\
+    --model ndm_static_mlpinr \
+    --dataset mnist \
+    --epochs 5\
+    --batch_size 16 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 1 \
+    --subset_frac 0.01 \
+    --peak_lr 1e-4 \
+    --T 100 \
+    --beta_1 1e-4 \
+    --beta_T 0.004 \
+    --sigma_tilde 1.0 \
+    --inr_hidden_dim 8 \
+    --inr_layers 2 \
+    --f_phi_hidden 8 8 \
+    --noise_hidden_dim 16 \
+    --noise_n_blocks 2 \
+    --noise_t_embed 8   
 
 """
 
