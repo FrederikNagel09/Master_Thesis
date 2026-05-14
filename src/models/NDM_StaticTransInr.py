@@ -20,6 +20,7 @@ The key contract satisfied:
 from __future__ import annotations
 
 import random
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
@@ -27,6 +28,9 @@ import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 class WeightScaler(nn.Module):
@@ -151,10 +155,15 @@ class NDMStaticTransInr(nn.Module):
     # Main callable functions:
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None) -> torch.Tensor:
+    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None, collect_snapshots: bool = False) -> torch.Tensor:
         """
         Sample from the model by sampling weights and decoding to pixel space.
         """
+        if collect_snapshots:
+            theta, snapshots = self.sample_weight(n_samples, collect_snapshots=True)
+            images = self.decode_weights(theta, coords)
+            return images, snapshots
+
         theta = self.sample_weight(n_samples)
         return self.decode_weights(theta, coords)
 
@@ -211,7 +220,19 @@ class NDMStaticTransInr(nn.Module):
             if self.i == 0:
                 print("\n######### Forward Process Statistics: #########")
                 # 1. Define the steps we want to see
-                t_steps = [999, 900, 800, 700, 600, 500, 400, 300, 200, 100, 0]
+                t_steps = [
+                    self.T - 1,
+                    self.T * 0.9,
+                    self.T * 0.8,
+                    self.T * 0.7,
+                    self.T * 0.6,
+                    self.T * 0.5,
+                    self.T * 0.4,
+                    self.T * 0.3,
+                    self.T * 0.2,
+                    self.T * 0.1,
+                    0,
+                ]
 
                 # 2. Convert to a long tensor on the correct device
                 t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=theta_prime.device)
@@ -315,15 +336,31 @@ class NDMStaticTransInr(nn.Module):
         return self._inr_decode(weights, coords)
 
     @torch.no_grad()
-    def sample_weight(self, n_samples: int = 1) -> torch.Tensor:
+    def sample_weight(
+        self,
+        n_samples: int = 1,
+        collect_snapshots: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[int, np.ndarray]]:
+        """
+        Sample weight vectors via reverse diffusion.
+        Args:
+            n_samples:          Number of samples to generate.
+            collect_snapshots:  If True, also return weight distributions at T_VALUES.
+        Returns:
+            curr_theta: (n_samples, weight_dim) sampled weights.
+            snapshots:  {t_value: flat np.ndarray} — only returned if collect_snapshots=True.
+        """
         weight_dim = self.weight_encoder.weight_dim
         device = self.sqrt_alpha_cumprod.device
         clip_value = 3
-        # 1. Start from pure Gaussian noise
+
+        # T-values at which to snapshot the weight distribution
+        T_values = {self.T - 1, 3 * self.T // 4, self.T // 2, self.T // 4, 0}  # noqa: N806
+        snapshots: dict[int, np.ndarray] = {}
+
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
         if GLOBAL_DEBUG_BOOL:
-            # Fixed-input time sensitivity check: does eps_hat actually change with t?
             fixed_theta = torch.randn(1, weight_dim, device=device)
             t_high = torch.full((1, 1), 999 / (self.T - 1), device=device)
             t_low = torch.full((1, 1), 0 / (self.T - 1), device=device)
@@ -335,29 +372,18 @@ class NDMStaticTransInr(nn.Module):
             print(f"max abs diff   : {(eps_high - eps_low).abs().max():.4f}")
             print("==================================")
 
-        # The loop runs from T-1 down to 0
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            # Prepare normalized time input (Batch,) or (Batch, 1) based on your predictor
             t_norm = torch.full((n_samples, 1), t / (self.T - 1), device=device)
-
-            # 2. Predict the noise added to the current state
             eps_hat = self.noise_predictor(curr_theta, t_norm)
-
-            # 3. Retrieve schedule parameters
             alpha_bar = self.alpha_cumprod[t]
             alpha = self.alpha[t]
             beta = self.beta[t]
-
-            # 4. Predict the clean weights (x0)
-            # This formula projects the current noisy sample back to the "signal"
             sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
-
             theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
 
             if GLOBAL_DEBUG_BOOL:
                 print(f"DEBUG sqrt_one_minus_alpha_bar: {sqrt_one_minus_alpha_bar}")
                 print(f"DEBUG torch.sqrt(alpha_bar):    {torch.sqrt(alpha_bar)}")
-                # Debug prints to verify the explosion is gone
                 if t % 100 == 0 or t == self.T - 1:
                     print(f"==================== DEBUG: Theta_0 Computation T={t} ====================")
                     print(f"DEBUG eps_hat: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}")
@@ -370,30 +396,24 @@ class NDMStaticTransInr(nn.Module):
                     print(f"DEBUG theta_0 before clipping: min={theta_0.min():.4f}, max={theta_0.max():.4f}")
                     print("================================================================")
 
-            # 5. Clip predicted weights to the training distribution
             theta_0_clipped = torch.clamp(theta_0, -clip_value, clip_value)
 
-            # 6. Step back to z_{t-1}
             if t > 0:
                 alpha_bar_prev = self.alpha_cumprod[t - 1]
-
-                # Coefficients to calculate the mean of the distribution p(z_{t-1} | z_t, x_0)
                 coeff_x0 = (torch.sqrt(alpha_bar_prev) * beta) / (1.0 - alpha_bar)
                 coeff_xt = (torch.sqrt(alpha) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar)
-
                 mean = coeff_x0 * theta_0_clipped + coeff_xt * curr_theta
-
-                # Use the posterior variance (more stable than raw beta)
                 sigma = torch.sqrt(beta * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
-
                 noise = torch.randn_like(curr_theta)
                 curr_theta = mean + sigma * noise
             else:
-                # At t=0, the denoised sample is just our predicted x0
                 curr_theta = theta_0_clipped
 
+            # Snapshot curr_theta after the step at each target T-value
+            if collect_snapshots and t in T_values:
+                snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
+
             if GLOBAL_DEBUG_BOOL:  # noqa: SIM102
-                # Debug prints to verify the explosion is gone
                 if t % 100 == 0 or t == self.T - 1:
                     print(f"==================== DEBUG: Sampling Process T={t}====================")
                     print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
@@ -408,12 +428,14 @@ class NDMStaticTransInr(nn.Module):
                         f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
                     )
 
-        # curr_theta = self.scaler(curr_theta, reverse=True)
         if GLOBAL_DEBUG_BOOL:
             print("==================== DEBUG: Final Theta after Reverse Scaling ====================")
             print(f"DEBUG final theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
             print(f"DEBUG final theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
             print("================================================================")
+
+        if collect_snapshots:
+            return curr_theta, snapshots
         return curr_theta
 
     def _inr_decode(

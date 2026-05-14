@@ -44,6 +44,7 @@ from src.utility.general import (
 )
 from src.utility.model_builders import build_model
 from src.utility.plotting import (
+    plot_forward_trajectory_progression,
     plot_fphi_progression,
     plot_reconstruction_diffusion_progression,
     plot_reconstruction_progression,
@@ -97,6 +98,7 @@ def run_training(
         # Clear stale plots and metadata from a previous run with the same name
         for fname in [
             "tqdm.log",
+            "denoising_trajectory_progression.png",
             "training_graph.png",
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
@@ -119,6 +121,8 @@ def run_training(
             "metadata/weight_profile_progression_*.npy",
             "metadata/weight_distribution_progression_*.json",
             "metadata/weight_distribution_progression_*.npy",
+            "metadata/denoising_trajectory_progression_*.json",
+            "metadata/denoising_trajectory_progression_*.npy",
             "weights/weights.pt",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):
@@ -180,7 +184,16 @@ def run_training(
 
     def _sample_fn(model, step, device, batch=None):
         epoch = step // len(data_loader)
-        plot_sample_progression(model, args.model, epoch, run_dir, device, data_config, filename=progression_filename)
+        plot_sample_progression(
+            model,
+            args.model,
+            epoch,
+            run_dir,
+            device,
+            data_config,
+            filename=progression_filename,
+            collect_snapshots=True,
+        )
         if batch is not None:
             if args.model == "ndm":
                 plot_fphi_progression(
@@ -229,6 +242,15 @@ def run_training(
                     device=device,
                     data_config=data_config,
                     filename=f"weight_distribution_progression_ep{start_epoch + 1}-{end_epoch}",
+                )
+                plot_forward_trajectory_progression(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    data_config=data_config,
+                    filename=f"Forward_noising_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
 
     # Load existing history for resumed runs; fresh dict otherwise

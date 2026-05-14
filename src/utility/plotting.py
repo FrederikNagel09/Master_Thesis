@@ -165,20 +165,31 @@ def _model_to_grid(
     n_samples: int,
     device: str,
     data_config: dict,
-) -> np.ndarray:
+    collect_snapshots: bool = False,
+) -> tuple[np.ndarray, dict[int, np.ndarray] | None]:
     """
-    Draw n_samples from model and return a (n_samples, H, W) or
-    (n_samples, H, W, C) numpy array in [0, 1].
+    Draw n_samples from model and return rendered grid + optional denoising snapshots.
+    Args:
+        model:              Trained model.
+        model_type:         Model type string.
+        n_samples:          Number of samples to draw.
+        device:             Device string.
+        data_config:        Dict with 'channels', 'img_size', 'data_dim'.
+        collect_snapshots:  If True, collect weight snapshots at T-values (NDM transinr only).
+    Returns:
+        grid:      (n_samples, H, W) or (n_samples, H, W, C) numpy array in [0, 1].
+        snapshots: {t_value: flat np.ndarray} or None if not collected.
     """
     import torch
 
     channels = data_config["channels"]
     img_size = data_config["img_size"]
+    snapshots = None
 
     model.eval()
     with torch.no_grad():
         if model_type == "ndm":
-            samples = model.sample(n_samples)  # (N, data_dim) in [-1, 1]
+            samples = model.sample(n_samples)
             samples = (samples * 0.5 + 0.5).clamp(0, 1)
             samples = samples.reshape(n_samples, channels, img_size, img_size)
 
@@ -190,22 +201,29 @@ def _model_to_grid(
             coords_batch = coords.unsqueeze(0).expand(n_samples, -1, -1)
             z = model.prior().sample(torch.Size([n_samples])).to(dev)
             flat_weights = model.decode_to_weights(z)
-            pixels = model.inr(coords_batch, flat_weights)  # (N, H*W, C)
+            pixels = model.inr(coords_batch, flat_weights)
             samples = pixels.permute(0, 2, 1).reshape(n_samples, channels, img_size, img_size).clamp(0, 1)
+
         elif model_type == "ndm_inr":
-            samples = model.sample(n_samples)  # (N, H*W) in [0, 1]
+            samples = model.sample(n_samples)
             samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+
         elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr", "ndm_static_mlpinr"):
-            samples = model.sample(n_samples)  # (N, H*W)
-            samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)  # ← ADD
+            if collect_snapshots:
+                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True)
+            else:
+                raw_samples = model.sample(n_samples)
+            # Decode weight samples to images
+            samples = model._inr_decode(raw_samples)
+            samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
 
         else:
             raise ValueError(f"Unknown model_type '{model_type}' for sampling.")
 
     samples = samples.cpu().numpy()
-    if channels == 1:
-        return samples[:, 0, :, :]  # (N, H, W)
-    return samples.transpose(0, 2, 3, 1)  # (N, H, W, C)
+    grid = samples[:, 0, :, :] if channels == 1 else samples.transpose(0, 2, 3, 1)
+
+    return grid, snapshots
 
 
 def plot_final_samples(
@@ -262,23 +280,22 @@ def plot_sample_progression(
     device: str,
     data_config: dict,
     filename: str = "sample_progression",
+    collect_snapshots: bool = False,
 ) -> None:
     """
     Append a row of 6 samples to the training progression figure and save to
     <run_dir>/sample_progression.png, overwriting each call.
-
-    Always renders 5 rows — empty rows are shown as blank until filled.
-    Each row is labelled with its epoch on the left. Rows have a small gap
-    between them; images within a row have no spacing.
-
-    Parameters
-    ----------
-    model       : Trained model, already on device.
-    model_type  : One of "ndm", "inr_vae", "ndm_inr", "ndm_temporal_transinr".
-    epoch       : Current epoch, used as the row label.
-    run_dir     : Run results directory (src/train_results/{run_name}).
-    device      : Device string.
-    data_config : Dict with "channels", "img_size", "data_dim".
+    Always renders 5 rows — empty rows shown as blank until filled.
+    Args:
+        model:              Trained model, already on device.
+        model_type:         One of "ndm", "inr_vae", "ndm_inr", "ndm_temporal_transinr".
+        epoch:              Current epoch, used as the row label.
+        run_dir:            Run results directory.
+        device:             Device string.
+        data_config:        Dict with "channels", "img_size", "data_dim".
+        filename:           Base filename for outputs.
+        collect_snapshots:  If True, also plot denoising trajectory histograms.
+    Returns: None
     """
     import json
 
@@ -289,10 +306,11 @@ def plot_sample_progression(
     channels = data_config["channels"]
 
     # ── Draw new row of samples ───────────────────────────────────────────────
-    new_row = _model_to_grid(model, model_type, n_cols, device, data_config)  # (6, H, W[, C])
+    new_row, snapshots = _model_to_grid(model, model_type, n_cols, device, data_config, collect_snapshots)
 
     # ── Load existing rows from disk if available ─────────────────────────────
     metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
     meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
     rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
 
@@ -303,7 +321,7 @@ def plot_sample_progression(
         all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
         all_epochs = meta["epochs"] + [epoch]
     else:
-        all_rows = new_row[None]  # (1, 6, H, W[, C])
+        all_rows = new_row[None]
         all_epochs = [epoch]
 
     # ── Persist updated rows ──────────────────────────────────────────────────
@@ -319,10 +337,10 @@ def plot_sample_progression(
     padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
 
     # ── Build figure ──────────────────────────────────────────────────────────
-    label_width = 0.5  # inches for epoch label column
-    img_inches = 1.2  # inches per image
-    row_gap = 0.15  # inches of vertical gap between rows
-    title_pad = 0.35  # inches reserved for title above first row
+    label_width = 0.5
+    img_inches = 1.2
+    row_gap = 0.15
+    title_pad = 0.35
 
     fig_w = label_width + n_cols * img_inches
     fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
@@ -330,7 +348,7 @@ def plot_sample_progression(
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
-    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs)):  # noqa: B905
+    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
         for c in range(n_cols):
             left = (label_width + c * img_inches) / fig_w
             bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
@@ -344,7 +362,6 @@ def plot_sample_progression(
                 ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
             ax.axis("off")
 
-        # Epoch label centred to the left of each row
         fig.text(
             (label_width * 0.5) / fig_w,
             1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
@@ -357,6 +374,143 @@ def plot_sample_progression(
 
     fig.suptitle("Sample Progression", fontsize=11, fontweight="bold", y=0.99)
 
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    # ── Plot denoising trajectory if snapshots were collected ─────────────────
+    print(f"\n\nSample progression saved {collect_snapshots and snapshots is not None}\n\n")
+    if collect_snapshots and snapshots is not None:
+        print("################### Plotting denoising trajectory progression... ###################")
+        plot_denoising_trajectory_progression(
+            snapshots=snapshots,
+            epoch=epoch,
+            run_dir=run_dir,
+        )
+
+
+def plot_denoising_trajectory_progression(
+    snapshots: dict[int, np.ndarray],
+    epoch: int,
+    run_dir: str,
+    filename: str = "Reverse_denoising_progression",
+) -> None:
+    """
+    Append a row of 4 weight distribution histograms to the denoising trajectory
+    progression figure and save to <run_dir>/<filename>.png, overwriting each call.
+    Always renders 5 rows x 4 columns — empty rows shown as blank until filled.
+    Each row is one sampling run (epoch), each column one T-value snapshot.
+    Args:
+        snapshots: {t_value: flat np.ndarray} from sample_weight with collect_snapshots=True.
+        epoch:     Current epoch, used as row label.
+        run_dir:   Run results directory.
+        filename:  Base filename for outputs.
+    Returns: None
+    """
+    import json
+
+    os.makedirs(run_dir, exist_ok=True)
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    # Sorted descending so columns go T-1 → T//4 (high noise → clean)
+    t_keys_sorted = sorted(snapshots.keys(), reverse=True)
+    n_cols = len(t_keys_sorted)  # always 4
+
+    # New row: list of flat arrays in column order
+    new_row_data = [snapshots[t] for t in t_keys_sorted]
+
+    # ── Load or init persisted data ───────────────────────────────────────────
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    data_path = os.path.join(metadata_dir, f"{filename}_data.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(data_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        all_rows = list(np.load(data_path, allow_pickle=True))
+        all_rows.append(new_row_data)
+        all_epochs = meta["epochs"] + [epoch]
+        all_t_keys = meta["t_keys"]  # reuse column order from first call
+    else:
+        all_rows = [new_row_data]
+        all_epochs = [epoch]
+        all_t_keys = t_keys_sorted
+
+    np.save(data_path, np.array(all_rows, dtype=object))
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs, "t_keys": all_t_keys}, f)
+
+    # ── Pad to N_ROWS_TOTAL ───────────────────────────────────────────────────
+    padded_rows = all_rows + [None] * (N_ROWS_TOTAL - len(all_rows))
+    padded_epochs = all_epochs + [""] * (N_ROWS_TOTAL - len(all_epochs))
+
+    # ── Build figure: 5 rows x 4 cols of histograms ───────────────────────────
+    col_width = 2.2  # inches per histogram
+    row_height = 1.6  # inches per histogram
+    label_width = 0.75
+    col_gap = 0.35
+    row_gap = 0.25
+    title_pad = 0.5
+    header_pad = 0.35
+
+    fig_w = label_width + n_cols * col_width + (n_cols - 1) * col_gap
+    fig_h = title_pad + header_pad + N_ROWS_TOTAL * row_height + (N_ROWS_TOTAL - 1) * row_gap
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("white")
+
+    # Column headers (T-value labels)
+    for c, t_val in enumerate(all_t_keys):
+        cx = (label_width + c * (col_width + col_gap) + col_width * 0.5) / fig_w
+        cy = 1.0 - (title_pad / fig_h) - (header_pad * 0.6 / fig_h)
+        fig.text(cx, cy, f"t = {t_val}", ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
+
+    for r, (row_data, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (row_height / fig_h) - r * (row_gap / fig_h)
+
+        for c in range(n_cols):
+            left = (label_width + c * (col_width + col_gap)) / fig_w
+            width = col_width / fig_w
+            height = row_height / fig_h
+            ax = fig.add_axes([left, row_bottom, width, height])
+
+            if row_data is not None:
+                w = row_data[c]
+                mu_val, std_val = np.mean(w), np.std(w)
+                ax.hist(w, bins=80, color="#4A90E2", alpha=0.75, density=True)
+                ax.text(
+                    0.97,
+                    0.93,
+                    f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="top",
+                    fontsize=7,
+                    bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+                )
+
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.tick_params(labelsize=6)
+
+            # X-axis label only on bottom row
+            if r == N_ROWS_TOTAL - 1:
+                ax.set_xlabel("weight value", fontsize=7)
+
+        # Epoch label on the left, vertically centred on the row
+        fig.text(
+            (label_width * 0.5) / fig_w,
+            row_bottom + (row_height * 0.5) / fig_h,
+            f"ep {ep}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    fig.suptitle("Denoising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
+
+    print(f"\n\nDenoising trajectory progression saved → {os.path.join(run_dir, f'{filename}.png')}\n\n")
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -1314,6 +1468,169 @@ def plot_weight_distribution_progression(
         save_path=os.path.join(run_dir, f"{filename}_noised_T.png"),
         reference_gaussian=True,
     )
+
+
+def plot_forward_trajectory_progression(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,
+    filename: str = "forward_trajectory_progression",
+) -> None:
+    """
+    Appends a row of 5 weight distribution histograms (one per t-value) to the
+    forward noising trajectory progression figure, saved to <run_dir>/<filename>.png.
+    Always renders 5 rows x 5 columns — empty rows shown as blank until filled.
+    T-values match the reverse process: {T-1, 3T//4, T//2, T//4, 0}.
+    Args:
+        model:       Model with weight_encoder, sqrt_alpha_cumprod, sigma buffers.
+        batch:       (images, labels) tuple.
+        epoch:       Current epoch number.
+        run_dir:     Directory to save plots and metadata.
+        device:      Device string.
+        data_config: Dict with 'channels' and 'img_size' keys.
+        filename:    Base filename for outputs.
+    Returns: None
+    """
+    import json
+
+    os.makedirs(run_dir, exist_ok=True)
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    channels, img_size = data_config["channels"], data_config["img_size"]
+
+    # T-values match the reverse process snapshot points
+    T_values_sorted = sorted(  # noqa: N806
+        [model.T - 1, 3 * model.T // 4, model.T // 2, model.T // 4, 0],
+        reverse=True,
+    )
+
+    # ── 1. Encode batch to weights ────────────────────────────────────────────
+    x = batch[0].to(device)
+    model.eval()
+    with torch.no_grad():
+        if hasattr(model, "F_phi"):
+            t_zero = torch.zeros(x.shape[0], 1, device=device)
+            weights = model.F_phi(x, t_zero)
+        elif hasattr(model, "W") and hasattr(model.W, "inflate"):
+            x_spatial = x.view(x.shape[0], channels, img_size, img_size)
+            weights = model.weight_encoder(x_spatial)
+        else:
+            weights = model.weight_encoder(x)
+
+        # ── 2. Apply forward noising at each t-value ──────────────────────────
+        new_row_data = []
+        for t in T_values_sorted:
+            if t == 0:
+                # t=0 is the raw weight vector, no noise added
+                theta_t = weights
+            else:
+                alpha_t = model.sqrt_alpha_cumprod[t]
+                sigma_t = model.sigma[t]
+                epsilon = torch.randn_like(weights)
+                theta_t = alpha_t * weights + sigma_t * epsilon
+            new_row_data.append(theta_t.detach().cpu().numpy().flatten())
+
+    model.train()
+
+    # ── 3. Persist data ───────────────────────────────────────────────────────
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    data_path = os.path.join(metadata_dir, f"{filename}_data.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(data_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        all_rows = list(np.load(data_path, allow_pickle=True))
+        all_rows.append(new_row_data)
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_rows = [new_row_data]
+        all_epochs = [epoch]
+
+    np.save(data_path, np.array(all_rows, dtype=object))
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs, "t_keys": T_values_sorted}, f)
+
+    # ── 4. Pad to N_ROWS_TOTAL ────────────────────────────────────────────────
+    padded_rows = all_rows + [None] * (N_ROWS_TOTAL - len(all_rows))
+    padded_epochs = all_epochs + [""] * (N_ROWS_TOTAL - len(all_epochs))
+
+    # ── 5. Build figure ───────────────────────────────────────────────────────
+    n_cols = len(T_values_sorted)
+    col_width = 1.9
+    row_height = 1.6
+    label_width = 0.75
+    col_gap = 0.35
+    row_gap = 0.25
+    title_pad = 0.5
+    header_pad = 0.35
+
+    fig_w = label_width + n_cols * col_width + (n_cols - 1) * col_gap
+    fig_h = title_pad + header_pad + N_ROWS_TOTAL * row_height + (N_ROWS_TOTAL - 1) * row_gap
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("white")
+
+    # Column headers
+    for c, t_val in enumerate(T_values_sorted):
+        cx = (label_width + c * (col_width + col_gap) + col_width * 0.5) / fig_w
+        cy = 1.0 - (title_pad / fig_h) - (header_pad * 0.6 / fig_h)
+        label = f"t = {t_val}" if t_val > 0 else "t = 0 (raw)"
+        fig.text(cx, cy, label, ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
+
+    for r, (row_data, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (row_height / fig_h) - r * (row_gap / fig_h)
+
+        for c in range(n_cols):
+            left = (label_width + c * (col_width + col_gap)) / fig_w
+            ax = fig.add_axes([left, row_bottom, col_width / fig_w, row_height / fig_h])
+
+            if row_data is not None:
+                w = row_data[c]
+                mu_val, std_val = np.mean(w), np.std(w)
+                ax.hist(w, bins=80, color="#E2844A", alpha=0.75, density=True)
+
+                # Reference N(0,1) on all columns except t=0 (raw weights)
+                if T_values_sorted[c] > 0:
+                    xs = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 300)
+                    gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
+                    ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--", label="N(0,1)")
+
+                ax.text(
+                    0.97,
+                    0.93,
+                    f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="top",
+                    fontsize=7,
+                    bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+                )
+
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.tick_params(labelsize=6)
+            if r == N_ROWS_TOTAL - 1:
+                ax.set_xlabel("weight value", fontsize=7)
+
+        fig.text(
+            (label_width * 0.5) / fig_w,
+            row_bottom + (row_height * 0.5) / fig_h,
+            f"ep {ep}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    fig.suptitle("Forward Noising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
+
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 
 # =============================================================================
