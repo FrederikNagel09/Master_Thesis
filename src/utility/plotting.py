@@ -720,9 +720,6 @@ def plot_reconstruction_progression(
             t0_norm = torch.zeros(x.shape[0], device=device)
             weights = model.weight_encoder(x)  # static MLP/CNN encoder
 
-        if model.normalize:
-            weights = model.scaler(weights, reverse=True)
-
         x_recon = model._inr_decode(weights)  # (3, data_dim)
     model.train()
 
@@ -1264,9 +1261,12 @@ def plot_weight_profile_progression(
             weights = model.weight_encoder(x.view(1, channels, img_size, img_size))
         else:
             weights = model.weight_encoder(x)
+        weights_raw_np = weights.detach().cpu().numpy().flatten()
         if model.normalize:
-            weights = model.scaler(weights, reverse=False, training=False)
-        weights_np = weights.detach().cpu().numpy().flatten()
+            weights_norm = model.scaler(weights, reverse=False, training=False)
+            weights_np = weights_norm.detach().cpu().numpy().flatten()
+        else:
+            weights_np = weights_raw_np
     model.train()
 
     # ── 2. Persist ────────────────────────────────────────────────────────────
@@ -1286,6 +1286,11 @@ def plot_weight_profile_progression(
     with open(meta_path, "w") as f:
         json.dump({"epochs": all_epochs}, f)
 
+    if model.normalize:
+        raw_rows_path = os.path.join(metadata_dir, f"{filename}_raw_weights.npy")
+        all_raw = list(np.load(raw_rows_path, allow_pickle=True)) + [weights_raw_np] if os.path.exists(raw_rows_path) else [weights_raw_np]  # noqa: RUF005
+        np.save(raw_rows_path, np.array(all_raw, dtype=object))
+
     # ── 3. Plotting ───────────────────────────────────────────────────────────
     fig, axes = plt.subplots(N_ROWS_TOTAL, 1, figsize=(10, 10), sharex=True)
     fig.patch.set_facecolor("white")
@@ -1297,7 +1302,11 @@ def plot_weight_profile_progression(
     for i in range(N_ROWS_TOTAL):
         ax = axes[i]
         if i < len(all_weights):
-            ax.plot(all_weights[i], color="#E67E22", linewidth=0.6)
+            ax.plot(all_weights[i], color="#E67E22", linewidth=0.6, label="normalized")
+            if model.normalize and i < len(all_raw):
+                ax2 = ax.twinx()
+                ax2.plot(all_raw[i], color="#4A90E2", linewidth=0.6, alpha=0.6, label="raw")
+                ax2.spines[["top", "right"]].set_visible(False)
             ax.set_ylim(y_min * 1.2, y_max * 1.2)
             ax.set_ylabel(f"ep {all_epochs[i]}", fontsize=9, fontweight="bold")
         ax.spines[["top", "right"]].set_visible(False)
@@ -1356,11 +1365,11 @@ def plot_weight_distribution_progression(
         else:
             weights = model.weight_encoder(x)
 
-        weights_batch_np = weights.detach().cpu().numpy().flatten()
-
         # ── 2. Normalized weights (what diffusion trains on) ──────────────────
         if model.normalize:
             weights = model.scaler(weights, reverse=False, training=False)
+
+        weights_batch_np = weights.detach().cpu().numpy().flatten()
 
         # ── 3. Noise weights at t=T ───────────────────────────────────────────
         T_idx = model.T - 1  # noqa: N806

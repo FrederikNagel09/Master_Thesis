@@ -419,9 +419,6 @@ class NDMStaticTransInr(nn.Module):
 
             # Snapshot curr_theta after the step at each target T-value
             if collect_snapshots and t in T_values:
-                if self.normalize:
-                    # Reverse scaling to get back to the original weight space before decoding
-                    curr_theta = self.scaler(curr_theta, reverse=True)
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
             if GLOBAL_DEBUG_BOOL:  # noqa: SIM102
