@@ -43,6 +43,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--freeze_encoder", type=float, default=None, help="Fraction of training epochs to freeze the encoder for (only for NDM-INR)"
     )
+    p.add_argument("--normalize", type=lambda x: x.lower() == "true", default=True)
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
     p.add_argument("--use_scheduler", action="store_true")

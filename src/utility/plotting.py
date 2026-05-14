@@ -719,6 +719,10 @@ def plot_reconstruction_progression(
         else:
             t0_norm = torch.zeros(x.shape[0], device=device)
             weights = model.weight_encoder(x)  # static MLP/CNN encoder
+
+        if model.normalize:
+            weights = model.scaler(weights, reverse=True)
+
         x_recon = model._inr_decode(weights)  # (3, data_dim)
     model.train()
 
@@ -1071,7 +1075,8 @@ def plot_reconstruction_diffusion_progression(
             x_recon : Reconstructed images, same shape as x.
         """
         weights_raw = model.weight_encoder(x)
-        # weights_norm = model.scaler(weights_raw, reverse=False, training=False)
+        if model.normalize:
+            weights_raw = model.scaler(weights_raw, reverse=False, training=False)
         t_idx = torch.full((x.shape[0],), t_noise, dtype=torch.long, device=device)
         curr_theta, _ = model._construct_theta_t(weights_raw, t_idx)
 
@@ -1100,7 +1105,8 @@ def plot_reconstruction_diffusion_progression(
             else:
                 curr_theta = theta_0_clipped
 
-        # curr_theta = model.scaler(curr_theta, reverse=True)
+        if model.normalize:
+            curr_theta = model.scaler(curr_theta, reverse=True)
         return model._inr_decode(curr_theta)
 
     model.eval()
@@ -1258,6 +1264,8 @@ def plot_weight_profile_progression(
             weights = model.weight_encoder(x.view(1, channels, img_size, img_size))
         else:
             weights = model.weight_encoder(x)
+        if model.normalize:
+            weights = model.scaler(weights, reverse=False, training=False)
         weights_np = weights.detach().cpu().numpy().flatten()
     model.train()
 
@@ -1351,8 +1359,8 @@ def plot_weight_distribution_progression(
         weights_batch_np = weights.detach().cpu().numpy().flatten()
 
         # ── 2. Normalized weights (what diffusion trains on) ──────────────────
-        # weights_normalized = model.scaler(weights, reverse=False)
-        # weights_flatten = weights.detach().cpu().numpy().flatten()
+        if model.normalize:
+            weights = model.scaler(weights, reverse=False, training=False)
 
         # ── 3. Noise weights at t=T ───────────────────────────────────────────
         T_idx = model.T - 1  # noqa: N806
@@ -1527,6 +1535,9 @@ def plot_forward_trajectory_progression(
             weights = model.weight_encoder(x_spatial)
         else:
             weights = model.weight_encoder(x)
+
+        if model.normalize:
+            weights = model.scaler(weights, reverse=False, training=False)
 
         # ── 2. Apply forward noising at each t-value ──────────────────────────
         new_row_data = []

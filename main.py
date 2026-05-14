@@ -202,6 +202,7 @@ python main.py \
     --log_every_n_steps 1 \
     --subset_frac 0.01 \
     --peak_lr 1e-4 \
+    --normalize True\
     --T 100 \
     --beta_1 1e-4 \
     --beta_T 0.004 \
@@ -230,7 +231,7 @@ from src.utility.run_training import run_training  # noqa: E402
 def main():
     parser = get_default_parser()
     args = parser.parse_args()
-
+    print("normalize", args.normalize)
     log_file_path = f"src/logs/{args.run_name}.log"
 
     log_file = open(log_file_path, "w")  # noqa: SIM115

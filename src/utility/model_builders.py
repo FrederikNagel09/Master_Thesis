@@ -974,7 +974,7 @@ def _build_ndm_static_mlpinr(args, data_config: dict):
     print_mlp_noise_predictor_stats(network)
 
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
-
+    print(f"normalize in builder is {args.normalize}")
     model = NDMStaticTransInr(
         NoisePredictor=network,
         WeightEncoder=encoder,
@@ -985,6 +985,7 @@ def _build_ndm_static_mlpinr(args, data_config: dict):
         sigma_tilde_factor=args.sigma_tilde,
         data_dim=data_dim,
         img_size=img_size,
+        normalize=args.normalize,
     )
     return model
 

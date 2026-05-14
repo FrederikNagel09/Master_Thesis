@@ -113,6 +113,7 @@ class NDMStaticTransInr(nn.Module):
         sigma_tilde_factor: float = 1.0,
         data_dim: int = 784,
         img_size: int = 28,
+        normalize: bool = True,
     ):
         super().__init__()
         # Initialize model components and noise schedule buffers
@@ -127,7 +128,10 @@ class NDMStaticTransInr(nn.Module):
         self.T = T
         self.sigma_tilde_factor = sigma_tilde_factor
 
-        self.scaler = WeightScaler(WeightEncoder.weight_dim)
+        self.normalize = normalize
+
+        if self.normalize:
+            self.scaler = WeightScaler(WeightEncoder.weight_dim)
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
@@ -194,11 +198,15 @@ class NDMStaticTransInr(nn.Module):
         # Normalize time step to [0, 1] for network input
         t_norm = t_idx.float() / (self.T - 1)
 
-        # Send image through Weight Encoder to get Theta_prime
-        theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
+        if self.normalize:
+            # Send image through Weight Encoder to get Theta_prime
+            theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
+            # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
+            theta_prime = self.scaler(theta_prime_raw, reverse=False)
+        else:
+            theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
+            theta_prime_raw = theta_prime
 
-        # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
-        # theta_prime = self.scaler(theta_prime_raw, reverse=False)
         theta_prime_sg = theta_prime.detach()  # Detach for loss computations that shouldn't backprop through the scaler
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
@@ -271,7 +279,7 @@ class NDMStaticTransInr(nn.Module):
 
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
 
-        l_rec = self._l_rec(x, theta_prime)
+        l_rec = self._l_rec(x, theta_prime_raw)
 
         elbo = (self.T - 2) * l_diff + l_rec + l_prior
 
@@ -411,6 +419,9 @@ class NDMStaticTransInr(nn.Module):
 
             # Snapshot curr_theta after the step at each target T-value
             if collect_snapshots and t in T_values:
+                if self.normalize:
+                    # Reverse scaling to get back to the original weight space before decoding
+                    curr_theta = self.scaler(curr_theta, reverse=True)
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
             if GLOBAL_DEBUG_BOOL:  # noqa: SIM102
@@ -433,6 +444,10 @@ class NDMStaticTransInr(nn.Module):
             print(f"DEBUG final theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
             print(f"DEBUG final theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
             print("================================================================")
+
+        if self.normalize:
+            # Reverse scaling to get back to the original weight space before decoding
+            curr_theta = self.scaler(curr_theta, reverse=True)
 
         if collect_snapshots:
             return curr_theta, snapshots
