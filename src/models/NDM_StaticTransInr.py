@@ -320,7 +320,7 @@ class NDMStaticTransInr(nn.Module):
         # Predict noise at time step t_idx using the noise predictor network
         eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
 
-        mse = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=-1)  # (batch,)
+        mse = F.mse_loss(eps_hat, epsilon, reduction="none").sum(dim=-1)  # (batch,)
 
         return mse
 

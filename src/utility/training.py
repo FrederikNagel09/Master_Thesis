@@ -184,8 +184,6 @@ def train(
                 print(f"[Epoch {epoch}] Freezing weight encoder and scaler. Unfreezing noise predictor.")
                 for param in model.weight_encoder.parameters():
                     param.requires_grad = False
-                for param in model.scaler.parameters():
-                    param.requires_grad = False
                 for param in model.noise_predictor.parameters():
                     param.requires_grad = True
                 print("##################################################################\n")
