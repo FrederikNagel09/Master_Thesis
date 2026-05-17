@@ -350,6 +350,53 @@ class NDMStaticTransInr(nn.Module):
         collect_snapshots: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[int, np.ndarray]]:
         """
+        Sample weight vectors via reverse diffusion (Algorithm 2 formulation).
+        Args:
+            n_samples:          Number of samples to generate.
+            collect_snapshots:  If True, also return weight distributions at T_VALUES.
+        Returns:
+            curr_theta: (n_samples, weight_dim) sampled weights.
+            snapshots:  {t_value: flat np.ndarray} — only returned if collect_snapshots=True.
+        """
+        weight_dim = self.weight_encoder.weight_dim
+        device = self.sqrt_alpha_cumprod.device
+        T_values = {self.T - 1, 3 * self.T // 4, self.T // 2, self.T // 4, 0}  # noqa: N806
+        snapshots: dict[int, np.ndarray] = {}
+
+        curr_theta = torch.randn(n_samples, weight_dim, device=device)
+
+        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
+            # Zero noise at t=1, gaussian elsewhere
+            z = torch.randn_like(curr_theta) if t > 1 else torch.zeros_like(curr_theta)
+
+            t_norm = torch.full((n_samples, 1), t / (self.T - 1), device=device)
+            eps_hat = self.noise_predictor(curr_theta, t_norm)
+
+            sqrt_alpha_t = torch.sqrt(self.alpha[t])
+            sqrt_one_minus_alpha_bar_t = torch.sqrt(1.0 - self.alpha_cumprod[t])
+
+            # Direct DDPM reverse step (Algorithm 2, line 4)
+            curr_theta = (1 / sqrt_alpha_t) * (curr_theta - ((1 - self.alpha[t]) / sqrt_one_minus_alpha_bar_t) * eps_hat) + torch.sqrt(
+                self.beta[t]
+            ) * z
+
+            if collect_snapshots and t in T_values:
+                snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
+
+        if self.normalize:
+            curr_theta = self.scaler(curr_theta, reverse=True)
+
+        if collect_snapshots:
+            return curr_theta, snapshots
+        return curr_theta
+
+    @torch.no_grad()
+    def sample_weight_old(
+        self,
+        n_samples: int = 1,
+        collect_snapshots: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[int, np.ndarray]]:
+        """
         Sample weight vectors via reverse diffusion.
         Args:
             n_samples:          Number of samples to generate.

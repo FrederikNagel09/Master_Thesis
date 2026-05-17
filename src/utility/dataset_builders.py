@@ -28,7 +28,7 @@ def build_dataset(
     data_root: str = "data/",
     subset_frac: float = 1.0,
     single_class: bool = False,
-    single_class_label: int = 1,
+    single_class_label: list[int] = [3, 8, 5],  # noqa: B006
 ) -> tuple[Dataset, dict]:
     """
     Build a training dataset and return it together with a data_config dict.
@@ -59,7 +59,7 @@ def build_dataset(
 
     # ── Optional single-class filtering ──────────────────────────────────────
     if single_class:
-        indices = [i for i, (_, label) in enumerate(dataset) if label == single_class_label]
+        indices = [i for i, (_, label) in enumerate(dataset) if label in single_class_label]
         dataset = Subset(dataset, indices)
         print(f"  Single-class filter: keeping label={single_class_label} ({len(dataset)} samples)")
 

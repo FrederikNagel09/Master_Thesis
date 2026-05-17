@@ -29,7 +29,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--subset_frac", type=float, default=1.0)
     p.add_argument("--single_class", action="store_true")
-    p.add_argument("--single_class_label", type=int, default=1)
+    p.add_argument("--single_class_label", type=int, nargs="+", default=[1])
     p.add_argument("--num_workers", type=int, default=0)
 
     # ── Training ──────────────────────────────────────────────────────────────

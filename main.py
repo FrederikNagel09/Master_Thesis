@@ -165,17 +165,19 @@ python main.py \
     --freeze_encoder 0.2 \
     
 python main.py \
-    --run_name MLP-MLP-TwoStage-Un_Norm-SUM\
+    --run_name MLP-MLP-TwoStage_only_3_and_5_labels\
     --model ndm_static_mlpinr \
     --dataset mnist \
-    --epochs 40\
+    --epochs 400\
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.5 \
-    --freeze_encoder 0.20\
+    --subset_frac 1.0 \
+    --single_class \
+    --single_class_label 3 5 \
+    --freeze_encoder 0.10\
     --normalize False\
     --peak_lr 1e-4 \
     --T 1000 \
@@ -186,7 +188,7 @@ python main.py \
     --inr_layers 3 \
     --f_phi_hidden 512 512 512 \
     --noise_hidden_dim 512 \
-    --noise_n_blocks 3 \
+    --noise_n_blocks 4 \
     --noise_t_embed 256
 
 
