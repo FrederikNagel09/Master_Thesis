@@ -171,7 +171,7 @@ def train(
     # ── Freeze Noise Predictor if specified ──────────────────────────────────────────
     if freeze_encoder is not None:
         print("[Training] Two-stage mode: freezing noise predictor for first phase.")
-        for param in model.noise_predictor.parameters():
+        for param in model.denoiser.parameters():
             param.requires_grad = False
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ def train(
                 print(f"[Epoch {epoch}] Freezing weight encoder and scaler. Unfreezing noise predictor.")
                 for param in model.weight_encoder.parameters():
                     param.requires_grad = False
-                for param in model.noise_predictor.parameters():
+                for param in model.denoiser.parameters():
                     param.requires_grad = True
                 print("##################################################################\n")
 

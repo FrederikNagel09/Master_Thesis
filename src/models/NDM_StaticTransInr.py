@@ -119,7 +119,7 @@ class NDMStaticTransInr(nn.Module):
         # Initialize model components and noise schedule buffers
         self.data_dim = data_dim
         self.img_size = img_size
-        self.noise_predictor = NoisePredictor
+        self.denoiser = NoisePredictor
         self.weight_encoder = WeightEncoder
         self.inr = WeightEncoder.inr
 
@@ -194,7 +194,7 @@ class NDMStaticTransInr(nn.Module):
         batch_size = x.shape[0]
 
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
-        t_idx = torch.randint(1, self.T, (batch_size,), device=x.device) - 1
+        t_idx = torch.randint(0, self.T + 1, (batch_size,), device=x.device)
         # Normalize time step to [0, 1] for network input
         t_norm = t_idx.float() / (self.T - 1)
 
@@ -208,6 +208,7 @@ class NDMStaticTransInr(nn.Module):
             theta_prime_raw = theta_prime
 
         theta_prime_sg = theta_prime.detach()  # Detach for loss computations that shouldn't backprop through the scaler
+
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
@@ -269,13 +270,15 @@ class NDMStaticTransInr(nn.Module):
 
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
         theta_t, epsilon = self._construct_theta_t(theta_prime_sg, t_idx)
+
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Construct Theta_t ====================")
             print(f"DEBUG epsilon: mean={epsilon.mean():.4f}, std={epsilon.std():.4f}")
             print(f"DEBUG epsilon: min={epsilon.min():.4f}, max={epsilon.max():.4f}")
             print("================================================================\n")
+
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_t, t_norm, epsilon)  # (batch,)
+        l_diff = self._l_diff(theta_t, t_norm, theta_prime_sg)
 
         l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
 
@@ -304,23 +307,20 @@ class NDMStaticTransInr(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, epsilon):
+    def _l_diff(self, theta_t, t_norm, theta_prime):
         """
-        Computes L_diff for time-independent W(x).
-
-        Predicts the clean weight vector theta_prime_hat from the noisy theta_t at
-        timestep t, and computes the ELBO-weighted squared error against the true
-        clean weight vector theta_prime:
-
-            l_diff = ||theta_prime - theta_prime_hat||^2 / (2 * sigma_tilde^2(s, t))
-
-        where theta_prime_hat = (theta_t - sigma_t * eps_hat) / alpha_t is the
-        noise-free estimate recovered from the predicted noise eps_hat.
+        x0-prediction loss weighted by SNR(t) to prevent posterior mean collapse.
+        Args:
+            theta_t:     (B, weight_dim) noisy weights at timestep t
+            t_norm:      (B,) timestep normalised to [0, 1]
+            theta_prime: (B, weight_dim) clean target weights (detached)
+            t_idx:       (B,) integer timestep indices into the noise schedule
+        Returns:
+            (B,) per-sample weighted MSE loss
         """
-        # Predict noise at time step t_idx using the noise predictor network
-        eps_hat = self.noise_predictor(theta_t, t_norm.unsqueeze(1))  # (batch, weight_dim)
+        theta0_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
 
-        mse = F.mse_loss(eps_hat, epsilon, reduction="none").sum(dim=-1)  # (batch,)
+        mse = F.mse_loss(theta0_hat, theta_prime, reduction="none").sum(dim=-1)  # (B,)
 
         return mse
 
@@ -365,20 +365,37 @@ class NDMStaticTransInr(nn.Module):
 
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
+        if GLOBAL_DEBUG_BOOL:
+            fixed_theta = torch.randn(1, weight_dim, device=device)
+            t_high = torch.full((1, 1), 999 / (self.T - 1), device=device)
+            t_low = torch.full((1, 1), 0 / (self.T - 1), device=device)
+            eps_high = self.denoiser(fixed_theta, t_high)
+            eps_low = self.denoiser(fixed_theta, t_low)
+            print("===== TIME SENSITIVITY CHECK =====")
+            print(f"eps_hat @ t=999: mean={eps_high.mean():.4f}, std={eps_high.std():.4f}")
+            print(f"eps_hat @ t=0  : mean={eps_low.mean():.4f},  std={eps_low.std():.4f}")
+            print(f"max abs diff   : {(eps_high - eps_low).abs().max():.4f}")
+            print("==================================")
+
         for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            # Zero noise at t=1, gaussian elsewhere
-            z = torch.randn_like(curr_theta) if t > 1 else torch.zeros_like(curr_theta)
-
             t_norm = torch.full((n_samples, 1), t / (self.T - 1), device=device)
-            eps_hat = self.noise_predictor(curr_theta, t_norm)
+            theta0_hat = self.denoiser(curr_theta, t_norm)  # (B, weight_dim)
 
-            sqrt_alpha_t = torch.sqrt(self.alpha[t])
-            sqrt_one_minus_alpha_bar_t = torch.sqrt(1.0 - self.alpha_cumprod[t])
+            if t > 0:
+                alpha_bar = self.alpha_cumprod[t]
+                alpha_bar_prev = self.alpha_cumprod[t - 1]
+                alpha_t = self.alpha[t]
+                beta_t = self.beta[t]
 
-            # Direct DDPM reverse step (Algorithm 2, line 4)
-            curr_theta = (1 / sqrt_alpha_t) * (curr_theta - ((1 - self.alpha[t]) / sqrt_one_minus_alpha_bar_t) * eps_hat) + torch.sqrt(
-                self.beta[t]
-            ) * z
+                coeff_x0 = torch.sqrt(alpha_bar_prev) * beta_t / (1.0 - alpha_bar)
+                coeff_xt = torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
+                mean = coeff_x0 * theta0_hat + coeff_xt * curr_theta
+
+                sigma = torch.sqrt(beta_t * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
+                z = torch.randn_like(curr_theta) if t > 1 else torch.zeros_like(curr_theta)
+                curr_theta = mean + sigma * z
+            else:
+                curr_theta = theta0_hat  # t=0: just return the clean prediction
 
             if collect_snapshots and t in T_values:
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()

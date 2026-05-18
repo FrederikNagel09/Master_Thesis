@@ -1065,7 +1065,6 @@ def plot_reconstruction_diffusion_progression(
     def _run_diffusion(t_noise: int) -> torch.Tensor:
         """
         Encodes x to weights, noises to t=t_noise, denoises back to t=0, decodes.
-
         Args:
             t_noise : Timestep index to noise to before reversing.
         Returns:
@@ -1077,7 +1076,6 @@ def plot_reconstruction_diffusion_progression(
         t_idx = torch.full((x.shape[0],), t_noise, dtype=torch.long, device=device)
         curr_theta, _ = model._construct_theta_t(weights_raw, t_idx)
 
-        clip_value = 3
         for t in tqdm(
             range(t_noise, -1, -1),
             desc=f"Denoising T={t_noise}",
@@ -1085,22 +1083,22 @@ def plot_reconstruction_diffusion_progression(
             file=sys.stderr,
         ):
             t_norm = torch.full((x.shape[0], 1), t / (model.T - 1), device=device)
-            eps_hat = model.noise_predictor(curr_theta, t_norm)
-            alpha_bar = model.alpha_cumprod[t]
-            alpha = model.alpha[t]
-            beta = model.beta[t]
-            sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
-            theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
-            theta_0_clipped = torch.clamp(theta_0, -clip_value, clip_value)
+            theta0_hat = model.denoiser(curr_theta, t_norm)  # direct x0 prediction
+
             if t > 0:
+                alpha_bar = model.alpha_cumprod[t]
                 alpha_bar_prev = model.alpha_cumprod[t - 1]
-                coeff_x0 = (torch.sqrt(alpha_bar_prev) * beta) / (1.0 - alpha_bar)
-                coeff_xt = (torch.sqrt(alpha) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar)
-                mean = coeff_x0 * theta_0_clipped + coeff_xt * curr_theta
-                sigma = torch.sqrt(beta * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
-                curr_theta = mean + sigma * torch.randn_like(curr_theta)
+                alpha_t = model.alpha[t]
+                beta_t = model.beta[t]
+
+                coeff_x0 = torch.sqrt(alpha_bar_prev) * beta_t / (1.0 - alpha_bar)
+                coeff_xt = torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
+                mean = coeff_x0 * theta0_hat + coeff_xt * curr_theta
+                sigma = torch.sqrt(beta_t * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
+                z = torch.randn_like(curr_theta) if t > 1 else torch.zeros_like(curr_theta)
+                curr_theta = mean + sigma * z
             else:
-                curr_theta = theta_0_clipped
+                curr_theta = theta0_hat
 
         if model.normalize:
             curr_theta = model.scaler(curr_theta, reverse=True)
