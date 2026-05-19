@@ -1544,7 +1544,11 @@ def plot_forward_trajectory_progression(
             weights = model.weight_encoder(x)
 
         if model.normalize:
+            print("\n####################################")
+            print("##########Applying Scaler Normalization##########")
+            print("####################################")
             weights = model.scaler(weights, reverse=False, training=False)
+            print("weights stats after scaler:", weights.mean(), weights.std())
 
         # ── 2. Apply forward noising at each t-value ──────────────────────────
         new_row_data = []

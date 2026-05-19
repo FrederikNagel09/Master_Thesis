@@ -201,8 +201,11 @@ class NDMStaticTransInr(nn.Module):
         if self.normalize:
             # Send image through Weight Encoder to get Theta_prime
             theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
-            # Scale theta_prime_raw to have zero mean and unit variance across the batch using the learnable scaler
             theta_prime = self.scaler(theta_prime_raw, reverse=False)
+            print("\n####################################")
+            print("##########Scaled Weights##############")
+            print(f"DEBUG theta_prime: mean={theta_prime.mean():.4f}, std={theta_prime.std():.4f}")
+            print("####################################")
         else:
             theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
             theta_prime_raw = theta_prime
@@ -398,7 +401,6 @@ class NDMStaticTransInr(nn.Module):
                 curr_theta = theta0_hat  # t=0: just return the clean prediction
 
             if GLOBAL_DEBUG_BOOL:
-                print(f"DEBUG sqrt_one_minus_alpha_bar: {sqrt_one_minus_alpha_bar}")
                 print(f"DEBUG torch.sqrt(alpha_bar):    {torch.sqrt(alpha_bar)}")
                 if t % 100 == 0 or t == self.T - 1:
                     print(f"==================== DEBUG: Theta_0 Computation T={t} ====================")
@@ -408,7 +410,6 @@ class NDMStaticTransInr(nn.Module):
                     print(f"DEBUG theta_0 before clipping: mean={theta0_hat.mean():.4f}, std={theta0_hat.std():.4f}")
                     print(f"DEBUG theta_0 before clipping: min={theta0_hat.min():.4f}, max={theta0_hat.max():.4f}")
                     print("================================================================")
-
 
             if collect_snapshots and t in T_values:
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
