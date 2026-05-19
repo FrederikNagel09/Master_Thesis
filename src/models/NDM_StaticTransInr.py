@@ -194,7 +194,7 @@ class NDMStaticTransInr(nn.Module):
         batch_size = x.shape[0]
 
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
-        t_idx = torch.randint(0, self.T + 1, (batch_size,), device=x.device)
+        t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
         # Normalize time step to [0, 1] for network input
         t_norm = t_idx.float() / (self.T - 1)
 
@@ -212,10 +212,10 @@ class NDMStaticTransInr(nn.Module):
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
-                # f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
-                # f"std={theta_prime_raw.std():.4f}, "
-                # f"min={theta_prime_raw.min():.4f}, "
-                # f"max={theta_prime_raw.max():.4f}"
+                f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
+                f"std={theta_prime_raw.std():.4f}, "
+                f"min={theta_prime_raw.min():.4f}, "
+                f"max={theta_prime_raw.max():.4f}"
             )
             print(
                 f"DEBUG normalized: mean={theta_prime.mean():.4f}, "
@@ -284,7 +284,7 @@ class NDMStaticTransInr(nn.Module):
 
         l_rec = self._l_rec(x, theta_prime_raw)
 
-        elbo = (self.T - 2) * l_diff + l_rec + l_prior
+        elbo = l_diff + l_rec + l_prior
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -396,6 +396,19 @@ class NDMStaticTransInr(nn.Module):
                 curr_theta = mean + sigma * z
             else:
                 curr_theta = theta0_hat  # t=0: just return the clean prediction
+
+            if GLOBAL_DEBUG_BOOL:
+                print(f"DEBUG sqrt_one_minus_alpha_bar: {sqrt_one_minus_alpha_bar}")
+                print(f"DEBUG torch.sqrt(alpha_bar):    {torch.sqrt(alpha_bar)}")
+                if t % 100 == 0 or t == self.T - 1:
+                    print(f"==================== DEBUG: Theta_0 Computation T={t} ====================")
+                    print(f"DEBUG curr_theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
+                    print(f"DEBUG curr_theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
+                    print("")
+                    print(f"DEBUG theta_0 before clipping: mean={theta0_hat.mean():.4f}, std={theta0_hat.std():.4f}")
+                    print(f"DEBUG theta_0 before clipping: min={theta0_hat.min():.4f}, max={theta0_hat.max():.4f}")
+                    print("================================================================")
+
 
             if collect_snapshots and t in T_values:
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
