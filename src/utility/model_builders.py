@@ -64,6 +64,8 @@ def build_model(args, data_config: dict) -> nn.Module:
         model = _build_ndm_static_transinr(args, data_config)
     elif name == "ndm_static_mlpinr":
         model = _build_ndm_static_mlpinr(args, data_config)
+    elif name == "latent_inr_diffusion":
+        model = _build_ndm_latent_diffusion(args, data_config)
     else:
         raise ValueError(f"Unknown model '{args.model}'. Choose from: 'ndm', 'inr_vae', 'ndm_inr'.")
 
@@ -988,6 +990,163 @@ def _build_ndm_static_mlpinr(args, data_config: dict):
         normalize=args.normalize,
     )
     return model
+
+
+def _build_ndm_latent_diffusion(args, data_config: dict):
+    """
+    Build NDMLatentDiffusion with LatentEncoder + TransInr decoder + noise predictor.
+
+    Encoder variant  : controlled by args.latent_encoder_type  ("mlp" | "transformer")
+    Predictor variant: controlled by args.latent_predictor_type ("mlp" | "transformer")
+    """
+    from src.models.LatentEncoder import LatentEncoder
+    from src.models.LatentInrDiffusion import NDMLatentDiffusion
+    from src.models.LatentNoisePredictor import LatentMLPNoisePredictor, LatentTransformerNoisePredictor
+    from src.models.trans_inr import TransInr
+
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+    data_dim = data_config["data_dim"]
+
+    # ── Shared latent space contract ──────────────────────────────────────────
+    # These three values are passed to BOTH LatentEncoder and LatentTokenizer
+    # inside TransInr — they must stay in sync.
+    latent_dim = getattr(args, "latent_dim", 32)
+    latent_size = getattr(args, "latent_size", 14)  # int → (H', W')
+    patch_size = getattr(args, "latent_patch_size", 2)  # LatentTokenizer patch
+
+    latent_size_tuple = (latent_size, latent_size) if isinstance(latent_size, int) else latent_size
+    n_patches = (latent_size_tuple[0] // patch_size) * (latent_size_tuple[1] // patch_size)
+
+    # ── LatentEncoder ─────────────────────────────────────────────────────────
+    encoder_type = getattr(args, "latent_encoder_type", "mlp")  # "mlp" | "transformer"
+
+    encoder_kwargs = {
+        "in_channels": channels,
+        "latent_dim": latent_dim,
+        "latent_size": latent_size_tuple,
+    }
+    if encoder_type == "transformer":
+        encoder_kwargs.update(
+            transformer_depth=getattr(args, "latent_enc_depth", 4),
+            n_head=getattr(args, "latent_enc_n_head", 4),
+            head_dim=getattr(args, "latent_enc_head_dim", 32),
+            ff_dim=getattr(args, "latent_enc_ff_dim", 512),
+            dropout=getattr(args, "dropout", 0.0),
+        )
+    else:
+        encoder_kwargs["transformer_depth"] = 0  # CNN-only
+
+    latent_encoder = LatentEncoder(**encoder_kwargs)
+    _print_param_count("LatentEncoder", latent_encoder)
+
+    # ── TransInr decoder ──────────────────────────────────────────────────────
+    dec_dim = getattr(args, "dec_trans_dim", 256)
+    dec_n_head = getattr(args, "dec_trans_n_head", 8)
+    dec_head_dim = getattr(args, "dec_trans_head_dim", 32)
+    dec_ff_dim = getattr(args, "dec_trans_ff_dim", 512)
+    dec_enc_depth = getattr(args, "dec_trans_enc_depth", 4)
+    dec_dec_depth = getattr(args, "dec_trans_dec_depth", 4)
+    dec_n_groups = getattr(args, "dec_trans_n_groups", 8)
+    dec_update = getattr(args, "dec_trans_update_strategy", "scale")
+    inr_hidden = getattr(args, "inr_hidden_dim", 256)
+    inr_layers = getattr(args, "inr_layers", 5)
+
+    # LatentTokenizer config — latent_dim and latent_size must match encoder output
+    tokenizer_cfg = {
+        "target": "src.models.trans_inr_helpers.LatentTokenizer",
+        "params": {
+            "latent_dim": latent_dim,
+            "latent_size": latent_size,
+            "patch_size": patch_size,
+            "dim": dec_dim,
+            "n_head": dec_n_head,
+            "head_dim": dec_head_dim,
+        },
+    }
+    inr_cfg = {
+        "target": "src.models.trans_inr_helpers.SIREN",
+        "params": {
+            "depth": inr_layers,
+            "in_dim": 2,
+            "out_dim": channels,
+            "hidden_dim": inr_hidden,
+            "out_bias": 0.5,
+        },
+    }
+    transformer_cfg = {
+        "target": "src.models.trans_inr_helpers.Transformer",
+        "params": {
+            "dim": dec_dim,
+            "encoder_depth": dec_enc_depth,
+            "decoder_depth": dec_dec_depth,
+            "n_head": dec_n_head,
+            "head_dim": dec_head_dim,
+            "ff_dim": dec_ff_dim,
+        },
+    }
+
+    decoder = TransInr(
+        tokenizer=tokenizer_cfg,
+        inr=inr_cfg,
+        n_groups=dec_n_groups,
+        data_shape=(img_size, img_size),
+        transformer=transformer_cfg,
+        update_strategy=dec_update,
+    )
+    _print_param_count("TransInr decoder", decoder)
+
+    # ── Noise predictor ───────────────────────────────────────────────────────
+    predictor_type = getattr(args, "latent_predictor_type", "mlp")  # "mlp" | "transformer"
+
+    if predictor_type == "transformer":
+        noise_predictor = LatentTransformerNoisePredictor(
+            n_patches=n_patches,
+            latent_dim=latent_dim,
+            d_model=getattr(args, "pred_d_model", 256),
+            n_heads=getattr(args, "pred_n_heads", 8),
+            n_layers=getattr(args, "pred_n_layers", 4),
+            d_ff=getattr(args, "pred_d_ff", 1024),
+            dropout=getattr(args, "dropout", 0.0),
+            t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
+        )
+    else:
+        noise_predictor = LatentMLPNoisePredictor(
+            n_patches=n_patches,
+            latent_dim=latent_dim,
+            hidden_dim=getattr(args, "pred_hidden_dim", 512),
+            n_blocks=getattr(args, "pred_n_blocks", 4),
+            t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
+        )
+    _print_param_count("Noise predictor", noise_predictor)
+
+    # ── Coordinate grid ───────────────────────────────────────────────────────
+    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
+
+    # ── Assemble ──────────────────────────────────────────────────────────────
+    model = NDMLatentDiffusion(
+        noise_predictor=noise_predictor,
+        latent_encoder=latent_encoder,
+        decoder=decoder,
+        coord_grid=coord_grid,
+        latent_size=latent_size_tuple,
+        latent_dim=latent_dim,
+        beta_1=args.beta_1,
+        beta_T=args.beta_T,
+        T=args.T,
+        data_dim=data_dim,
+        img_size=img_size,
+    )
+    _print_param_count("NDMLatentDiffusion (total)", model)
+
+    return model
+
+
+def _print_param_count(name: str, module: nn.Module) -> None:
+    """Print total and trainable parameter counts for a module."""
+    total = sum(p.numel() for p in module.parameters())
+    trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
+    print(f"[{name}] total params: {total / 1e6:.3f}M  |  trainable: {trainable / 1e6:.3f}M")
 
 
 if __name__ == "__main__":
