@@ -113,19 +113,24 @@ class NDMLatentDiffusion(nn.Module):
         """
         B = x.shape[0]  # noqa: N806
 
+        # Reshape to (B, C, H, W) if input is flattened (B, data_dim)
+        if x.dim() == 2:
+            channels = self.data_dim // (self.img_size * self.img_size)
+            x = x.view(B, channels, self.img_size, self.img_size)
+
         z = self.latent_encoder(x)  # (B, latent_dim, H', W')
 
         t_idx = torch.randint(0, self.T, (B,), device=x.device)
-        t_norm = t_idx.float() / (self.T - 1)
+        t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         # Detach only for the diffusion path — l_rec needs gradients through z
-        z_t, epsilon = self._forward_process(z.detach(), t_idx)
+        z_t, epsilon = self._forward_process(z, t_idx)
 
         l_diff = self._l_diff(z_t, t_norm, epsilon)
-        l_prior = self._l_prior(z.detach())  # analytical, no encoder gradient needed
+        l_prior = self._l_prior(z)  # analytical, no encoder gradient needed
         l_rec = self._l_rec(x, z)  # z kept attached — trains encoder
 
-        total = l_diff + l_prior + l_rec
+        total = (self.T - 2) * l_diff + l_prior + l_rec
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
@@ -147,7 +152,15 @@ class NDMLatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample loss
         """
-        eps_hat = self.noise_predictor(z_t, t_norm)  # (B, latent_dim, H', W')
+        H, W = self.latent_size  # noqa: N806
+        # (B, latent_dim, H', W') → (B, n_patches, latent_dim)
+        z_t_tokens = z_t.permute(0, 2, 3, 1).reshape(z_t.shape[0], H * W, self.latent_dim)
+
+        eps_hat_tokens = self.noise_predictor(z_t_tokens, t_norm)  # (B, H'*W', latent_dim)
+
+        # (B, H'*W', latent_dim) → (B, latent_dim, H', W')
+        eps_hat = eps_hat_tokens.reshape(z_t.shape[0], H, W, self.latent_dim).permute(0, 3, 1, 2)
+
         return F.mse_loss(eps_hat, epsilon, reduction="none").sum(dim=(-3, -2, -1))
 
     def _l_prior(self, z: torch.Tensor) -> torch.Tensor:
@@ -227,8 +240,13 @@ class NDMLatentDiffusion(nn.Module):
         z = torch.randn(n_samples, self.latent_dim, H, W, device=device)
 
         for t in tqdm(range(self.T - 1, -1, -1), desc="Sampling", total=self.T):
-            t_norm = torch.full((n_samples,), t / (self.T - 1), device=device)
-            eps_hat = self.noise_predictor(z, t_norm)  # (B, latent_dim, H', W')
+            t_norm = torch.full((n_samples,), t / (self.T - 1), device=device).unsqueeze(-1)
+
+            # (B, latent_dim, H', W') → (B, H'*W', latent_dim)
+            z_tokens = z.permute(0, 2, 3, 1).reshape(n_samples, H * W, self.latent_dim)
+            eps_hat_tokens = self.noise_predictor(z_tokens, t_norm)
+            # (B, H'*W', latent_dim) → (B, latent_dim, H', W')
+            eps_hat = eps_hat_tokens.reshape(n_samples, H, W, self.latent_dim).permute(0, 3, 1, 2)
 
             alpha_bar = self.alpha_cumprod[t]
             beta_t = self.beta[t]

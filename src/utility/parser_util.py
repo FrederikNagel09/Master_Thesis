@@ -131,5 +131,42 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_predictor_t_embed_dim", type=int, default=128)
     p.add_argument("--noise_predictor_depth", type=int, default=4)
     p.add_argument("--noise_predictor_dropout", type=float, default=0.1)
+    # ── NDM Latent Diffusion ──────────────────────────────────────────────────────
+    p.add_argument("--latent_size", type=int, default=14)
+    p.add_argument("--latent_patch_size", type=int, default=2)
+    p.add_argument("--latent_encoder_type", type=str, default="mlp", choices=["mlp", "transformer"])
+    p.add_argument("--latent_predictor_type", type=str, default="mlp", choices=["mlp", "transformer"])
+
+    # LatentEncoder transformer args
+    p.add_argument("--latent_enc_depth", type=int, default=4)
+    p.add_argument("--latent_enc_n_head", type=int, default=4)
+    p.add_argument("--latent_enc_head_dim", type=int, default=32)
+    p.add_argument("--latent_enc_ff_dim", type=int, default=512)
+
+    # TransInr decoder args
+    p.add_argument("--dec_trans_dim", type=int, default=256)
+    p.add_argument("--dec_trans_n_head", type=int, default=8)
+    p.add_argument("--dec_trans_head_dim", type=int, default=32)
+    p.add_argument("--dec_trans_ff_dim", type=int, default=512)
+    p.add_argument("--dec_trans_enc_depth", type=int, default=4)
+    p.add_argument("--dec_trans_dec_depth", type=int, default=4)
+    p.add_argument("--dec_trans_n_groups", type=int, default=8)
+    p.add_argument("--dec_trans_update_strategy", type=str, default="scale", choices=["normalize", "scale", "identity"])
+
+    # Latent MLP Decoder
+    p.add_argument("--dec_type", type=str, default="transinr", choices=["transinr", "mlp"])
+    p.add_argument("--dec_mlp_hidden_dim", type=int, default=512)
+    p.add_argument("--dec_mlp_n_layers", type=int, default=4)
+
+    # Latent MLP noise predictor args
+    p.add_argument("--pred_hidden_dim", type=int, default=512)
+    p.add_argument("--pred_n_blocks", type=int, default=4)
+    p.add_argument("--pred_t_embed_dim", type=int, default=128)
+
+    # Latent Transformer noise predictor args
+    p.add_argument("--pred_d_model", type=int, default=256)
+    p.add_argument("--pred_n_heads", type=int, default=8)
+    p.add_argument("--pred_n_layers", type=int, default=4)
+    p.add_argument("--pred_d_ff", type=int, default=1024)
 
     return p

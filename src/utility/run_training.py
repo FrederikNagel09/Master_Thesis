@@ -187,6 +187,7 @@ def run_training(
     end_epoch = start_epoch + args.epochs
 
     progression_filename = f"sample_progression_ep{start_epoch + 1}-{end_epoch}"
+    print("\n\n ", args.model, "\n\n")
 
     def _sample_fn(model, step, device, batch=None):
         epoch = step // len(data_loader)
@@ -204,6 +205,18 @@ def run_training(
             if args.model == "ndm":
                 plot_fphi_progression(
                     model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
+                )
+            elif args.model == "latent_inr_diffusion":
+                print("\n\nPlotting latent INR recon progression...\n\n")
+                plot_reconstruction_progression(
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
                 )
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "ndm_static_transinr"):
                 # Just simple reconstruction

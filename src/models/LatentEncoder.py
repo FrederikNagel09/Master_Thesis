@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 from src.models.trans_inr_helpers import TransformerEncoder
@@ -42,14 +43,20 @@ class LatentEncoder(nn.Module):
 
         hidden_dim = latent_dim * 2
 
-        # --- CNN frontend ---
-        # conv1: feature extraction, preserves spatial dims
-        # conv2: halves spatial dims (stride=2) to reach latent_size
-        # conv3: 1x1 projection to latent_dim channels
+        bottleneck_dim = hidden_dim * 2
+
         self.cnn = nn.Sequential(
+            # Encoder: preserve → halve → halve
             nn.Conv2d(in_channels, hidden_dim, kernel_size=3, stride=1, padding=1),
             nn.GELU(),
-            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(hidden_dim, hidden_dim * 2, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim * 2, bottleneck_dim, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            # Decoder: upsample → upsample → project to latent_dim
+            nn.ConvTranspose2d(bottleneck_dim, hidden_dim * 2, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose2d(hidden_dim * 2, hidden_dim, kernel_size=4, stride=2, padding=1),
             nn.GELU(),
             nn.Conv2d(hidden_dim, latent_dim, kernel_size=1),
         )
@@ -79,6 +86,8 @@ class LatentEncoder(nn.Module):
             z: (B, latent_dim, H', W') — matches LatentTokenizer input contract
         """
         z = self.cnn(x)  # (B, latent_dim, H', W')
+        if z.shape[-2:] != self.latent_size:
+            z = F.interpolate(z, size=self.latent_size, mode="bilinear", align_corners=False)
 
         if self.use_transformer:
             B, C, H, W = z.shape  # noqa: N806

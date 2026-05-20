@@ -204,9 +204,9 @@ def _model_to_grid(
             pixels = model.inr(coords_batch, flat_weights)
             samples = pixels.permute(0, 2, 1).reshape(n_samples, channels, img_size, img_size).clamp(0, 1)
 
-        elif model_type == "ndm_inr":
+        elif model_type == "ndm_inr" or model_type == "latent_inr_diffusion":
             samples = model.sample(n_samples)
-            samples = samples.clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+            samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
 
         elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             if collect_snapshots:
@@ -670,6 +670,7 @@ def plot_reconstruction_progression(
     device: str,
     data_config: dict,
     filename: str = "reconstruction_progression",
+    model_name: str = "",
 ) -> None:
     """
     Append a row of 6 reconstructions to the progression figure and save to
@@ -708,19 +709,29 @@ def plot_reconstruction_progression(
 
     # ── Reconstruct via encoder(t=0) → INR decode ────────────────────────────
     model.eval()
-    with torch.no_grad():
-        if hasattr(model, "F_phi"):
-            t0_norm = torch.zeros(x.shape[0], 1, device=device)
-            weights = model.F_phi(x, t0_norm)  # temporal encoder
-        elif hasattr(model, "W") and hasattr(model.W, "inflate"):
-            # TransInrEncoder expects spatial (B, C, H, W)
-            x_spatial = x.view(x.shape[0], channels, img_size, img_size)
-            weights = model.weight_encoder(x_spatial)  # ← spatial reshape
-        else:
-            t0_norm = torch.zeros(x.shape[0], device=device)
-            weights = model.weight_encoder(x)  # static MLP/CNN encoder
 
-        x_recon = model._inr_decode(weights)  # (3, data_dim)
+    if model_name == "latent_inr_diffusion":
+        with torch.no_grad():
+            if x.dim() == 2:
+                channels = x.shape[1] // (model.img_size * model.img_size)
+                x = x.view(x.shape[0], channels, model.img_size, model.img_size)
+            z = model.latent_encoder(x)
+            x_recon = model._decode_latent(z)
+    else:
+        with torch.no_grad():
+            if hasattr(model, "F_phi"):
+                t0_norm = torch.zeros(x.shape[0], 1, device=device)
+                weights = model.F_phi(x, t0_norm)  # temporal encoder
+            elif hasattr(model, "W") and hasattr(model.W, "inflate"):
+                # TransInrEncoder expects spatial (B, C, H, W)
+                x_spatial = x.view(x.shape[0], channels, img_size, img_size)
+                weights = model.weight_encoder(x_spatial)  # ← spatial reshape
+            else:
+                t0_norm = torch.zeros(x.shape[0], device=device)
+                weights = model.weight_encoder(x)  # static MLP/CNN encoder
+
+            x_recon = model._inr_decode(weights)  # (3, data_dim)
+
     model.train()
 
     def _to_img(tensor_1d):
@@ -820,7 +831,6 @@ def plot_reconstruction_progression(
             linestyle="--",
         )
     )
-
     fig.suptitle("Reconstruction Progression", fontsize=11, fontweight="bold", y=1.02)
 
     save_path = os.path.join(run_dir, f"{filename}.png")

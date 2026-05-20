@@ -330,6 +330,7 @@ def train(
                         "ndm_transinr",
                         "ndm_temporal_transinr",
                         "ndm_static_transinr",
+                        "latent_inr_diffusion",
                     ):
                         sample_fn(model, global_step, device, batch=batch)
                     else:
