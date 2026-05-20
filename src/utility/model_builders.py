@@ -1042,7 +1042,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
         encoder_kwargs["transformer_depth"] = 0  # CNN-only
 
     latent_encoder = LatentEncoder(**encoder_kwargs)
-    _print_latent_encoder_info(latent_encoder, encoder_kwargs)
+    encoder_params = _print_latent_encoder_info(latent_encoder, encoder_kwargs)
 
     # ── TransInr decoder ──────────────────────────────────────────────────────
     dec_dim = getattr(args, "dec_trans_dim", 256)
@@ -1090,7 +1090,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
         },
     }
 
-    decoder_type = getattr(args, "dec_type", "transinr")  # "transinr" | "mlp"
+    decoder_type = getattr(args, "latent_decoder_type", "transinr")  # "transinr" | "mlp"
 
     if decoder_type == "mlp":
         dec_kwargs = {
@@ -1115,7 +1115,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
         }
         decoder = TransInr(**dec_kwargs)
 
-    _print_decoder_info(decoder, dec_kwargs)
+    decoder_params = _print_decoder_info(decoder, dec_kwargs)
 
     # ── Noise predictor ───────────────────────────────────────────────────────
     predictor_type = getattr(args, "latent_predictor_type", "mlp")  # "mlp" | "transformer"
@@ -1144,7 +1144,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
             t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
         )
 
-    _print_noise_predictor_info(noise_predictor, predictor_kwargs)
+    noise_params = _print_noise_predictor_info(noise_predictor, predictor_kwargs)
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
@@ -1166,14 +1166,18 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
 
     # Final print of total model params (encoder + decoder + predictor)
     total_params = sum(p.numel() for p in model.parameters())
-    print("##############################################")
-    print(f"\nTotal model parameters: {total_params:,}")
-    print("##############################################")
+    print("\n########## Parameter Summary: ##############")
+    print("Latent Encoder  : ", f"{encoder_params:,}")
+    print("Noise Predictor : ", f"{noise_params:,}")
+    print("Latent Decoder  : ", f"{decoder_params:,}")
+    print("----------------------------------------------")
+    print(f"TOTAL PARAMETERS  : {total_params:,}")
+    print("##############################################\n")
 
     return model
 
 
-def _print_decoder_info(decoder: TransInr | MLPInr, kwargs: dict) -> None:
+def _print_decoder_info(decoder: TransInr | MLPInr, kwargs: dict) -> None:  # noqa: ARG001
     """
     Prints a summary of decoder config and parameter count.
     Args:
@@ -1182,37 +1186,29 @@ def _print_decoder_info(decoder: TransInr | MLPInr, kwargs: dict) -> None:
     Returns: None
     """
     is_mlp = isinstance(decoder, MLPInr)
-    mode = "MLPInr" if is_mlp else "TransInr"
     total = sum(p.numel() for p in decoder.parameters())
-    inr_params = sum(p.numel() for p in decoder.inr.parameters())
+    inr_params = sum(p.numel() for p in decoder.inr.parameters())  # noqa: F841
     base_params = sum(p.numel() for p in decoder.base_params.values())
 
-    print("┌─ Decoder ──────────────────────────────────────")
-    print(f"│  mode             : {mode}")
-    print(f"│  update_strategy  : {kwargs.get('update_strategy', 'scale')}")
-    print(f"│  n_groups         : {kwargs.get('n_groups')}")
-    print(f"│  data_shape       : {kwargs.get('data_shape')}")
     if is_mlp:
+        print("############## MLP Latent Decoder ##############")
         trunk_params = sum(p.numel() for p in decoder.trunk.parameters())
         head_params = sum(p.numel() for p in decoder.param_heads.parameters())
-        print(f"│  latent_dim       : {kwargs.get('latent_dim')}")
-        print(f"│  latent_size      : {kwargs.get('latent_size')}")
-        print(f"│  hidden_dim       : {kwargs.get('hidden_dim', 512)}")
-        print(f"│  n_layers         : {kwargs.get('n_layers', 4)}")
-        print(f"│  trunk params     : {trunk_params:,}")
-        print(f"│  param head params: {head_params:,}")
+        print(f"MLP params       : {trunk_params:,}")
+        print(f"Modulation params: {head_params:,}")
     else:
+        print("############## Transformer Latent Decoder ##############")
         tok_params = sum(p.numel() for p in decoder.tokenizer.parameters())
         trans_params = sum(p.numel() for p in decoder.transformer.parameters())
-        print(f"│  tokenizer params : {tok_params:,}")
-        print(f"│  transformer params: {trans_params:,}")
-    print(f"│  INR params       : {inr_params:,}")
-    print(f"│  base INR params  : {base_params:,}")
-    print(f"│  total params     : {total:,}")
-    print("└────────────────────────────────────────────────")
+        print(f"tokenizer params : {tok_params:,}")
+        print(f"transformer params: {trans_params:,}")
+
+    print(f"SIREN params      : {base_params:,}")
+
+    return total
 
 
-def _print_noise_predictor_info(predictor: LatentMLPNoisePredictor | LatentTransformerNoisePredictor, kwargs: dict) -> None:
+def _print_noise_predictor_info(predictor: LatentMLPNoisePredictor | LatentTransformerNoisePredictor, kwargs: dict) -> None:  # noqa: ARG001
     """
     Prints a summary of noise predictor config and parameter count.
     Args:
@@ -1224,25 +1220,12 @@ def _print_noise_predictor_info(predictor: LatentMLPNoisePredictor | LatentTrans
     is_transformer = isinstance(predictor, LatentTransformerNoisePredictor)
     mode = "Transformer" if is_transformer else "MLP"
 
-    print("┌─ LatentNoisePredictor ─────────────────────────")
-    print(f"│  mode         : {mode}")
-    print(f"│  n_patches    : {kwargs['n_patches']}")
-    print(f"│  latent_dim   : {kwargs['latent_dim']}")
-    print(f"│  t_embed_dim  : {kwargs['t_embed_dim']}")
-    if is_transformer:
-        print(f"│  d_model      : {kwargs.get('d_model', 256)}")
-        print(f"│  n_heads      : {kwargs.get('n_heads', 8)}")
-        print(f"│  n_layers     : {kwargs.get('n_layers', 4)}")
-        print(f"│  d_ff         : {kwargs.get('d_ff', 1024)}")
-        print(f"│  dropout      : {kwargs.get('dropout', 0.1)}")
-    else:
-        print(f"│  hidden_dim   : {kwargs.get('hidden_dim', 512)}")
-        print(f"│  n_blocks     : {kwargs.get('n_blocks', 4)}")
-    print(f"│  total params : {total:,}")
-    print("└────────────────────────────────────────────────")
+    print(f"############## {mode} Latent Noise Predictor ##############")
+
+    return total
 
 
-def _print_latent_encoder_info(encoder: LatentEncoder, encoder_kwargs: dict) -> None:
+def _print_latent_encoder_info(encoder: LatentEncoder, encoder_kwargs: dict) -> None:  # noqa: ARG001
     """
     Prints a summary of LatentEncoder config and parameter count.
     Args:
@@ -1254,21 +1237,13 @@ def _print_latent_encoder_info(encoder: LatentEncoder, encoder_kwargs: dict) -> 
     cnn_params = sum(p.numel() for p in encoder.cnn.parameters())
     mode = "CNN + Transformer" if encoder.use_transformer else "CNN only"
 
-    print("┌─ LatentEncoder ───────────────────────────────")
-    print(f"│  mode         : {mode}")
-    print(f"│  in_channels  : {encoder_kwargs['in_channels']}")
-    print(f"│  latent_dim   : {encoder_kwargs['latent_dim']}")
-    print(f"│  latent_size  : {encoder.latent_size}")
-    print(f"│  CNN params   : {cnn_params:,}")
+    print(f"############## {mode} Latent Encoder ##############")
+    print(f"CNN params   : {cnn_params:,}")
     if encoder.use_transformer:
         trans_params = sum(p.numel() for p in encoder.transformer.parameters())
-        print(f"│  depth        : {encoder_kwargs.get('transformer_depth')}")
-        print(f"│  n_head       : {encoder_kwargs.get('n_head')}")
-        print(f"│  head_dim     : {encoder_kwargs.get('head_dim')}")
-        print(f"│  ff_dim       : {encoder_kwargs.get('ff_dim')}")
-        print(f"│  trans params : {trans_params:,}")
-    print(f"│  total params : {total:,}")
-    print("└───────────────────────────────────────────────")
+        print(f"trans params : {trans_params:,}")
+
+    return total
 
 
 if __name__ == "__main__":

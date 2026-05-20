@@ -223,30 +223,29 @@ python main.py \
     --run_name LATENT-MLP-MLP-TESTING \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 5 \
-    --batch_size 64 \
+    --epochs 40 \
+    --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 10 \
-    --subset_frac 0.1 \
-    --normalize True \
+    --log_every_n_steps 50 \
+    --subset_frac 0.5 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
-    --latent_dim 64 \
-    --latent_size 16 \
-    --latent_patch_size 2 \
     --latent_encoder_type mlp \
     --latent_predictor_type mlp \
+    --latent_decoder_type mlp \
     --inr_hidden_dim 32 \
     --inr_layers 3 \
-    --dec_type mlp \
-    --dec_mlp_hidden_dim 128 \
-    --dec_mlp_n_layers 2 \
-    --pred_hidden_dim 64 \
-    --pred_n_blocks 2 \
-    --pred_t_embed_dim 16
+    --latent_dim 32 \
+    --latent_size 16 \
+    --latent_patch_size 2 \
+    --dec_mlp_hidden_dim 256 \
+    --dec_mlp_n_layers 6 \
+    --pred_hidden_dim 128 \
+    --pred_n_blocks 4 \
+    --pred_t_embed_dim 128
 
 
 
@@ -269,7 +268,6 @@ from src.utility.run_training import run_training  # noqa: E402
 def main():
     parser = get_default_parser()
     args = parser.parse_args()
-    print("normalize", args.normalize)
     log_file_path = f"src/logs/{args.run_name}.log"
 
     log_file = open(log_file_path, "w")  # noqa: SIM115

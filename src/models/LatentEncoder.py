@@ -43,7 +43,7 @@ class LatentEncoder(nn.Module):
 
         hidden_dim = latent_dim * 2
 
-        bottleneck_dim = hidden_dim * 2
+        bottleneck_dim = hidden_dim * 4
 
         self.cnn = nn.Sequential(
             # Encoder: preserve → halve → halve

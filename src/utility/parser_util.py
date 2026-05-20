@@ -154,7 +154,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--dec_trans_update_strategy", type=str, default="scale", choices=["normalize", "scale", "identity"])
 
     # Latent MLP Decoder
-    p.add_argument("--dec_type", type=str, default="transinr", choices=["transinr", "mlp"])
+    p.add_argument("--latent_decoder_type", type=str, default="transinr", choices=["transinr", "mlp"])
     p.add_argument("--dec_mlp_hidden_dim", type=int, default=512)
     p.add_argument("--dec_mlp_n_layers", type=int, default=4)
 
