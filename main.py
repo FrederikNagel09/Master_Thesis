@@ -220,7 +220,7 @@ python main.py \
     
 ######### Latent Diffusion Training ############
 python main.py \
-    --run_name LATENT-MLP-MLP-TESTING \
+    --run_name LATENT-MLP-MLP-TESTING_v3 \
     --model latent_inr_diffusion \
     --dataset mnist \
     --epochs 40 \
@@ -229,7 +229,7 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.5 \
+    --subset_frac 0.25 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
@@ -237,20 +237,44 @@ python main.py \
     --latent_predictor_type mlp \
     --latent_decoder_type mlp \
     --inr_hidden_dim 32 \
-    --inr_layers 3 \
-    --latent_dim 32 \
-    --latent_size 16 \
+    --inr_layers 4 \
+    --latent_dim 16 \
+    --latent_size 8 \
     --latent_patch_size 2 \
     --dec_mlp_hidden_dim 256 \
     --dec_mlp_n_layers 6 \
-    --pred_hidden_dim 128 \
-    --pred_n_blocks 4 \
+    --pred_hidden_dim 64 \
     --pred_t_embed_dim 128
 
 
 
 
-
+python main.py \
+    --run_name LATENT-UNET-TESTING_v4 \
+    --model latent_inr_diffusion \
+    --dataset mnist \
+    --epochs 40 \
+    --batch_size 128 \
+    --lr 2e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 50 \
+    --subset_frac 0.25 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --latent_encoder_type mlp \
+    --latent_predictor_type mlp \
+    --latent_decoder_type mlp \
+    --inr_hidden_dim 32 \
+    --inr_layers 4 \
+    --latent_dim 16 \
+    --latent_size 8 \
+    --latent_patch_size 2 \
+    --dec_mlp_hidden_dim 256 \
+    --dec_mlp_n_layers 6 \
+    --pred_hidden_dim 64 \
+    --pred_t_embed_dim 128
 """
 
 import warnings

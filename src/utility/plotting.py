@@ -27,6 +27,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from src.configs.general_config import GLOBAL_DEBUG_BOOL
 from src.configs.results_config import MODEL_COLORS, MODEL_LABELS
 from src.configs.train_plot_config import _COLORS, _LABELS
 
@@ -205,8 +206,23 @@ def _model_to_grid(
             samples = pixels.permute(0, 2, 1).reshape(n_samples, channels, img_size, img_size).clamp(0, 1)
 
         elif model_type == "ndm_inr" or model_type == "latent_inr_diffusion":
-            samples = model.sample(n_samples)
-            samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+            if collect_snapshots:
+                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True)
+            else:
+                raw_samples = model.sample(n_samples)
+
+            samples = (raw_samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+
+            if GLOBAL_DEBUG_BOOL:
+                print("################## RAW SAMPLES: ##############################")
+                print(f"Raw samples shape: {raw_samples.shape}")
+                print(f"Raw samples stats: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f},")
+                print(f"Raw samples min={raw_samples.min():.4f}, max={raw_samples.max():.4f}")
+                print(f"Samples shape: {samples.shape}")
+                print(
+                    f"Samples stats: mean={samples.mean():.4f}, std={samples.std():.4f}, min={samples.min():.4f}, max={samples.max():.4f}"
+                )
+                print("###########################################################\n")
 
         elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             if collect_snapshots:
@@ -379,9 +395,7 @@ def plot_sample_progression(
     plt.close(fig)
 
     # ── Plot denoising trajectory if snapshots were collected ─────────────────
-    print(f"\n\nSample progression saved {collect_snapshots and snapshots is not None}\n\n")
     if collect_snapshots and snapshots is not None:
-        print("################### Plotting denoising trajectory progression... ###################")
         plot_denoising_trajectory_progression(
             snapshots=snapshots,
             epoch=epoch,
@@ -516,7 +530,6 @@ def plot_denoising_trajectory_progression(
 
     fig.suptitle("Denoising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
 
-    print(f"\n\nDenoising trajectory progression saved → {os.path.join(run_dir, f'{filename}.png')}\n\n")
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -1509,6 +1522,7 @@ def plot_forward_trajectory_progression(
     device: str,
     data_config: dict,
     filename: str = "forward_trajectory_progression",
+    model_name: str = "",
 ) -> None:
     """
     Appends a row of 5 weight distribution histograms (one per t-value) to the
@@ -1543,35 +1557,55 @@ def plot_forward_trajectory_progression(
     # ── 1. Encode batch to weights ────────────────────────────────────────────
     x = batch[0].to(device)
     model.eval()
-    with torch.no_grad():
-        if hasattr(model, "F_phi"):
-            t_zero = torch.zeros(x.shape[0], 1, device=device)
-            weights = model.F_phi(x, t_zero)
-        elif hasattr(model, "W") and hasattr(model.W, "inflate"):
-            x_spatial = x.view(x.shape[0], channels, img_size, img_size)
-            weights = model.weight_encoder(x_spatial)
-        else:
-            weights = model.weight_encoder(x)
+    if model_name == "latent_inr_diffusion":
+        if x.dim() == 2:
+            channels = x.shape[1] // (model.img_size * model.img_size)
+            x = x.view(x.shape[0], channels, model.img_size, model.img_size)
+        # encode latents
+        z = model.latent_encoder(x)
+        z = model._normalize_z(z)
 
-        if model.normalize:
-            print("\n####################################")
-            print("##########Applying Scaler Normalization##########")
-            print("####################################")
-            weights = model.scaler(weights, reverse=False, training=False)
-            print("weights stats after scaler:", weights.mean(), weights.std())
-
-        # ── 2. Apply forward noising at each t-value ──────────────────────────
         new_row_data = []
         for t in T_values_sorted:
             if t == 0:
                 # t=0 is the raw weight vector, no noise added
-                theta_t = weights
+                theta_t = z
             else:
                 alpha_t = model.sqrt_alpha_cumprod[t]
                 sigma_t = model.sigma[t]
-                epsilon = torch.randn_like(weights)
-                theta_t = alpha_t * weights + sigma_t * epsilon
+                epsilon = torch.randn_like(z)
+                theta_t = alpha_t * z + sigma_t * epsilon
             new_row_data.append(theta_t.detach().cpu().numpy().flatten())
+    else:
+        with torch.no_grad():
+            if hasattr(model, "F_phi"):
+                t_zero = torch.zeros(x.shape[0], 1, device=device)
+                weights = model.F_phi(x, t_zero)
+            elif hasattr(model, "W") and hasattr(model.W, "inflate"):
+                x_spatial = x.view(x.shape[0], channels, img_size, img_size)
+                weights = model.weight_encoder(x_spatial)
+            else:
+                weights = model.weight_encoder(x)
+
+            if model.normalize:
+                print("\n####################################")
+                print("##########Applying Scaler Normalization##########")
+                print("####################################")
+                weights = model.scaler(weights, reverse=False, training=False)
+                print("weights stats after scaler:", weights.mean(), weights.std())
+
+            # ── 2. Apply forward noising at each t-value ──────────────────────────
+            new_row_data = []
+            for t in T_values_sorted:
+                if t == 0:
+                    # t=0 is the raw weight vector, no noise added
+                    theta_t = weights
+                else:
+                    alpha_t = model.sqrt_alpha_cumprod[t]
+                    sigma_t = model.sigma[t]
+                    epsilon = torch.randn_like(weights)
+                    theta_t = alpha_t * weights + sigma_t * epsilon
+                new_row_data.append(theta_t.detach().cpu().numpy().flatten())
 
     model.train()
 

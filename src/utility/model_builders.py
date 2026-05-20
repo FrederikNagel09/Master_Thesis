@@ -15,7 +15,7 @@ import torch.nn as nn  # noqa: I001
 
 from src.models import LatentEncoder
 from src.models.LatentDecoder import MLPInr
-from src.models.LatentNoisePredictor import LatentMLPNoisePredictor, LatentTransformerNoisePredictor
+from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor, LatentUNetNoisePredictor
 from src.models.NDM_INR import (
     INR,
     CNNStaticWeightEncoder,
@@ -1005,7 +1005,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
     from src.models.LatentDecoder import MLPInr
     from src.models.LatentEncoder import LatentEncoder
     from src.models.LatentInrDiffusion import NDMLatentDiffusion
-    from src.models.LatentNoisePredictor import LatentMLPNoisePredictor, LatentTransformerNoisePredictor
+    from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor
     from src.models.trans_inr import TransInr
 
     channels = data_config["channels"]
@@ -1095,13 +1095,11 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
     if decoder_type == "mlp":
         dec_kwargs = {
             "inr": inr_cfg,
-            "n_groups": dec_n_groups,
             "data_shape": (img_size, img_size),
             "latent_dim": latent_dim,
             "latent_size": latent_size_tuple,
             "hidden_dim": getattr(args, "dec_mlp_hidden_dim", 512),
             "n_layers": getattr(args, "dec_mlp_n_layers", 4),
-            "update_strategy": dec_update,
         }
         decoder = MLPInr(**dec_kwargs)
     else:
@@ -1136,11 +1134,10 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
             t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
         )
     else:
-        noise_predictor = LatentMLPNoisePredictor(
+        noise_predictor = LatentUNetNoisePredictor(
             n_patches=n_patches,
             latent_dim=latent_dim,
             hidden_dim=getattr(args, "pred_hidden_dim", 512),
-            n_blocks=getattr(args, "pred_n_blocks", 4),
             t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
         )
 
@@ -1188,14 +1185,11 @@ def _print_decoder_info(decoder: TransInr | MLPInr, kwargs: dict) -> None:  # no
     is_mlp = isinstance(decoder, MLPInr)
     total = sum(p.numel() for p in decoder.parameters())
     inr_params = sum(p.numel() for p in decoder.inr.parameters())  # noqa: F841
-    base_params = sum(p.numel() for p in decoder.base_params.values())
 
     if is_mlp:
         print("############## MLP Latent Decoder ##############")
         trunk_params = sum(p.numel() for p in decoder.trunk.parameters())
-        head_params = sum(p.numel() for p in decoder.param_heads.parameters())
         print(f"MLP params       : {trunk_params:,}")
-        print(f"Modulation params: {head_params:,}")
     else:
         print("############## Transformer Latent Decoder ##############")
         tok_params = sum(p.numel() for p in decoder.tokenizer.parameters())
@@ -1203,12 +1197,10 @@ def _print_decoder_info(decoder: TransInr | MLPInr, kwargs: dict) -> None:  # no
         print(f"tokenizer params : {tok_params:,}")
         print(f"transformer params: {trans_params:,}")
 
-    print(f"SIREN params      : {base_params:,}")
-
     return total
 
 
-def _print_noise_predictor_info(predictor: LatentMLPNoisePredictor | LatentTransformerNoisePredictor, kwargs: dict) -> None:  # noqa: ARG001
+def _print_noise_predictor_info(predictor: LatentUNetNoisePredictor | LatentTransformerNoisePredictor, kwargs: dict) -> None:  # noqa: ARG001
     """
     Prints a summary of noise predictor config and parameter count.
     Args:

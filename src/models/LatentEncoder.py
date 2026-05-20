@@ -41,7 +41,7 @@ class LatentEncoder(nn.Module):
         self.latent_dim = latent_dim
         self.latent_size = latent_size if isinstance(latent_size, tuple) else (latent_size, latent_size)
 
-        hidden_dim = latent_dim * 2
+        hidden_dim = latent_dim * 3
 
         bottleneck_dim = hidden_dim * 4
 

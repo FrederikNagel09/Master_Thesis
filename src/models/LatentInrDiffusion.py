@@ -1,9 +1,59 @@
 from __future__ import annotations
 
+import random
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
+
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
+
+if TYPE_CHECKING:
+    import numpy as np
+
+
+class LatentScaler(nn.Module):
+    def __init__(self, latent_dim: int, momentum: float = 0.1):
+        """
+        EMA-based normalizer for latent feature maps.
+        Args:
+            latent_dim: channel depth of latent (C)
+            momentum:   EMA update rate
+        Returns: None
+        """
+        super().__init__()
+        self.momentum = momentum
+        # Shape (1, C, 1, 1) for broadcasting over (B, C, H', W')
+        self.register_buffer("running_mean", torch.zeros(1, latent_dim, 1, 1))
+        self.register_buffer("running_std", torch.ones(1, latent_dim, 1, 1))
+
+    def forward(self, z: torch.Tensor, reverse: bool = False, training: bool = True) -> torch.Tensor:
+        """
+        Normalize or denormalize a latent feature map.
+        Args:
+            z:        (B, latent_dim, H', W')
+            reverse:  False = normalize to N(0,1), True = denormalize
+            training: if True, updates EMA stats (only relevant when reverse=False)
+        Returns:
+            z_scaled: (B, latent_dim, H', W')
+        """
+        if not reverse:
+            if training:
+                # Per-channel stats, reducing over B, H', W'
+                batch_mean = z.mean(dim=(0, 2, 3), keepdim=True)  # (1, C, 1, 1)
+                batch_std = z.std(dim=(0, 2, 3), keepdim=True).clamp(min=1e-6)
+
+                with torch.no_grad():
+                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean
+                    self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
+
+                return (z - batch_mean) / batch_std
+            else:
+                return (z - self.running_mean) / self.running_std
+        else:
+            return z * self.running_std + self.running_mean
 
 
 class NDMLatentDiffusion(nn.Module):
@@ -59,6 +109,9 @@ class NDMLatentDiffusion(nn.Module):
         self.beta_T = beta_T
         self.T = T
 
+        self.i = 0
+        self.latent_scaler = LatentScaler(latent_dim)
+
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
@@ -71,6 +124,10 @@ class NDMLatentDiffusion(nn.Module):
         self.register_buffer("sigma_sq", 1.0 - alpha_cumprod)
         self.register_buffer("sigma", (1.0 - alpha_cumprod).sqrt())
         self.register_buffer("coord_grid", coord_grid, persistent=False)
+
+        self.register_buffer("latent_mean", torch.zeros(1, latent_dim, 1, 1))
+        self.register_buffer("latent_std", torch.ones(1, latent_dim, 1, 1))
+        self._latent_stats_set = False
 
     # -------------------------------------------------------------------------
     # Public interface
@@ -87,17 +144,37 @@ class NDMLatentDiffusion(nn.Module):
         return self._negative_elbo(x)
 
     @torch.no_grad()
-    def sample(self, n_samples: int = 1) -> torch.Tensor:
+    def sample(self, n_samples: int = 1, collect_snapshots: bool = False) -> torch.Tensor:
         """
         Generate images by reverse diffusion in latent space.
 
         Args:
             n_samples: number of images to generate
+            collect_snapshots: whether to collect snapshots during sampling
         Returns:
             images: (n_samples, data_dim)
         """
-        z = self._sample_latent(n_samples)  # (B, latent_dim, H', W')
-        return self._decode_latent(z)  # (B, data_dim)
+        # Sample latents:
+        if collect_snapshots:
+            z, snapshots = self._sample_latent(n_samples, collect_snapshots=True)
+            z_denorm = self._denormalize_z(z)
+            return self._decode_latent(z_denorm), snapshots
+        else:
+            z = self._sample_latent(n_samples, collect_snapshots=collect_snapshots)  # (B, latent_dim, H', W')
+            z_denorm = self._denormalize_z(z)
+            return self._decode_latent(z_denorm)  # (B, data_dim)
+
+    # -------------------------------------------------------------------------
+    # Normalization stuff
+    # -------------------------------------------------------------------------
+
+    def _normalize_z(self, z: torch.Tensor) -> torch.Tensor:
+        """Standardize latents to approx N(0, I). Args: z (B, C, H', W'). Returns: same shape."""
+        return self.latent_scaler(z, reverse=False, training=self.training)
+
+    def _denormalize_z(self, z: torch.Tensor) -> torch.Tensor:
+        """Invert _normalize_z. Args: z (B, C, H', W'). Returns: same shape."""
+        return self.latent_scaler(z, reverse=True)
 
     # -------------------------------------------------------------------------
     # ELBO
@@ -119,18 +196,79 @@ class NDMLatentDiffusion(nn.Module):
             x = x.view(B, channels, self.img_size, self.img_size)
 
         z = self.latent_encoder(x)  # (B, latent_dim, H', W')
+        z_norm = self._normalize_z(z)
 
         t_idx = torch.randint(0, self.T, (B,), device=x.device)
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         # Detach only for the diffusion path — l_rec needs gradients through z
-        z_t, epsilon = self._forward_process(z, t_idx)
+        z_t, epsilon = self._forward_process(z_norm.detach(), t_idx)
 
         l_diff = self._l_diff(z_t, t_norm, epsilon)
-        l_prior = self._l_prior(z)  # analytical, no encoder gradient needed
-        l_rec = self._l_rec(x, z)  # z kept attached — trains encoder
+        l_prior = self._l_prior(z_norm)
+        l_rec = self._l_rec(x, z)
 
-        total = (self.T - 2) * l_diff + l_prior + l_rec
+        total = l_diff + l_prior + l_rec
+
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("############# Negative ELBO: #################")
+            print("z shape:", z.shape)
+            print("z.min():", z_norm.min(), "\nz.max():", z_norm.max(), "\nz.mean():", z_norm.mean(), "\nz.std():", z_norm.std())
+            print("z_t shape:", z_t.shape)
+            print("z_t.min():", z_t.min(), "\nz_t.max():", z_t.max(), "\nz_t.mean():", z_t.mean(), "\nz_t.std():", z_t.std())
+            print("epsilon shape:", epsilon.shape)
+            print(
+                "epsilon.min():",
+                epsilon.min(),
+                "\nepsilon.max():",
+                epsilon.max(),
+                "\nepsilon.mean():",
+                epsilon.mean(),
+                "\nepsilon.std():",
+                epsilon.std(),
+            )
+            print("###############################################\n")
+
+            # Prints forwars process statistics for the first batch only, at specific time steps
+            if self.i == 0:
+                print("\n######### Forward Process Statistics: #########")
+                # 1. Define the steps we want to see
+                t_steps = [
+                    self.T - 1,
+                    self.T * 0.9,
+                    self.T * 0.8,
+                    self.T * 0.7,
+                    self.T * 0.6,
+                    self.T * 0.5,
+                    self.T * 0.4,
+                    self.T * 0.3,
+                    self.T * 0.2,
+                    self.T * 0.1,
+                    0,
+                ]
+
+                # 2. Convert to a long tensor on the correct device
+                t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=z.device)
+
+                for t in t_idx_debug:
+                    # Use .item() for the index but keep the tensor for schedule lookup
+                    idx = t.item()
+
+                    # 3. Retrieve schedule parameters for this specific step
+                    # We use [idx] to get the scalar, then unsqueeze to handle broadcasting
+                    alpha_t = self.sqrt_alpha_cumprod[idx]
+                    sigma_t = self.sigma[idx]
+
+                    # 4. Generate the noisy sample (Forward Process)
+                    epsilon_t = torch.randn_like(z_norm)
+                    # Note: z is (Batch, Dim), alpha_t is scalar
+                    z_t = alpha_t * z_norm + sigma_t * epsilon_t
+
+                    print(f"t={idx:3d}/{self.T}: mean={z_t.mean():.4f}, std={z_t.std():.4f}")
+
+                print("###############################################\n")
+                self.i += 1
+
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
@@ -152,16 +290,46 @@ class NDMLatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample loss
         """
-        H, W = self.latent_size  # noqa: N806
-        # (B, latent_dim, H', W') → (B, n_patches, latent_dim)
-        z_t_tokens = z_t.permute(0, 2, 3, 1).reshape(z_t.shape[0], H * W, self.latent_dim)
+        B, C, H, W = z_t.shape  # noqa: N806
 
-        eps_hat_tokens = self.noise_predictor(z_t_tokens, t_norm)  # (B, H'*W', latent_dim)
+        # 1. Convert z_t to the 3D token layout the predictor's front door demands: (B, H*W, C)
+        z_t_tokens = z_t.permute(0, 2, 3, 1).reshape(B, H * W, C)
 
-        # (B, H'*W', latent_dim) → (B, latent_dim, H', W')
-        eps_hat = eps_hat_tokens.reshape(z_t.shape[0], H, W, self.latent_dim).permute(0, 3, 1, 2)
+        # 2. Get the token prediction from the model
+        eps_hat_tokens = self.noise_predictor(z_t_tokens, t_norm)  # (B, H*W, C)
 
-        return F.mse_loss(eps_hat, epsilon, reduction="none").sum(dim=(-3, -2, -1))
+        # 3. Bring it back to spatial format to compute spatial loss
+        eps_hat = eps_hat_tokens.reshape(B, H, W, C).permute(0, 3, 1, 2)
+
+        # Debug logs updated to match the spatial reality
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("############# Diffusion Loss: #################")
+            print("epsilon shape:", epsilon.shape)
+            print(
+                "epsilon.min():",
+                epsilon.min(),
+                "\nepsilon.max():",
+                epsilon.max(),
+                "\nepsilon.mean():",
+                epsilon.mean(),
+                "\nepsilon.std():",
+                epsilon.std(),
+            )
+            print("eps_hat shape:", eps_hat.shape)
+            print(
+                "eps_hat.min():",
+                eps_hat.min(),
+                "\neps_hat.max():",
+                eps_hat.max(),
+                "\neps_hat.mean():",
+                eps_hat.mean(),
+                "\neps_hat.std():",
+                eps_hat.std(),
+            )
+            print("###############################################\n")
+
+        # 2. Compute MSE over the channel, height, and width dimensions
+        return F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=(-3, -2, -1))
 
     def _l_prior(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -192,8 +360,29 @@ class NDMLatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample MSE
         """
-        x_hat = self._decode_latent(z)  # (B, data_dim)
+        x_hat = self.decoder(z, self.coord_grid)
+        x_hat = x_hat.reshape(x_hat.shape[0], -1)
         x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
+
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("############# Reconstruction Loss: #################")
+            print("x_flat shape:", x_flat.shape)
+            print(
+                "x_flat.min():",
+                x_flat.min(),
+                "\nx_flat.max():",
+                x_flat.max(),
+                "\nx_flat.mean():",
+                x_flat.mean(),
+                "\nx_flat.std():",
+                x_flat.std(),
+            )
+            print("x_hat shape:", x_hat.shape)
+            print(
+                "x_hat.min():", x_hat.min(), "\nx_hat.max():", x_hat.max(), "\nx_hat.mean():", x_hat.mean(), "\nx_hat.std():", x_hat.std()
+            )
+            print("###############################################\n")
+
         return 0.5 * ((x_flat - x_hat) ** 2).sum(dim=-1)
 
     # -------------------------------------------------------------------------
@@ -226,50 +415,68 @@ class NDMLatentDiffusion(nn.Module):
     # Sampling helpers
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def _sample_latent(self, n_samples: int) -> torch.Tensor:
+    def _sample_latent(self, n_samples: int, collect_snapshots: bool = False) -> torch.Tensor:
         """
         Reverse diffusion in latent space (DDPM, ε-prediction).
 
         Args:
             n_samples: number of samples
+            collect_snapshots: whether to collect snapshots at specific timesteps for debugging
         Returns:
             z: (n_samples, latent_dim, H', W')
         """
         device = self.sqrt_alpha_cumprod.device
         H, W = self.latent_size  # noqa: N806
         z = torch.randn(n_samples, self.latent_dim, H, W, device=device)
+        T_values = {self.T - 1, 3 * self.T // 4, self.T // 2, self.T // 4, 0}  # noqa: N806
+        snapshots: dict[int, np.ndarray] = {}
 
         for t in tqdm(range(self.T - 1, -1, -1), desc="Sampling", total=self.T):
             t_norm = torch.full((n_samples,), t / (self.T - 1), device=device).unsqueeze(-1)
 
-            # (B, latent_dim, H', W') → (B, H'*W', latent_dim)
+            # 1. Format to token space for predictor interface: (B, H*W, C)
             z_tokens = z.permute(0, 2, 3, 1).reshape(n_samples, H * W, self.latent_dim)
+
+            # 2. Predict noise tokens
             eps_hat_tokens = self.noise_predictor(z_tokens, t_norm)
-            # (B, H'*W', latent_dim) → (B, latent_dim, H', W')
+
+            # 3. Format back to spatial for DDPM updates: (B, C, H, W)
             eps_hat = eps_hat_tokens.reshape(n_samples, H, W, self.latent_dim).permute(0, 3, 1, 2)
 
-            alpha_bar = self.alpha_cumprod[t]
+            alpha_t = self.alpha[t]
+            alpha_bar_t = self.alpha_cumprod[t]
             beta_t = self.beta[t]
 
-            # Recover clean latent estimate from ε-prediction
-            sqrt_recip_abar = (1.0 / alpha_bar).sqrt()
-            sqrt_recip_abar_m1 = (1.0 / alpha_bar - 1.0).sqrt()
-            z0_hat = sqrt_recip_abar * z - sqrt_recip_abar_m1 * eps_hat
+            # Standard DDPM formulation for the posterior mean
+            coeff1 = 1.0 / torch.sqrt(alpha_t)
+            coeff2 = (1.0 - alpha_t) / torch.sqrt(1.0 - alpha_bar_t)
+
+            mean = coeff1 * (z - coeff2 * eps_hat)
 
             if t > 0:
-                alpha_bar_prev = self.alpha_cumprod[t - 1]
-                alpha_t = self.alpha[t]
-
-                coeff_z0 = torch.sqrt(alpha_bar_prev) * beta_t / (1.0 - alpha_bar)
-                coeff_zt = torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
-                mean = coeff_z0 * z0_hat + coeff_zt * z
-
-                sigma = torch.sqrt(beta_t * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
+                # Standard simplified variance
+                sigma = torch.sqrt(beta_t)
                 z = mean + sigma * torch.randn_like(z)
             else:
-                z = z0_hat
+                z = mean
 
-        return z  # (n_samples, latent_dim, H', W')
+            if collect_snapshots and t in T_values:
+                snapshots[t] = z.detach().cpu().numpy().flatten()
+
+            # Print statistics every 100 steps for debugging
+            if (t % 100 == 0 and GLOBAL_DEBUG_BOOL) or (t == 0 and GLOBAL_DEBUG_BOOL):
+                print("################## Sampling: ##############################")
+                print(f"Sampling step {t}/{self.T}:")
+                print(
+                    f"predicted noise (eps_hat) stats: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}",
+                    f"min={eps_hat.min():.4f}, max={eps_hat.max():.4f}",
+                )
+                print(f"z stats: mean={z.mean():.4f}, std={z.std():.4f}", f"min={z.min():.4f}, max={z.max():.4f}")
+                print("###########################################################\n")
+
+        if collect_snapshots:
+            return z, snapshots
+        return z
 
     @torch.no_grad()
     def _decode_latent(self, z: torch.Tensor) -> torch.Tensor:

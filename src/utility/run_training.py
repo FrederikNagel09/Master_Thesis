@@ -22,7 +22,6 @@ Directory layout produced per run
 
 import argparse
 import os
-import random
 import sys
 from datetime import datetime
 
@@ -31,7 +30,6 @@ import torch.nn as nn
 
 sys.path.append(".")
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 from src.utility.dataset_builders import build_dataset
 from src.utility.general import (
     _get_device,
@@ -152,13 +150,6 @@ def run_training(
     )
     print(f"  Batches per epoch : {len(data_loader)}")
 
-    # Check dataset stats for sanity and for building model
-    if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-        print("==================== DEBUG: run_training.py ====================")
-        print(f"  Dataset samples shape : {dataset[0][0].shape}")
-        print(f"  Dataset samples range : [{dataset[0][0].min().item():.4f}, {dataset[0][0].max().item():.4f}]")
-        print("================================================================")
-
     # ── 2. Model ──────────────────────────────────────────────────────────────
     print("\n[ 2 / 4 ]  Building model …")
     model = build_model(args, data_config).to(device)
@@ -180,14 +171,11 @@ def run_training(
         start_epoch = _load_checkpoint(resume_path, model, optimizer)
     else:
         print("  Training from scratch.")
-    print("Training using optimizer:", type(optimizer).__name__)
-    print(f"  Initial LR: {optimizer.param_groups[0]['lr']:.2e}")
 
     # Determine sample filename for this run segment
     end_epoch = start_epoch + args.epochs
 
     progression_filename = f"sample_progression_ep{start_epoch + 1}-{end_epoch}"
-    print("\n\n ", args.model, "\n\n")
 
     def _sample_fn(model, step, device, batch=None):
         epoch = step // len(data_loader)
@@ -207,7 +195,6 @@ def run_training(
                     model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
                 )
             elif args.model == "latent_inr_diffusion":
-                print("\n\nPlotting latent INR recon progression...\n\n")
                 plot_reconstruction_progression(
                     model,
                     batch,
@@ -216,6 +203,16 @@ def run_training(
                     device,
                     data_config,
                     filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                )
+                plot_forward_trajectory_progression(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    data_config=data_config,
+                    filename=f"Forward_noising_progression_ep{start_epoch + 1}-{end_epoch}",
                     model_name=args.model,
                 )
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "ndm_static_transinr"):
@@ -250,9 +247,6 @@ def run_training(
                     filename=f"weight_profile_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
                 # does three weight vector distributions:
-                # 1) Noised_T so the weight vector distribution of the raw weight vector at time T
-                # 2) Normalized so the weight vector distribution of the normalized weight vector
-                # 3) Distribution of raw weight vector from the weight encoder
                 plot_weight_distribution_progression(
                     model=model,
                     batch=batch,
