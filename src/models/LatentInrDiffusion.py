@@ -306,7 +306,7 @@ class NDMLatentDiffusion(nn.Module):
         # 2. Compute MSE over the channel, height, and width dimensions
         mse = F.mse_loss(eps_hat, epsilon, reduction="none")  # (B, C, H', W')
 
-        l_diff_loss = mse.mean(dim=(-3, -2, -1))  # Sum over C, H', W' to get (B,)
+        l_diff_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H', W' to get (B,)
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:

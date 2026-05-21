@@ -114,27 +114,90 @@ class LatentUNetNoisePredictor(nn.Module):
         return out_spatial
 
 
+def get_2d_sincos_pos_embed(embed_dim, grid_size):
+    """
+    Creates a standard static 2D Sin-Cos positional embedding.
+    grid_size: int or tuple (H, W)
+    """
+    if isinstance(grid_size, int):
+        grid_size = (grid_size, grid_size)
+
+    # Crucial Fix: Split the total embed_dim across the 2 axes (X and Y)
+    # so that their concatenation equals the total embed_dim.
+    assert embed_dim % 2 == 0, "embed_dim must be divisible by 2"
+    axis_dim = embed_dim // 2
+
+    grid_h = torch.arange(grid_size[0], dtype=torch.float32)
+    grid_w = torch.arange(grid_size[1], dtype=torch.float32)
+    grid = torch.stack(torch.meshgrid(grid_w, grid_h, indexing="ij"), dim=0)
+    grid = grid.reshape(2, 1, grid_size[0], grid_size[1])
+
+    # Pass axis_dim instead of full embed_dim
+    pos_embed = get_1d_sincos_pos_embed_from_grid(axis_dim, grid)
+    return torch.from_numpy(pos_embed).float().unsqueeze(0)  # Now perfectly outputs (1, H*W, embed_dim)
+
+
+def get_1d_sincos_pos_embed_from_grid(embed_dim, grid):
+    import numpy as np
+
+    assert embed_dim % 2 == 0
+    omega = np.arange(embed_dim // 2, dtype=np.float64)
+    omega /= embed_dim / 2.0
+    omega = 1.0 / (10000**omega)
+
+    grid = grid.numpy()
+    out = []
+    for g in grid:
+        out_sin = np.sin(np.outer(g, omega))
+        out_cos = np.cos(np.outer(g, omega))
+        out.append(np.concatenate([out_sin, out_cos], axis=1))
+    return np.concatenate(out, axis=1)
+
+
+class DiTBlock(nn.Module):
+    """Transformer block that uses Adaptive Layer Norm (adaLN) for time conditioning."""
+
+    def __init__(self, d_model, n_heads, d_ff, dropout, t_dim):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model, elementwise_affine=False)
+        self.attn = nn.MultiheadAttention(d_model, num_heads=n_heads, batch_first=True, dropout=dropout)
+
+        self.norm2 = nn.LayerNorm(d_model, elementwise_affine=False)
+        self.mlp = nn.Sequential(nn.Linear(d_model, d_ff), nn.GELU(), nn.Linear(d_ff, d_model))
+
+        # AdaLN parameter projection: splits into scale (gamma) and shift (beta) multipliers
+        # We need 2 sets of scale/shift parameters (one for attention, one for MLP)
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(t_dim, 4 * d_model))
+
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        # Generate scale and shift modulations from time embedding
+        mods = self.adaLN_modulation(t_emb).unsqueeze(1)  # (B, 1, 4*d_model)
+        shift_msa, scale_msa, shift_mlp, scale_mlp = mods.chunk(4, dim=-1)
+
+        # 1. Attention Block with adaLN
+        h = self.norm1(x)
+        h = h * (1 + scale_msa) + shift_msa
+        h_attn, _ = self.attn(h, h, h)
+        x = x + h_attn
+
+        # 2. MLP Feedforward with adaLN
+        h = self.norm2(x)
+        h = h * (1 + scale_mlp) + shift_mlp
+        x = x + self.mlp(h)
+        return x
+
+
 class LatentTransformerNoisePredictor(nn.Module):
     """
-    Transformer noise predictor for latent token sequences.
+    Optimized Diffusion Transformer (DiT) Noise Predictor for Latent Tokens.
 
-    Operates natively on (B, n_patches, D) — no chunking needed.
-    Time is injected as a prepended token, dropped at readout.
-
-    Args:
-        n_patches   : number of latent spatial tokens
-        latent_dim  : token feature dimension D
-        d_model     : transformer internal dimension
-        n_heads     : number of attention heads
-        n_layers    : number of transformer encoder layers
-        d_ff        : feedforward dimension
-        dropout     : dropout rate
-        t_embed_dim : sinusoidal time embedding dimension
+    Replaces time-token prepending with Adaptive Layer Norm (adaLN) modulation
+    and utilizes explicit 2D spatial sin-cos positional embeddings.
     """
 
     def __init__(
         self,
-        n_patches: int,
+        latent_size: tuple[int, int],  # Pass explicit tuple (H', W'), e.g., (4, 4)
         latent_dim: int,
         d_model: int = 256,
         n_heads: int = 8,
@@ -144,9 +207,9 @@ class LatentTransformerNoisePredictor(nn.Module):
         t_embed_dim: int = 128,
     ):
         super().__init__()
-        self.n_patches = n_patches
+        self.latent_size = latent_size if isinstance(latent_size, tuple) else (latent_size, latent_size)
+        self.n_patches = self.latent_size[0] * self.latent_size[1]
         self.latent_dim = latent_dim
-        self.d_model = d_model
 
         # --- Time embedding ---
         self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
@@ -156,28 +219,22 @@ class LatentTransformerNoisePredictor(nn.Module):
             nn.Linear(d_model, d_model),
         )
 
-        # --- Per-token input projection: latent_dim → d_model ---
+        # --- Input Projection ---
         self.token_embed = nn.Linear(latent_dim, d_model)
 
-        # --- Positional embedding: n_patches + 1 time token ---
-        self.pos_embed = nn.Parameter(torch.zeros(1, n_patches + 1, d_model))
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        # --- Fixed Static 2D Positional Embeddings ---
+        # No longer needs +1 padding for a time token
+        pos_embed = get_2d_sincos_pos_embed(d_model, self.latent_size)
+        self.register_buffer("pos_embed", pos_embed, persistent=False)
 
-        # --- Transformer encoder ---
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=n_heads,
-            dim_feedforward=d_ff,
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        # --- Transformer Block Stack (DiT Layers) ---
+        self.blocks = nn.ModuleList([DiTBlock(d_model, n_heads, d_ff, dropout, t_dim=d_model) for _ in range(n_layers)])
 
-        # --- Readout: d_model → latent_dim per token ---
+        # --- Readout Projection ---
         self.final_norm = nn.LayerNorm(d_model)
         self.token_readout = nn.Linear(d_model, latent_dim)
+
+        # Zero-initialize output layers (Crucial DiT trick: helps start diffusion training as an identity mapping)
         nn.init.zeros_(self.token_readout.weight)
         nn.init.zeros_(self.token_readout.bias)
 
@@ -185,29 +242,26 @@ class LatentTransformerNoisePredictor(nn.Module):
         """
         Args:
             z: (B, C, H, W) noisy latent
-            t: (B, 1) normalised time in [0, 1]
-        Returns:
-            eps_hat: (B, C, H, W) predicted noise
+            t: (B, 1) normalized time sequence
         """
         B, C, H, W = z.shape  # noqa: N806
 
-        # Spatial → tokens
-        x = z.permute(0, 2, 3, 1).reshape(B, H * W, C)  # (B, N, C)
+        # Convert Spatial Layout to Sequence Matrix -> (B, N, C)
+        x = z.permute(0, 2, 3, 1).reshape(B, H * W, C)
 
-        # Project tokens to d_model
-        x = self.token_embed(x)
+        # Project features and add fixed geographic spatial coordinates
+        x = self.token_embed(x) + self.pos_embed
 
-        # Time token
-        t_emb = self.time_embed(t)
-        t_tok = self.time_proj(t_emb).unsqueeze(1)
-        x = torch.cat([t_tok, x], dim=1)
-        x = x + self.pos_embed
+        # Compute global continuous time vectors
+        t_emb = self.time_proj(self.time_embed(t))  # (B, d_model)
 
-        x = self.transformer(x)
+        # Pass through the specialized adaLN transformer blocks
+        for block in self.blocks:
+            x = block(x, t_emb)
 
-        x = x[:, 1:, :]
+        # Final mapping reconstruction
         x = self.final_norm(x)
         x = self.token_readout(x)  # (B, N, C)
 
-        # Tokens → spatial
-        return x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+        # Transform Sequence Matrix back to Spatial Layout
+        return x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()

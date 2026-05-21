@@ -142,15 +142,6 @@ class TransInr(nn.Module):
         self.wtokens = nn.Parameter(torch.randn(n_wtokens, dim))
         self.update_strategy = update_strategies[update_strategy]
 
-        # ----- parameter count --------------------------------------------
-        nparams = (
-            sum(p.numel() for p in self.transformer.parameters())
-            + sum(p.numel() for p in self.tokenizer.parameters())
-            + sum(p.numel() for p in self.base_params.values())
-            + self.wtokens.numel()
-        )
-        print(f"TransInr — total hypernetwork parameters: {nparams / 1e6:.3f}M")
-
     # -----------------------------------------------------------------------
 
     def forward(self, data, coord=None, **kwargs):

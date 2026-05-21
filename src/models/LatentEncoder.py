@@ -98,3 +98,93 @@ class LatentEncoder(nn.Module):
             z = tokens.transpose(1, 2).reshape(B, C, H, W)
 
         return z
+
+
+class ResNetBasicBlock(nn.Module):
+    """Standard ResNet Basic Block with two 3x3 convolutions and a residual shortcut."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False), nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = self.relu(out)
+        return out
+
+
+class ResNetLatentEncoder(nn.Module):
+    """
+    Encodes an image to a latent feature map using a scalable ResNet-18 backbone.
+
+    Replaces static interpolation with a learnable ConvTranspose2d layer to map
+    directly to the requested latent dimensions.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        latent_dim: int,
+        latent_size: tuple[int, int],
+        hidden_dim: int = 64,
+    ):
+        super().__init__()
+        self.latent_size = latent_size if isinstance(latent_size, tuple) else (latent_size, latent_size)
+
+        ch1 = hidden_dim  # default: 64
+        ch2 = hidden_dim * 2  # default: 128
+        ch3 = hidden_dim * 4  # default: 256
+        ch4 = hidden_dim * 8  # default: 512
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_channels, ch1, kernel_size=3, stride=1, padding=1, bias=False), nn.BatchNorm2d(ch1), nn.ReLU(inplace=True)
+        )
+
+        self.layer1 = self._make_stage(ch1, ch1, num_blocks=2, stride=1)
+        self.layer2 = self._make_stage(ch1, ch2, num_blocks=2, stride=2)
+        self.layer3 = self._make_stage(ch2, ch3, num_blocks=2, stride=2)
+        self.layer4 = self._make_stage(ch3, ch4, num_blocks=2, stride=2)
+
+        self.learnable_upsample = nn.ConvTranspose2d(in_channels=ch4, out_channels=latent_dim, kernel_size=4, stride=2, padding=1)
+
+    def _make_stage(self, in_channels: int, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for s in strides:
+            layers.append(ResNetBasicBlock(in_channels, out_channels, s))
+            in_channels = out_channels
+        return nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, in_channels, H, W) — Input image batch
+        Returns:
+            z: (B, latent_dim, H', W') — Matches LatentTokenizer contract
+        """
+        # Feature extraction
+        out = self.stem(x)
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+
+        # Learnable spatial upscaling + channel projection step
+        z = self.learnable_upsample(out)
+
+        if z.shape[-2:] != self.latent_size:
+            z = nn.functional.interpolate(z, size=self.latent_size, mode="bilinear", align_corners=False)
+
+        return z

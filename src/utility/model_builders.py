@@ -13,9 +13,8 @@ Supported model names (args.model):
 
 import torch.nn as nn  # noqa: I001
 
-from src.models import LatentEncoder
-from src.models.LatentDecoder import MLPInr
-from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor, LatentUNetNoisePredictor
+from src.models.LatentEncoder import ResNetLatentEncoder
+from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor
 from src.models.NDM_INR import (
     INR,
     CNNStaticWeightEncoder,
@@ -1002,8 +1001,6 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
     Encoder variant  : controlled by args.latent_encoder_type  ("mlp" | "transformer")
     Predictor variant: controlled by args.latent_predictor_type ("mlp" | "transformer")
     """
-    from src.models.LatentDecoder import MLPInr
-    from src.models.LatentEncoder import LatentEncoder
     from src.models.LatentInrDiffusion import NDMLatentDiffusion
     from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor
     from src.models.trans_inr import TransInr
@@ -1020,30 +1017,16 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
     patch_size = getattr(args, "latent_patch_size", 2)  # LatentTokenizer patch
 
     latent_size_tuple = (latent_size, latent_size) if isinstance(latent_size, int) else latent_size
-    n_patches = latent_size_tuple[0] * latent_size_tuple[1]
 
     # ── LatentEncoder ─────────────────────────────────────────────────────────
-    encoder_type = getattr(args, "latent_encoder_type", "mlp")  # "mlp" | "transformer"
+    latent_encoder = ResNetLatentEncoder(
+        in_channels=channels,
+        latent_dim=latent_dim,
+        latent_size=latent_size_tuple,
+        hidden_dim=getattr(args, "latent_enc_hidden_dim", 512),
+    )
 
-    encoder_kwargs = {
-        "in_channels": channels,
-        "latent_dim": latent_dim,
-        "latent_size": latent_size_tuple,
-        "hidden_dim": getattr(args, "latent_enc_hidden_dim", 512),
-    }
-    if encoder_type == "transformer":
-        encoder_kwargs.update(
-            transformer_depth=getattr(args, "latent_enc_depth", 4),
-            n_head=getattr(args, "latent_enc_n_head", 4),
-            head_dim=getattr(args, "latent_enc_head_dim", 32),
-            ff_dim=getattr(args, "latent_enc_ff_dim", 512),
-            dropout=getattr(args, "dropout", 0.0),
-        )
-    else:
-        encoder_kwargs["transformer_depth"] = 0  # CNN-only
-
-    latent_encoder = LatentEncoder(**encoder_kwargs)
-    encoder_params = _print_latent_encoder_info(latent_encoder, encoder_kwargs)
+    encoder_params = _print_latent_encoder_info(latent_encoder)
 
     # ── TransInr decoder ──────────────────────────────────────────────────────
     dec_dim = getattr(args, "dec_trans_dim", 256)
@@ -1091,58 +1074,31 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
         },
     }
 
-    decoder_type = getattr(args, "latent_decoder_type", "transinr")  # "transinr" | "mlp"
+    decoder = TransInr(
+        tokenizer=tokenizer_cfg,
+        inr=inr_cfg,
+        data_shape=(img_size, img_size),
+        n_groups=dec_n_groups,
+        transformer=transformer_cfg,
+        update_strategy=dec_update,
+    )
 
-    if decoder_type == "mlp":
-        dec_kwargs = {
-            "inr": inr_cfg,
-            "data_shape": (img_size, img_size),
-            "latent_dim": latent_dim,
-            "latent_size": latent_size_tuple,
-            "hidden_dim": getattr(args, "dec_mlp_hidden_dim", 512),
-            "n_layers": getattr(args, "dec_mlp_n_layers", 4),
-        }
-        decoder = MLPInr(**dec_kwargs)
-    else:
-        dec_kwargs = {
-            "tokenizer": tokenizer_cfg,
-            "inr": inr_cfg,
-            "n_groups": dec_n_groups,
-            "data_shape": (img_size, img_size),
-            "transformer": transformer_cfg,
-            "update_strategy": dec_update,
-        }
-        decoder = TransInr(**dec_kwargs)
-
-    decoder_params = _print_decoder_info(decoder, dec_kwargs)
+    decoder_params = _print_decoder_info(decoder)
 
     # ── Noise predictor ───────────────────────────────────────────────────────
-    predictor_type = getattr(args, "latent_predictor_type", "mlp")  # "mlp" | "transformer"
-    predictor_kwargs = {
-        "n_patches": n_patches,
-        "latent_dim": latent_dim,
-        "t_embed_dim": getattr(args, "pred_t_embed_dim", 128),
-    }
-    if predictor_type == "transformer":
-        noise_predictor = LatentTransformerNoisePredictor(
-            n_patches=n_patches,
-            latent_dim=latent_dim,
-            d_model=getattr(args, "pred_d_model", 256),
-            n_heads=getattr(args, "pred_n_heads", 8),
-            n_layers=getattr(args, "pred_n_layers", 4),
-            d_ff=getattr(args, "pred_d_ff", 1024),
-            dropout=getattr(args, "dropout", 0.0),
-            t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
-        )
-    else:
-        noise_predictor = LatentUNetNoisePredictor(
-            n_patches=n_patches,
-            latent_dim=latent_dim,
-            hidden_dim=getattr(args, "pred_hidden_dim", 512),
-            t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
-        )
 
-    noise_params = _print_noise_predictor_info(noise_predictor, predictor_kwargs)
+    noise_predictor = LatentTransformerNoisePredictor(
+        latent_dim=latent_dim,
+        latent_size=latent_size_tuple,
+        d_model=getattr(args, "pred_d_model", 256),
+        n_heads=getattr(args, "pred_n_heads", 8),
+        n_layers=getattr(args, "pred_n_layers", 4),
+        d_ff=getattr(args, "pred_d_ff", 1024),
+        dropout=getattr(args, "dropout", 0.0),
+        t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
+    )
+
+    noise_params = _print_noise_predictor_info(noise_predictor)
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
@@ -1165,79 +1121,105 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
 
     # Final print of total model params (encoder + decoder + predictor)
     total_params = sum(p.numel() for p in model.parameters())
-    print("\n########## Parameter Summary: ##############")
+    print("\n########## Total Parameter Summary: ##############")
     print("Latent Encoder  : ", f"{encoder_params:,}")
     print("Noise Predictor : ", f"{noise_params:,}")
     print("Latent Decoder  : ", f"{decoder_params:,}")
     print("----------------------------------------------")
     print(f"TOTAL PARAMETERS  : {total_params:,}")
-    print("##############################################\n")
+    print("####################################################\n")
 
     return model
 
 
-def _print_decoder_info(decoder: TransInr | MLPInr, kwargs: dict) -> None:  # noqa: ARG001
+def _print_decoder_info(decoder: TransInr) -> int:
     """
-    Prints a summary of decoder config and parameter count.
+    Prints a parameter count summary for a TransInr decoder.
     Args:
-        decoder : instantiated TransInr or MLPInr decoder
-        kwargs  : kwargs dict used to construct it
-    Returns: None
+        decoder : instantiated TransInr decoder
+    Returns:
+        total : total parameter count (int)
     """
-    is_mlp = isinstance(decoder, MLPInr)
+    tok_params = sum(p.numel() for p in decoder.tokenizer.parameters())
+    trans_params = sum(p.numel() for p in decoder.transformer.parameters())
+    base_params = sum(p.numel() for p in decoder.base_params.values())
+    wtoken_params = decoder.wtokens.numel()
+    postfc_params = sum(p.numel() for p in decoder.wtoken_postfc.parameters())
+    inr_params = sum(p.numel() for p in decoder.inr.parameters())
     total = sum(p.numel() for p in decoder.parameters())
-    inr_params = sum(p.numel() for p in decoder.inr.parameters())  # noqa: F841
 
-    if is_mlp:
-        print("############## MLP Latent Decoder ##############")
-        trunk_params = sum(p.numel() for p in decoder.trunk.parameters())
-        fin_proj = sum(p.numel() for p in decoder.param_head.parameters())
-        print(f"MLP params       : {trunk_params:,}")
-        print(f"final proj params: {fin_proj:,}")
-    else:
-        print("############## Transformer Latent Decoder ##############")
-        tok_params = sum(p.numel() for p in decoder.tokenizer.parameters())
-        trans_params = sum(p.numel() for p in decoder.transformer.parameters())
-        print(f"tokenizer params : {tok_params:,}")
-        print(f"transformer params: {trans_params:,}")
+    print("############## Latent Decoder Summary: #############")
+    print(f"Tokenizer           : {tok_params:>12,}")
+    print(f"Transformer         : {trans_params:>12,}")
+    print(f"Base INR params     : {base_params:>12,}")
+    print(f"Weight tokens       : {wtoken_params:>12,}")
+    print(f"Wtoken post-FC      : {postfc_params:>12,}")
+    print(f"SIREN (INR module)  : {inr_params:>12,}")
+    print("--------------------------------------------------------------")
+    print(f"Total               : {total:>12,}")
+    print("--------------------------------------------------------------")
 
     return total
 
 
-def _print_noise_predictor_info(predictor: LatentUNetNoisePredictor | LatentTransformerNoisePredictor, kwargs: dict) -> None:  # noqa: ARG001
+def _print_noise_predictor_info(predictor: LatentTransformerNoisePredictor) -> int:
     """
-    Prints a summary of noise predictor config and parameter count.
+    Prints a parameter count summary for a LatentTransformerNoisePredictor.
     Args:
-        predictor : instantiated MLP or Transformer noise predictor
-        kwargs    : kwargs dict used to construct it
-    Returns: None
+        predictor : instantiated LatentTransformerNoisePredictor
+    Returns:
+        total : total parameter count (int)
     """
+    time_params = sum(p.numel() for p in predictor.time_embed.parameters())
+    time_params += sum(p.numel() for p in predictor.time_proj.parameters())
+    embed_params = sum(p.numel() for p in predictor.token_embed.parameters())
+    blocks_params = sum(p.numel() for p in predictor.blocks.parameters())
+    readout_params = sum(p.numel() for p in predictor.final_norm.parameters())
+    readout_params += sum(p.numel() for p in predictor.token_readout.parameters())
     total = sum(p.numel() for p in predictor.parameters())
-    is_transformer = isinstance(predictor, LatentTransformerNoisePredictor)
-    mode = "Transformer" if is_transformer else "MLP"
 
-    print(f"############## {mode} Latent Noise Predictor ##############")
+    n_layers = len(predictor.blocks)
+    per_block = blocks_params // n_layers if n_layers else 0
 
+    print("#############  Noise Predictor Summary: ############")
+    print(f"Time embedding + proj  : {time_params:>12,}")
+    print(f"Token input projection : {embed_params:>12,}")
+    print(f"DiT blocks ({n_layers} layers)  : {blocks_params:>12,}  (~{per_block:,} / block)")
+    print(f"Readout (norm + proj)  : {readout_params:>12,}")
+    print("-----------------------------------------------------------------------")
+    print(f"Total                  : {total:>12,}")
+    print("")
     return total
 
 
-def _print_latent_encoder_info(encoder: LatentEncoder, encoder_kwargs: dict) -> None:  # noqa: ARG001
+def _print_latent_encoder_info(encoder: ResNetLatentEncoder) -> int:
     """
-    Prints a summary of LatentEncoder config and parameter count.
+    Prints a parameter count summary for a ResNetLatentEncoder.
     Args:
-        encoder      : instantiated LatentEncoder
-        encoder_kwargs: kwargs dict used to construct it
-    Returns: None
+        encoder : instantiated ResNetLatentEncoder
+    Returns:
+        total : total parameter count (int)
     """
+    stem_params = sum(p.numel() for p in encoder.stem.parameters())
+    layer1_params = sum(p.numel() for p in encoder.layer1.parameters())
+    layer2_params = sum(p.numel() for p in encoder.layer2.parameters())
+    layer3_params = sum(p.numel() for p in encoder.layer3.parameters())
+    layer4_params = sum(p.numel() for p in encoder.layer4.parameters())
+    backbone_params = layer1_params + layer2_params + layer3_params + layer4_params
+    upsample_params = sum(p.numel() for p in encoder.learnable_upsample.parameters())
     total = sum(p.numel() for p in encoder.parameters())
-    cnn_params = sum(p.numel() for p in encoder.cnn.parameters())
-    mode = "CNN + Transformer" if encoder.use_transformer else "CNN only"
 
-    print(f"############## {mode} Latent Encoder ##############")
-    print(f"CNN params   : {cnn_params:,}")
-    if encoder.use_transformer:
-        trans_params = sum(p.numel() for p in encoder.transformer.parameters())
-        print(f"trans params : {trans_params:,}")
+    print("############## Latent Encoder Summary: #############")
+    print(f"Stem                   : {stem_params:>12,}")
+    print(f"ResNet backbone        : {backbone_params:>12,}")
+    print(f"  layer1               : {layer1_params:>12,}")
+    print(f"  layer2               : {layer2_params:>12,}")
+    print(f"  layer3               : {layer3_params:>12,}")
+    print(f"  layer4               : {layer4_params:>12,}")
+    print(f"Learnable upsample     : {upsample_params:>12,}")
+    print("-------------------------------------------------------------")
+    print(f"Total                  : {total:>12,}")
+    print("-------------------------------------------------------------")
 
     return total
 
