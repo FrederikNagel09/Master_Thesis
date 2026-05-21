@@ -1029,6 +1029,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
         "in_channels": channels,
         "latent_dim": latent_dim,
         "latent_size": latent_size_tuple,
+        "hidden_dim": getattr(args, "latent_enc_hidden_dim", 512),
     }
     if encoder_type == "transformer":
         encoder_kwargs.update(
@@ -1159,6 +1160,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
         T=args.T,
         data_dim=data_dim,
         img_size=img_size,
+        normalize=args.normalize,
     )
 
     # Final print of total model params (encoder + decoder + predictor)
@@ -1189,7 +1191,9 @@ def _print_decoder_info(decoder: TransInr | MLPInr, kwargs: dict) -> None:  # no
     if is_mlp:
         print("############## MLP Latent Decoder ##############")
         trunk_params = sum(p.numel() for p in decoder.trunk.parameters())
+        fin_proj = sum(p.numel() for p in decoder.param_head.parameters())
         print(f"MLP params       : {trunk_params:,}")
+        print(f"final proj params: {fin_proj:,}")
     else:
         print("############## Transformer Latent Decoder ##############")
         tok_params = sum(p.numel() for p in decoder.tokenizer.parameters())

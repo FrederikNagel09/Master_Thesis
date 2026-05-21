@@ -214,6 +214,7 @@ def run_training(
                     data_config=data_config,
                     filename=f"Forward_noising_progression_ep{start_epoch + 1}-{end_epoch}",
                     model_name=args.model,
+                    normalize=args.normalize,
                 )
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "ndm_static_transinr"):
                 # Just simple reconstruction

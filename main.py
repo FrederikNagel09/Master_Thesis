@@ -229,22 +229,27 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.25 \
+    --subset_frac 0.20 \
+    --normalize True\
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --latent_encoder_type mlp \
-    --latent_predictor_type mlp \
+    --latent_predictor_type transformer \
     --latent_decoder_type mlp \
     --inr_hidden_dim 32 \
     --inr_layers 4 \
-    --latent_dim 16 \
-    --latent_size 8 \
+    --latent_dim 8 \
+    --latent_size 16 \
     --latent_patch_size 2 \
+    --latent_enc_hidden_dim 64\
     --dec_mlp_hidden_dim 256 \
-    --dec_mlp_n_layers 6 \
-    --pred_hidden_dim 64 \
-    --pred_t_embed_dim 128
+    --dec_mlp_n_layers 8 \
+    --pred_d_model 128 \
+    --pred_n_heads 4 \
+    --pred_n_layers 4 \
+    --pred_d_ff 512 \
+    --pred_t_embed_dim 256
 
 
 

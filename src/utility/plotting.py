@@ -311,6 +311,7 @@ def plot_sample_progression(
         data_config:        Dict with "channels", "img_size", "data_dim".
         filename:           Base filename for outputs.
         collect_snapshots:  If True, also plot denoising trajectory histograms.
+        normalize:          If True, normalize the samples before plotting.
     Returns: None
     """
     import json
@@ -1523,6 +1524,7 @@ def plot_forward_trajectory_progression(
     data_config: dict,
     filename: str = "forward_trajectory_progression",
     model_name: str = "",
+    normalize: bool = False,
 ) -> None:
     """
     Appends a row of 5 weight distribution histograms (one per t-value) to the
@@ -1563,7 +1565,8 @@ def plot_forward_trajectory_progression(
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)
         # encode latents
         z = model.latent_encoder(x)
-        z = model._normalize_z(z)
+        if normalize:
+            z = model._normalize_z(z)
 
         new_row_data = []
         for t in T_values_sorted:

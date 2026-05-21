@@ -7,48 +7,34 @@ from torch import nn
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
 
 
-class MPSStableUNetBlock(nn.Module):
-    """An MPS-stable ResNet-style block using LayerNorm and Scale-Shift conditioning."""
-
+class UNetBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, t_embed_dim: int):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        # LayerNorm over channels, height, and width to avoid GroupNorm MPS bugs
-        self.norm1 = nn.LayerNorm(out_channels)
-
-        # Predicts both scale (gamma) and shift (beta) from time embedding
-        self.time_proj = nn.Linear(t_embed_dim, out_channels * 2)
-
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-        self.norm2 = nn.LayerNorm(out_channels)
+        self.norm = nn.LayerNorm(out_channels)
+        self.time_proj = nn.Linear(t_embed_dim, out_channels)
 
-        if in_channels != out_channels:
-            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-        else:
-            self.shortcut = nn.Identity()
+        self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+
+        # ReZero: block starts as identity
+        self.res_scale = nn.Parameter(torch.zeros(1))
+
+        nn.init.zeros_(self.time_proj.weight)
+        nn.init.zeros_(self.time_proj.bias)
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-        # First Conv
-        h = self.conv1(x)
-
-        # LayerNorm expects (B, H, W, C), so we permute temporarily
-        h = h.permute(0, 2, 3, 1)
-        h = self.norm1(h)
-        h = h.permute(0, 3, 1, 2)  # Back to (B, C, H, W)
-        h = F.silu(h)
-
-        # Scale and Shift (AdaLN style) calculation from time embedding
-        t_params = self.time_proj(t_emb).unsqueeze(-1).unsqueeze(-1)  # (B, 2*C, 1, 1)
-        scale, shift = torch.chunk(t_params, 2, dim=1)
-        h = h * (1 + scale) + shift
-
-        # Second Conv
+        h = F.silu(self.conv1(x))
+        h = h + self.time_proj(t_emb).unsqueeze(-1).unsqueeze(-1)
         h = self.conv2(h)
+
+        # Norm before residual add
         h = h.permute(0, 2, 3, 1)
-        h = self.norm2(h)
+        h = self.norm(h)
         h = h.permute(0, 3, 1, 2)
 
-        return F.silu(h + self.shortcut(x))
+        # ReZero keeps this at identity until network learns to use it
+        return self.shortcut(x) + self.res_scale * F.silu(h)
 
 
 class LatentUNetNoisePredictor(nn.Module):
@@ -72,43 +58,37 @@ class LatentUNetNoisePredictor(nn.Module):
 
         # --- Time embedding ---
         self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
-        self.time_mlp = nn.Sequential(nn.Linear(t_embed_dim, t_embed_dim), nn.SiLU())
+        self.time_mlp = nn.Sequential(
+            nn.Linear(t_embed_dim, t_embed_dim * 4),
+            nn.SiLU(),
+            nn.Linear(t_embed_dim * 4, t_embed_dim),
+            nn.SiLU(),
+        )
 
         # --- Input mapping ---
         self.input_conv = nn.Conv2d(latent_dim, hidden_dim, kernel_size=3, padding=1)
 
         # --- UNet blocks ---
-        self.down1 = MPSStableUNetBlock(hidden_dim, hidden_dim, t_embed_dim)
+        self.down1 = UNetBlock(hidden_dim, hidden_dim, t_embed_dim)
         self.pool1 = nn.MaxPool2d(2)  # 8x8 -> 4x4
 
-        self.down2 = MPSStableUNetBlock(hidden_dim, hidden_dim * 2, t_embed_dim)
+        self.down2 = UNetBlock(hidden_dim, hidden_dim * 2, t_embed_dim)
         self.pool2 = nn.MaxPool2d(2)  # 4x4 -> 2x2
 
-        self.mid1 = MPSStableUNetBlock(hidden_dim * 2, hidden_dim * 2, t_embed_dim)
-        self.mid2 = MPSStableUNetBlock(hidden_dim * 2, hidden_dim * 2, t_embed_dim)
+        self.mid1 = UNetBlock(hidden_dim * 2, hidden_dim * 2, t_embed_dim)
+        self.mid2 = UNetBlock(hidden_dim * 2, hidden_dim * 2, t_embed_dim)
 
-        self.up1 = MPSStableUNetBlock(hidden_dim * 4, hidden_dim, t_embed_dim)
-        self.up2 = MPSStableUNetBlock(hidden_dim * 2, hidden_dim, t_embed_dim)
+        self.up1 = UNetBlock(hidden_dim * 4, hidden_dim, t_embed_dim)
+        self.up2 = UNetBlock(hidden_dim * 2, hidden_dim, t_embed_dim)
 
         # --- Output mapping ---
         self.output_conv = nn.Conv2d(hidden_dim, latent_dim, kernel_size=3, padding=1)
 
-        # Zero-init output layer to ensure it outputs a safe distribution at step 0
-        nn.init.zeros_(self.output_conv.weight)
-        nn.init.zeros_(self.output_conv.bias)
-
     def forward(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        B, N, D = z.shape  # noqa: N806
-        H = W = self.spatial_dim  # noqa: N806
-
-        # 1. Sequence to 2D image layout: (B, N, D) -> (B, D, H, W)
-        x = z.transpose(1, 2).view(B, D, H, W)
-
-        # 2. Time embedding
+        # z is already (B, C, H, W)
         t_emb = self.time_mlp(self.time_embed(t))
 
-        # 3. UNet Forward Pass
-        x1 = self.input_conv(x)
+        x1 = self.input_conv(z)
 
         x2 = self.down1(x1, t_emb)
         x3 = self.pool1(x2)
@@ -121,19 +101,17 @@ class LatentUNetNoisePredictor(nn.Module):
         x5 = self.mid2(x5, t_emb)
 
         # Decode with Skip connections
-        x_up1 = F.interpolate(x5, size=(4, 4), mode="nearest")
+        x_up1 = F.interpolate(x5, size=x4.shape[-2:], mode="nearest")
         x_up1 = torch.cat([x_up1, x4], dim=1)
         x6 = self.up1(x_up1, t_emb)
 
-        x_up2 = F.interpolate(x6, size=(8, 8), mode="nearest")
+        x_up2 = F.interpolate(x6, size=x2.shape[-2:], mode="nearest")
         x_up2 = torch.cat([x_up2, x2], dim=1)
         x7 = self.up2(x_up2, t_emb)
 
         out_spatial = self.output_conv(x7)
 
-        # 4. Flatten back to tokens: (B, D, H, W) -> (B, N, D)
-        eps_hat = out_spatial.view(B, D, N).transpose(1, 2)
-        return eps_hat
+        return out_spatial
 
 
 class LatentTransformerNoisePredictor(nn.Module):
@@ -206,24 +184,30 @@ class LatentTransformerNoisePredictor(nn.Module):
     def forward(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            z: (B, n_patches, D) noisy latent tokens
-            t: (B,) normalised time in [0, 1]
+            z: (B, C, H, W) noisy latent
+            t: (B, 1) normalised time in [0, 1]
         Returns:
-            eps_hat: (B, n_patches, D) predicted noise
+            eps_hat: (B, C, H, W) predicted noise
         """
-        # Project tokens to d_model
-        x = self.token_embed(z)  # (B, n_patches, d_model)
+        B, C, H, W = z.shape  # noqa: N806
 
-        # Build and prepend time token
-        t_emb = self.time_embed(t)  # (B, t_embed_dim)
-        t_tok = self.time_proj(t_emb).unsqueeze(1)  # (B, 1, d_model)
-        x = torch.cat([t_tok, x], dim=1)  # (B, n_patches+1, d_model)
+        # Spatial → tokens
+        x = z.permute(0, 2, 3, 1).reshape(B, H * W, C)  # (B, N, C)
+
+        # Project tokens to d_model
+        x = self.token_embed(x)
+
+        # Time token
+        t_emb = self.time_embed(t)
+        t_tok = self.time_proj(t_emb).unsqueeze(1)
+        x = torch.cat([t_tok, x], dim=1)
         x = x + self.pos_embed
 
-        # Transformer
         x = self.transformer(x)
 
-        # Drop time token, project back to latent_dim
-        x = x[:, 1:, :]  # (B, n_patches, d_model)
+        x = x[:, 1:, :]
         x = self.final_norm(x)
-        return self.token_readout(x)  # (B, n_patches, D)
+        x = self.token_readout(x)  # (B, N, C)
+
+        # Tokens → spatial
+        return x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)

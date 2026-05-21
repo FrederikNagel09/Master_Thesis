@@ -34,14 +34,13 @@ class LatentEncoder(nn.Module):
         transformer_depth: int = 0,
         n_head: int = 4,
         head_dim: int = 32,
+        hidden_dim: int = 512,
         ff_dim: int = 512,
         dropout: float = 0.0,
     ):
         super().__init__()
         self.latent_dim = latent_dim
         self.latent_size = latent_size if isinstance(latent_size, tuple) else (latent_size, latent_size)
-
-        hidden_dim = latent_dim * 3
 
         bottleneck_dim = hidden_dim * 4
 

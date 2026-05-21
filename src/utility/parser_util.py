@@ -136,6 +136,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--latent_patch_size", type=int, default=2)
     p.add_argument("--latent_encoder_type", type=str, default="mlp", choices=["mlp", "transformer"])
     p.add_argument("--latent_predictor_type", type=str, default="mlp", choices=["mlp", "transformer"])
+    p.add_argument("--latent_enc_hidden_dim", type=int, default=64)
 
     # LatentEncoder transformer args
     p.add_argument("--latent_enc_depth", type=int, default=4)

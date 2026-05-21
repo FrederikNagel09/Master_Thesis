@@ -93,6 +93,7 @@ class NDMLatentDiffusion(nn.Module):
         T: int = 1000,  # noqa: N803
         data_dim: int = 784,
         img_size: int = 28,
+        normalize: bool = True,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -108,6 +109,7 @@ class NDMLatentDiffusion(nn.Module):
         self.beta_1 = beta_1
         self.beta_T = beta_T
         self.T = T
+        self._normalize = normalize
 
         self.i = 0
         self.latent_scaler = LatentScaler(latent_dim)
@@ -157,12 +159,14 @@ class NDMLatentDiffusion(nn.Module):
         # Sample latents:
         if collect_snapshots:
             z, snapshots = self._sample_latent(n_samples, collect_snapshots=True)
-            z_denorm = self._denormalize_z(z)
-            return self._decode_latent(z_denorm), snapshots
+            if self._normalize:
+                z = self._denormalize_z(z)
+            return self._decode_latent(z), snapshots
         else:
             z = self._sample_latent(n_samples, collect_snapshots=collect_snapshots)  # (B, latent_dim, H', W')
-            z_denorm = self._denormalize_z(z)
-            return self._decode_latent(z_denorm)  # (B, data_dim)
+            if self._normalize:
+                z = self._denormalize_z(z)
+            return self._decode_latent(z)  # (B, data_dim)
 
     # -------------------------------------------------------------------------
     # Normalization stuff
@@ -190,30 +194,35 @@ class NDMLatentDiffusion(nn.Module):
         """
         B = x.shape[0]  # noqa: N806
 
-        # Reshape to (B, C, H, W) if input is flattened (B, data_dim)
         if x.dim() == 2:
             channels = self.data_dim // (self.img_size * self.img_size)
             x = x.view(B, channels, self.img_size, self.img_size)
 
-        z = self.latent_encoder(x)  # (B, latent_dim, H', W')
-        z_norm = self._normalize_z(z)
+        if self._normalize:
+            z_raw = self.latent_encoder(x)
+            z = self._normalize_z(z_raw)
+        else:
+            z_raw = self.latent_encoder(x)
+            z = z_raw
 
         t_idx = torch.randint(0, self.T, (B,), device=x.device)
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
-        # Detach only for the diffusion path — l_rec needs gradients through z
-        z_t, epsilon = self._forward_process(z_norm.detach(), t_idx)
+        z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
         l_diff = self._l_diff(z_t, t_norm, epsilon)
-        l_prior = self._l_prior(z_norm)
-        l_rec = self._l_rec(x, z)
+        l_prior = self._l_prior(z)
+        l_rec = self._l_rec(x, z_raw)
 
         total = l_diff + l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
+            print("data x shape:", x.shape)
+            print("time indices (t_idx):", t_idx.shape, "min/max:", t_idx.min(), t_idx.max())
+            print("normed time (t_norm):", t_norm.shape, "min/max:", t_norm.min(), t_norm.max())
             print("z shape:", z.shape)
-            print("z.min():", z_norm.min(), "\nz.max():", z_norm.max(), "\nz.mean():", z_norm.mean(), "\nz.std():", z_norm.std())
+            print("z.min():", z.min(), "\nz.max():", z.max(), "\nz.mean():", z.mean(), "\nz.std():", z.std())
             print("z_t shape:", z_t.shape)
             print("z_t.min():", z_t.min(), "\nz_t.max():", z_t.max(), "\nz_t.mean():", z_t.mean(), "\nz_t.std():", z_t.std())
             print("epsilon shape:", epsilon.shape)
@@ -230,7 +239,7 @@ class NDMLatentDiffusion(nn.Module):
             print("###############################################\n")
 
             # Prints forwars process statistics for the first batch only, at specific time steps
-            if self.i == 0:
+            if self.i % 100 == 0:
                 print("\n######### Forward Process Statistics: #########")
                 # 1. Define the steps we want to see
                 t_steps = [
@@ -260,9 +269,9 @@ class NDMLatentDiffusion(nn.Module):
                     sigma_t = self.sigma[idx]
 
                     # 4. Generate the noisy sample (Forward Process)
-                    epsilon_t = torch.randn_like(z_norm)
+                    epsilon_t = torch.randn_like(z)
                     # Note: z is (Batch, Dim), alpha_t is scalar
-                    z_t = alpha_t * z_norm + sigma_t * epsilon_t
+                    z_t = alpha_t * z + sigma_t * epsilon_t
 
                     print(f"t={idx:3d}/{self.T}: mean={z_t.mean():.4f}, std={z_t.std():.4f}")
 
@@ -290,16 +299,14 @@ class NDMLatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample loss
         """
-        B, C, H, W = z_t.shape  # noqa: N806
-
-        # 1. Convert z_t to the 3D token layout the predictor's front door demands: (B, H*W, C)
-        z_t_tokens = z_t.permute(0, 2, 3, 1).reshape(B, H * W, C)
 
         # 2. Get the token prediction from the model
-        eps_hat_tokens = self.noise_predictor(z_t_tokens, t_norm)  # (B, H*W, C)
+        eps_hat = self.noise_predictor(z_t, t_norm)  # (B, H*W, C)
 
-        # 3. Bring it back to spatial format to compute spatial loss
-        eps_hat = eps_hat_tokens.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        # 2. Compute MSE over the channel, height, and width dimensions
+        mse = F.mse_loss(eps_hat, epsilon, reduction="none")  # (B, C, H', W')
+
+        l_diff_loss = mse.mean(dim=(-3, -2, -1))  # Sum over C, H', W' to get (B,)
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
@@ -326,10 +333,31 @@ class NDMLatentDiffusion(nn.Module):
                 "\neps_hat.std():",
                 eps_hat.std(),
             )
+            print("MSE shape:", mse.shape)
+            print(
+                "MSE.min():",
+                mse.min(),
+                "\nMSE.max():",
+                mse.max(),
+                "\nMSE.mean():",
+                mse.mean(),
+                "\nMSE.std():",
+                mse.std(),
+            )
+            print("l_diff_loss shape:", l_diff_loss.shape)
+            print(
+                "l_diff_loss.min():",
+                l_diff_loss.min(),
+                "\nl_diff_loss.max():",
+                l_diff_loss.max(),
+                "\nl_diff_loss.mean():",
+                l_diff_loss.mean(),
+                "\nl_diff_loss.std():",
+                l_diff_loss.std(),
+            )
             print("###############################################\n")
 
-        # 2. Compute MSE over the channel, height, and width dimensions
-        return F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=(-3, -2, -1))
+        return l_diff_loss
 
     def _l_prior(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -434,14 +462,8 @@ class NDMLatentDiffusion(nn.Module):
         for t in tqdm(range(self.T - 1, -1, -1), desc="Sampling", total=self.T):
             t_norm = torch.full((n_samples,), t / (self.T - 1), device=device).unsqueeze(-1)
 
-            # 1. Format to token space for predictor interface: (B, H*W, C)
-            z_tokens = z.permute(0, 2, 3, 1).reshape(n_samples, H * W, self.latent_dim)
-
             # 2. Predict noise tokens
-            eps_hat_tokens = self.noise_predictor(z_tokens, t_norm)
-
-            # 3. Format back to spatial for DDPM updates: (B, C, H, W)
-            eps_hat = eps_hat_tokens.reshape(n_samples, H, W, self.latent_dim).permute(0, 3, 1, 2)
+            eps_hat = self.noise_predictor(z, t_norm)
 
             alpha_t = self.alpha[t]
             alpha_bar_t = self.alpha_cumprod[t]
