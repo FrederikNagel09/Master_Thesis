@@ -94,6 +94,7 @@ class NDMLatentDiffusion(nn.Module):
         data_dim: int = 784,
         img_size: int = 28,
         normalize: bool = True,
+        lambda_kl: float = 5e-3,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -113,7 +114,7 @@ class NDMLatentDiffusion(nn.Module):
 
         self.i = 0
         self.latent_scaler = LatentScaler(latent_dim)
-        self.lambda_kl = 1e-3
+        self.lambda_kl = lambda_kl
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
@@ -215,7 +216,7 @@ class NDMLatentDiffusion(nn.Module):
 
         z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
-        l_diff = self._l_diff(z_t, t_norm, t_idx, epsilon)
+        l_diff = self._l_diff(z_t, t_norm, epsilon)
         l_prior = self._l_prior(mu, logvar)
         l_rec = self._l_rec(x, z_raw)
 
@@ -292,7 +293,6 @@ class NDMLatentDiffusion(nn.Module):
         self,
         z_t: torch.Tensor,
         t_norm: torch.Tensor,
-        t_idx: torch.Tensor,
         epsilon: torch.Tensor,
     ) -> torch.Tensor:
         """
@@ -314,11 +314,8 @@ class NDMLatentDiffusion(nn.Module):
 
         unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
-        # Pull weights for the batch: shape (B,)
-        w_t = self.l_diff_weights[t_idx]
-
         # 4. Scale the per-sample loss
-        l_diff_loss = w_t * unscaled_loss  # (B,)
+        l_diff_loss = unscaled_loss  # (B,)
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:

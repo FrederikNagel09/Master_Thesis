@@ -220,23 +220,26 @@ python main.py \
     
 ######### Latent Diffusion Training ############
 python main.py \
-    --run_name LATENT-MLP-MLP-TESTING_v3 \
+    --run_name latent_diffusion_probablistic \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 5 \
+    --epochs 100 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
+    --lambda_kl 5e-3 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.1 \
+    --subset_frac 1.0 \
+    --single_class \
+    --single_class_label 2 5 \
     --normalize True\
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --latent_dim 32 \
+    --latent_dim 28 \
     --latent_size 4 \
     --latent_patch_size 2 \
     --latent_enc_hidden_dim 12\
@@ -248,9 +251,9 @@ python main.py \
     --dec_trans_dim 128 \
     --dec_trans_n_head 8 \
     --dec_trans_head_dim 32 \
-    --dec_trans_ff_dim 1024 \
-    --dec_trans_enc_depth 4 \
-    --dec_trans_dec_depth 4 \
+    --dec_trans_ff_dim 512 \
+    --dec_trans_enc_depth 3 \
+    --dec_trans_dec_depth 3 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale
     

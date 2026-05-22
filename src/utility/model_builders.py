@@ -1117,6 +1117,7 @@ def _build_ndm_latent_diffusion(args, data_config: dict):
         data_dim=data_dim,
         img_size=img_size,
         normalize=args.normalize,
+        lambda_kl=args.lambda_kl,
     )
 
     # Final print of total model params (encoder + decoder + predictor)
