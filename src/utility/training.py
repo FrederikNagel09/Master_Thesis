@@ -173,6 +173,9 @@ def train(
         for param in model.denoiser.parameters():
             param.requires_grad = False
 
+    kl_warmup_epochs = int(0.4 * (start_epoch + epochs))  # ramp over 40% of total training
+    lambda_kl_max = model.lambda_kl
+
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
         # ── Freeze encoder after threshold ───────────────────────────────────
@@ -215,8 +218,8 @@ def train(
             else:
                 x = batch[0] if isinstance(batch, list | tuple) else batch
                 x = x.to(device)
-
-                loss, l_diff, l_prior, l_rec = model.loss(x)
+                lambda_kl = lambda_kl_max * min(1.0, epoch / kl_warmup_epochs)
+                loss, l_diff, l_prior, l_rec = model.loss(x, lambda_kl)  # type: ignore
 
             # ── NaN/divergence diagnostics ──────────────────────────────────
 
@@ -248,6 +251,7 @@ def train(
                 prior=f"{l_prior.item():.4f}",
                 rec=f"{l_rec.item():.4f}",
                 lr=f"{current_lr:.2e}",
+                lambda_kl=f"{lambda_kl:.2e}",
             )
             progress_bar.update()
 

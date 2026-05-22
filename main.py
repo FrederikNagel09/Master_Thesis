@@ -230,9 +230,9 @@ python main.py \
     --lambda_kl 5e-3 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 1.0 \
+    --subset_frac 0.33 \
     --single_class \
-    --single_class_label 2 5 \
+    --single_class_label 3 8 \
     --normalize True\
     --T 1000 \
     --beta_1 1e-4 \

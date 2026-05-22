@@ -143,7 +143,7 @@ class NDMLatentDiffusion(nn.Module):
     # -------------------------------------------------------------------------
     # Public interface
     # -------------------------------------------------------------------------
-    def loss(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    def loss(self, x: torch.Tensor, lambda_kl: float) -> tuple[torch.Tensor, ...]:
         """
         Compute the negative ELBO for a batch of images.
 
@@ -152,7 +152,7 @@ class NDMLatentDiffusion(nn.Module):
         Returns:
             (total_loss, l_diff, l_prior, l_rec) — scalar means
         """
-        return self._negative_elbo(x)
+        return self._negative_elbo(x, lambda_kl)
 
     @torch.no_grad()
     def sample(self, n_samples: int = 1, collect_snapshots: bool = False) -> torch.Tensor:
@@ -192,7 +192,7 @@ class NDMLatentDiffusion(nn.Module):
     # -------------------------------------------------------------------------
     # ELBO
     # -------------------------------------------------------------------------
-    def _negative_elbo(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    def _negative_elbo(self, x: torch.Tensor, lambda_kl: float) -> tuple[torch.Tensor, ...]:
         """
         Estimates L = l_diff + l_rec + l_prior.
 
@@ -220,7 +220,7 @@ class NDMLatentDiffusion(nn.Module):
         l_prior = self._l_prior(mu, logvar)
         l_rec = self._l_rec(x, z_raw)
 
-        total = l_diff + self.lambda_kl * l_prior + l_rec
+        total = l_diff + lambda_kl * l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
