@@ -223,13 +223,13 @@ python main.py \
     --run_name LATENT-MLP-MLP-TESTING_v3 \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 40 \
+    --epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.25 \
+    --subset_frac 0.1 \
     --normalize True\
     --T 1000 \
     --beta_1 1e-4 \

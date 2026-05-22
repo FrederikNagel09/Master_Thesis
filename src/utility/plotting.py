@@ -729,7 +729,8 @@ def plot_reconstruction_progression(
             if x.dim() == 2:
                 channels = x.shape[1] // (model.img_size * model.img_size)
                 x = x.view(x.shape[0], channels, model.img_size, model.img_size)
-            z = model.latent_encoder(x)
+            mu, logvar = model.latent_encoder(x)
+            z = model.latent_encoder.reparameterize(mu, logvar)
             x_recon = model._decode_latent(z)
     else:
         with torch.no_grad():
@@ -1564,7 +1565,8 @@ def plot_forward_trajectory_progression(
             channels = x.shape[1] // (model.img_size * model.img_size)
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)
         # encode latents
-        z = model.latent_encoder(x)
+        mu, logvar = model.latent_encoder(x)
+        z = model.latent_encoder.reparameterize(mu, logvar)
         if normalize:
             z = model._normalize_z(z)
 

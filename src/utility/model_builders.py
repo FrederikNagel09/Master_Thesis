@@ -1206,7 +1206,9 @@ def _print_latent_encoder_info(encoder: ResNetLatentEncoder) -> int:
     layer3_params = sum(p.numel() for p in encoder.layer3.parameters())
     layer4_params = sum(p.numel() for p in encoder.layer4.parameters())
     backbone_params = layer1_params + layer2_params + layer3_params + layer4_params
-    upsample_params = sum(p.numel() for p in encoder.learnable_upsample.parameters())
+    upsample_mu = sum(p.numel() for p in encoder.upsample_mu.parameters())
+    upsample_logvar = sum(p.numel() for p in encoder.upsample_logvar.parameters())
+    upsample_params = upsample_mu + upsample_logvar
     total = sum(p.numel() for p in encoder.parameters())
 
     print("############## Latent Encoder Summary: #############")

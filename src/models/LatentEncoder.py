@@ -157,7 +157,9 @@ class ResNetLatentEncoder(nn.Module):
         self.layer3 = self._make_stage(ch2, ch3, num_blocks=2, stride=2)
         self.layer4 = self._make_stage(ch3, ch4, num_blocks=2, stride=2)
 
-        self.learnable_upsample = nn.ConvTranspose2d(in_channels=ch4, out_channels=latent_dim, kernel_size=4, stride=2, padding=1)
+        # Separate learnable heads for the distribution parameters
+        self.upsample_mu = nn.ConvTranspose2d(in_channels=ch4, out_channels=latent_dim, kernel_size=4, stride=2, padding=1)
+        self.upsample_logvar = nn.ConvTranspose2d(in_channels=ch4, out_channels=latent_dim, kernel_size=4, stride=2, padding=1)
 
     def _make_stage(self, in_channels: int, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
         strides = [stride] + [1] * (num_blocks - 1)
@@ -181,10 +183,18 @@ class ResNetLatentEncoder(nn.Module):
         out = self.layer3(out)
         out = self.layer4(out)
 
-        # Learnable spatial upscaling + channel projection step
-        z = self.learnable_upsample(out)
+        mu = self.upsample_mu(out)
+        logvar = self.upsample_logvar(out)
 
-        if z.shape[-2:] != self.latent_size:
-            z = nn.functional.interpolate(z, size=self.latent_size, mode="bilinear", align_corners=False)
+        if mu.shape[-2:] != self.latent_size:
+            mu = nn.functional.interpolate(mu, size=self.latent_size, mode="bilinear", align_corners=False)
+            logvar = nn.functional.interpolate(logvar, size=self.latent_size, mode="bilinear", align_corners=False)
 
-        return z
+        return mu, logvar
+
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            return mu + eps * std
+        return mu

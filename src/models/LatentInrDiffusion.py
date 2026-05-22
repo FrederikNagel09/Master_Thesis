@@ -113,11 +113,19 @@ class NDMLatentDiffusion(nn.Module):
 
         self.i = 0
         self.latent_scaler = LatentScaler(latent_dim)
+        self.lambda_kl = 1e-3
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
         alpha_cumprod = alpha.cumprod(dim=0)
+
+        # Calculate the exact ELBO loss weight coefficient for noise prediction
+        # w(t) = beta_t / (2 * alpha_t * (1 - alpha_cumprod_t))
+        l_diff_weights = beta / (2 * alpha * (1.0 - alpha_cumprod))
+
+        # Register it alongside your other buffers
+        self.register_buffer("l_diff_weights", l_diff_weights)
 
         self.register_buffer("beta", beta)
         self.register_buffer("alpha", alpha)
@@ -198,23 +206,20 @@ class NDMLatentDiffusion(nn.Module):
             channels = self.data_dim // (self.img_size * self.img_size)
             x = x.view(B, channels, self.img_size, self.img_size)
 
-        if self._normalize:
-            z_raw = self.latent_encoder(x)
-            z = self._normalize_z(z_raw)
-        else:
-            z_raw = self.latent_encoder(x)
-            z = z_raw
+        mu, logvar = self.latent_encoder(x)
+        z_raw = self.latent_encoder.reparameterize(mu, logvar)
+        z = self._normalize_z(z_raw) if self._normalize else z_raw
 
         t_idx = torch.randint(0, self.T, (B,), device=x.device)
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
-        l_diff = self._l_diff(z_t, t_norm, epsilon)
-        l_prior = self._l_prior(z)
+        l_diff = self._l_diff(z_t, t_norm, t_idx, epsilon)
+        l_prior = self._l_prior(mu, logvar)
         l_rec = self._l_rec(x, z_raw)
 
-        total = l_diff + l_prior + l_rec
+        total = l_diff + self.lambda_kl * l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -287,6 +292,7 @@ class NDMLatentDiffusion(nn.Module):
         self,
         z_t: torch.Tensor,
         t_norm: torch.Tensor,
+        t_idx: torch.Tensor,
         epsilon: torch.Tensor,
     ) -> torch.Tensor:
         """
@@ -306,7 +312,13 @@ class NDMLatentDiffusion(nn.Module):
         # 2. Compute MSE over the channel, height, and width dimensions
         mse = F.mse_loss(eps_hat, epsilon, reduction="none")  # (B, C, H', W')
 
-        l_diff_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H', W' to get (B,)
+        unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
+
+        # Pull weights for the batch: shape (B,)
+        w_t = self.l_diff_weights[t_idx]
+
+        # 4. Scale the per-sample loss
+        l_diff_loss = w_t * unscaled_loss  # (B,)
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
@@ -359,24 +371,18 @@ class NDMLatentDiffusion(nn.Module):
 
         return l_diff_loss
 
-    def _l_prior(self, z: torch.Tensor) -> torch.Tensor:
+    def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
-        KL divergence between q(z_T | z) and N(0, I), computed analytically.
+        KL divergence between q(z|x) = N(mu, exp(logvar)) and N(0, I).
 
         Args:
-            z: (B, latent_dim, H', W') clean latent
+            mu:     (B, latent_dim, H', W')
+            logvar: (B, latent_dim, H', W')
         Returns:
-            (B,) per-sample KL
+            (B,) per-sample KL, scaled by lambda_kl
         """
-        T_idx = self.T - 1  # noqa: N806
-        sigma_T_sq = self.sigma_sq[T_idx]  # noqa: N806
-        alpha_T_sq = self.alpha_cumprod[T_idx]  # noqa: N806
-
-        z_flat = z.reshape(z.shape[0], -1)  # (B, latent_dim * H' * W')
-        d = z_flat.shape[-1]
-
-        kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (z_flat**2).sum(dim=-1))
-        return kl
+        kl = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())  # (B, C, H', W')
+        return kl.sum(dim=(-3, -2, -1))
 
     def _l_rec(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
