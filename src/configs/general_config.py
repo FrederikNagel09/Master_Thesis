@@ -1,2 +1,2 @@
 GLOBAL_DEBUG_BOOL = True
-probability_threshold = 0.1
+probability_threshold = 0.005

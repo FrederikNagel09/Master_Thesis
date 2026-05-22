@@ -245,7 +245,7 @@ class NDMLatentDiffusion(nn.Module):
             print("###############################################\n")
 
             # Prints forwars process statistics for the first batch only, at specific time steps
-            if self.i % 100 == 0:
+            if self.i % 10 == 0:
                 print("\n######### Forward Process Statistics: #########")
                 # 1. Define the steps we want to see
                 t_steps = [
@@ -282,7 +282,7 @@ class NDMLatentDiffusion(nn.Module):
                     print(f"t={idx:3d}/{self.T}: mean={z_t.mean():.4f}, std={z_t.std():.4f}")
 
                 print("###############################################\n")
-                self.i += 1
+        self.i += 1
 
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
