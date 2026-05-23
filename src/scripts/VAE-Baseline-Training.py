@@ -1,6 +1,9 @@
+import argparse
+import json
 import os
 import sys
 
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,49 +11,96 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.append(".")
-
 from src.models.trans_inr import TransInr, make_coord_grid
-
-# Assuming these relative imports align with your repository structure
 from src.utility.dataset_builders import build_dataset
 
+"""
+python src/scripts/VAE-Baseline-Training.py \
+    --run_name vae-test \
+    --dataset mnist \
+    --epochs 50 \
+    --batch_size 128 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --subset_frac 0.1 \
+    --lambda_kl_max 0.01 \
+    --kl_warmup_frac 0.4 \
+    --latent_dim 32 \
+    --latent_size 4 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 12 \
+    --dec_trans_dim 128 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 32 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 4 \
+    --dec_trans_dec_depth 4 \
+    --dec_trans_n_groups 32 \
+    --dec_trans_update_strategy scale \
+    --inr_hidden_dim 128 \
+    --inr_layers 3
+"""
+
 # ──────────────────────────────────────────────────────────────────────────────
-# HARDCODED HYPERPARAMETERS
+# ARGUMENT PARSER
 # ──────────────────────────────────────────────────────────────────────────────
-RUN_NAME = "vae-test"
-DATASET_NAME = "mnist"
-EPOCHS = 1
-BATCH_SIZE = 128
-LR = 1e-4
-WEIGHT_DECAY = 1e-5
-GRAD_CLIP = 1.0
-SUBSET_FRAC = 0.2
-NORMALIZE = True
 
-# VAE Latent Settings
-LATENT_DIM = 32
-LATENT_SIZE = 4  # Results in (4, 4) spatial latent representation
-LATENT_PATCH_SIZE = 2
-LATENT_ENC_HIDDEN_DIM = 12  # Maps to hidden_dim in the encoder
 
-# Decoder (TransInr) Settings
-DEC_TRANS_DIM = 128
-DEC_TRANS_N_HEAD = 8
-DEC_TRANS_HEAD_DIM = 32
-DEC_TRANS_FF_DIM = 1024
-DEC_TRANS_ENC_DEPTH = 4
-DEC_TRANS_DEC_DEPTH = 4
-DEC_TRANS_N_GROUPS = 32
-DEC_TRANS_UPDATE_STRATEGY = "scale"
-INR_HIDDEN_DIM = 128
-INR_LAYERS = 3
+def parse_args() -> argparse.Namespace:
+    """
+    Parse CLI arguments, all defaulting to the original hardcoded hyperparameters.
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps")
+    Returns:
+        argparse.Namespace: parsed arguments
+    """
+    p = argparse.ArgumentParser(description="Train a TransINR-VAE model")
+
+    # Run
+    p.add_argument("--run_name", type=str, default="vae-test")
+    p.add_argument("--dataset", type=str, default="mnist")
+    p.add_argument("--results_dir", type=str, default="src/results")
+
+    # Training
+    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--batch_size", type=int, default=128)
+    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--weight_decay", type=float, default=1e-5)
+    p.add_argument("--grad_clip", type=float, default=1.0)
+    p.add_argument("--subset_frac", type=float, default=0.2)
+
+    # KL
+    p.add_argument("--lambda_kl_max", type=float, default=0.1, help="Maximum KL weight after warm-up")
+    p.add_argument("--kl_warmup_frac", type=float, default=0.4, help="Fraction of total epochs over which KL ramps from 0 to lambda_kl_max")
+
+    # Encoder
+    p.add_argument("--latent_dim", type=int, default=32)
+    p.add_argument("--latent_size", type=int, default=4)
+    p.add_argument("--latent_patch_size", type=int, default=2)
+    p.add_argument("--latent_enc_hidden_dim", type=int, default=12)
+
+    # Decoder (TransInr)
+    p.add_argument("--dec_trans_dim", type=int, default=128)
+    p.add_argument("--dec_trans_n_head", type=int, default=8)
+    p.add_argument("--dec_trans_head_dim", type=int, default=32)
+    p.add_argument("--dec_trans_ff_dim", type=int, default=1024)
+    p.add_argument("--dec_trans_enc_depth", type=int, default=4)
+    p.add_argument("--dec_trans_dec_depth", type=int, default=4)
+    p.add_argument("--dec_trans_n_groups", type=int, default=32)
+    p.add_argument("--dec_trans_update_strategy", type=str, default="scale")
+
+    # INR
+    p.add_argument("--inr_hidden_dim", type=int, default=128)
+    p.add_argument("--inr_layers", type=int, default=3)
+
+    return p.parse_args()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PROBABILISTIC RESNET LATENT ENCODER
 # ──────────────────────────────────────────────────────────────────────────────
+
+
 class ResNetBasicBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
         super().__init__()
@@ -63,7 +113,8 @@ class ResNetBasicBlock(nn.Module):
         self.shortcut = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False), nn.BatchNorm2d(out_channels)
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels),
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -89,23 +140,20 @@ class ProbabilisticResNetLatentEncoder(nn.Module):
         super().__init__()
         self.latent_size = latent_size if isinstance(latent_size, tuple) else (latent_size, latent_size)
 
-        ch1 = hidden_dim
-        ch2 = hidden_dim * 2
-        ch3 = hidden_dim * 4
-        ch4 = hidden_dim * 8
+        ch1, ch2, ch3, ch4 = hidden_dim, hidden_dim * 2, hidden_dim * 4, hidden_dim * 8
 
         self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, ch1, kernel_size=3, stride=1, padding=1, bias=False), nn.BatchNorm2d(ch1), nn.ReLU(inplace=True)
+            nn.Conv2d(in_channels, ch1, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(ch1),
+            nn.ReLU(inplace=True),
         )
-
         self.layer1 = self._make_stage(ch1, ch1, num_blocks=2, stride=1)
         self.layer2 = self._make_stage(ch1, ch2, num_blocks=2, stride=2)
         self.layer3 = self._make_stage(ch2, ch3, num_blocks=2, stride=2)
         self.layer4 = self._make_stage(ch3, ch4, num_blocks=2, stride=2)
 
-        # Separate learnable heads for the distribution parameters
-        self.upsample_mu = nn.ConvTranspose2d(in_channels=ch4, out_channels=latent_dim, kernel_size=4, stride=2, padding=1)
-        self.upsample_logvar = nn.ConvTranspose2d(in_channels=ch4, out_channels=latent_dim, kernel_size=4, stride=2, padding=1)
+        self.upsample_mu = nn.ConvTranspose2d(ch4, latent_dim, kernel_size=4, stride=2, padding=1)
+        self.upsample_logvar = nn.ConvTranspose2d(ch4, latent_dim, kernel_size=4, stride=2, padding=1)
 
     def _make_stage(self, in_channels: int, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
         strides = [stride] + [1] * (num_blocks - 1)
@@ -121,14 +169,11 @@ class ProbabilisticResNetLatentEncoder(nn.Module):
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-
         mu = self.upsample_mu(out)
         logvar = self.upsample_logvar(out)
-
         if mu.shape[-2:] != self.latent_size:
             mu = nn.functional.interpolate(mu, size=self.latent_size, mode="bilinear", align_corners=False)
             logvar = nn.functional.interpolate(logvar, size=self.latent_size, mode="bilinear", align_corners=False)
-
         return mu, logvar
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
@@ -142,28 +187,23 @@ class ProbabilisticResNetLatentEncoder(nn.Module):
 # ──────────────────────────────────────────────────────────────────────────────
 # VAE SYSTEM WRAPPER
 # ──────────────────────────────────────────────────────────────────────────────
+
+
 class VAEWrapper(nn.Module):
     def __init__(self, encoder: nn.Module, decoder: nn.Module, img_size: int, device: torch.device):
         super().__init__()
         self.latent_encoder = encoder
         self.decoder = decoder
         self.img_size = img_size
-
-        # Emulating your system's coordinate grid processing layout
-        coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # Shape: (H, W, 2)
-        self.register_buffer("coord_grid", coord_grid)
         self.device = device
 
+        coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
+        self.register_buffer("coord_grid", coord_grid)
+
     def _decode_latent(self, z: torch.Tensor) -> torch.Tensor:
-        """
-        Emulates the signature contract used by your plotting routines
-        """
-        # Mirroring how TransInr parses latents vs spatial positions
-        # Standard layout passes batch elements or updates dynamically via coordinate context
+        """Decodes a latent tensor through the TransInr decoder."""
         batch_size = z.shape[0]
         coords = self.coord_grid.unsqueeze(0).repeat(batch_size, 1, 1, 1).to(self.device)
-
-        # Calls the TransInr functional forward path
         return self.decoder(z, coords)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -174,160 +214,260 @@ class VAEWrapper(nn.Module):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# PLOTTING
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def save_training_graph(
+    history: dict[str, list[float]],
+    steps_per_epoch: int,
+    epochs: int,
+    save_path: str,
+) -> None:
+    """
+    Saves a 3-panel training graph (total ELBO, recon loss, KL loss) with
+    per-step lines and epoch-level x-axis ticks.
+
+    Args:
+        history:          dict with keys "elbo", "recon", "kl", each a list of per-step values
+        steps_per_epoch:  number of optimizer steps per epoch
+        epochs:           total number of epochs trained
+        save_path:        full file path to save the .png
+    """
+    total_steps = len(history["elbo"])
+    # Tick positions and labels at epoch boundaries
+    tick_positions = [i * steps_per_epoch for i in range(epochs + 1)]
+    tick_labels = [str(i) for i in range(epochs + 1)]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    panels = [
+        ("elbo", "Total ELBO", "tab:blue"),
+        ("recon", "Reconstruction Loss", "tab:orange"),
+        ("kl", "KL Loss", "tab:green"),
+    ]
+
+    for ax, (key, title, color) in zip(axes, panels):  # noqa: B905
+        ax.plot(range(total_steps), history[key], color=color, linewidth=0.8, alpha=0.85)
+        ax.set_title(title)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    fig.suptitle("Training Curves", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"Training graph saved to {save_path}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MODEL SAVING
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def save_model(model: nn.Module, args: argparse.Namespace, results_dir: str) -> None:
+    """
+    Saves model weights (state_dict) and config (JSON) to results_dir.
+
+    Args:
+        model:       trained VAEWrapper
+        args:        parsed CLI args used to build the model
+        results_dir: directory to save into
+    """
+    weights_path = os.path.join(results_dir, f"{args.run_name}_weights.pt")
+    config_path = os.path.join(results_dir, f"{args.run_name}_config.json")
+
+    # Weights
+    torch.save(model.state_dict(), weights_path)
+
+    # Config — everything needed to reconstruct the model architecture
+    config = {
+        "run_name": args.run_name,
+        "dataset": args.dataset,
+        "latent_dim": args.latent_dim,
+        "latent_size": args.latent_size,
+        "latent_patch_size": args.latent_patch_size,
+        "latent_enc_hidden_dim": args.latent_enc_hidden_dim,
+        "dec_trans_dim": args.dec_trans_dim,
+        "dec_trans_n_head": args.dec_trans_n_head,
+        "dec_trans_head_dim": args.dec_trans_head_dim,
+        "dec_trans_ff_dim": args.dec_trans_ff_dim,
+        "dec_trans_enc_depth": args.dec_trans_enc_depth,
+        "dec_trans_dec_depth": args.dec_trans_dec_depth,
+        "dec_trans_n_groups": args.dec_trans_n_groups,
+        "dec_trans_update_strategy": args.dec_trans_update_strategy,
+        "inr_hidden_dim": args.inr_hidden_dim,
+        "inr_layers": args.inr_layers,
+        "lambda_kl_max": args.lambda_kl_max,
+    }
+
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    print(f"Model weights saved to {weights_path}")
+    print(f"Model config  saved to {config_path}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # MAIN TRAINING WORKFLOW
 # ──────────────────────────────────────────────────────────────────────────────
-def main():
-    print(f"--- Initialization Process Started: {RUN_NAME} ---")
 
-    # 1. Build Dataset
-    class ArgsMock:
-        dataset = DATASET_NAME
-        subset_frac = SUBSET_FRAC
 
+def main() -> None:
+    args = parse_args()
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+
+    print(f"--- Initialization Process Started: {args.run_name} ---")
+
+    # 1. Dataset
     dataset, data_config = build_dataset(
-        dataset_name=ArgsMock.dataset,
+        dataset_name=args.dataset,
         data_root="data/",
-        subset_frac=ArgsMock.subset_frac,
+        subset_frac=args.subset_frac,
         single_class=False,
         single_class_label=1,
     )
-
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
-
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     channels = data_config["channels"]
     img_size = data_config["img_size"]
-    latent_size_tuple = (LATENT_SIZE, LATENT_SIZE)
 
-    # 2. Build Structural Subnetworks
+    # 2. Build Model
     encoder = ProbabilisticResNetLatentEncoder(
         in_channels=channels,
-        latent_dim=LATENT_DIM,
-        latent_size=latent_size_tuple,
-        hidden_dim=LATENT_ENC_HIDDEN_DIM,
+        latent_dim=args.latent_dim,
+        latent_size=(args.latent_size, args.latent_size),
+        hidden_dim=args.latent_enc_hidden_dim,
     )
-
-    tokenizer_cfg = {
-        "target": "src.models.trans_inr_helpers.LatentTokenizer",
-        "params": {
-            "latent_dim": LATENT_DIM,
-            "latent_size": LATENT_SIZE,
-            "patch_size": LATENT_PATCH_SIZE,
-            "dim": DEC_TRANS_DIM,
-            "n_head": DEC_TRANS_N_HEAD,
-            "head_dim": DEC_TRANS_HEAD_DIM,
-        },
-    }
-    inr_cfg = {
-        "target": "src.models.trans_inr_helpers.SIREN",
-        "params": {
-            "depth": INR_LAYERS,
-            "in_dim": 2,
-            "out_dim": channels,
-            "hidden_dim": INR_HIDDEN_DIM,
-            "out_bias": 0.5,
-        },
-    }
-    transformer_cfg = {
-        "target": "src.models.trans_inr_helpers.Transformer",
-        "params": {
-            "dim": DEC_TRANS_DIM,
-            "encoder_depth": DEC_TRANS_ENC_DEPTH,
-            "decoder_depth": DEC_TRANS_DEC_DEPTH,
-            "n_head": DEC_TRANS_N_HEAD,
-            "head_dim": DEC_TRANS_HEAD_DIM,
-            "ff_dim": DEC_TRANS_FF_DIM,
-        },
-    }
 
     decoder = TransInr(
-        tokenizer=tokenizer_cfg,
-        inr=inr_cfg,
+        tokenizer={
+            "target": "src.models.trans_inr_helpers.LatentTokenizer",
+            "params": {
+                "latent_dim": args.latent_dim,
+                "latent_size": args.latent_size,
+                "patch_size": args.latent_patch_size,
+                "dim": args.dec_trans_dim,
+                "n_head": args.dec_trans_n_head,
+                "head_dim": args.dec_trans_head_dim,
+            },
+        },
+        inr={
+            "target": "src.models.trans_inr_helpers.SIREN",
+            "params": {
+                "depth": args.inr_layers,
+                "in_dim": 2,
+                "out_dim": channels,
+                "hidden_dim": args.inr_hidden_dim,
+                "out_bias": 0.5,
+            },
+        },
         data_shape=(img_size, img_size),
-        n_groups=DEC_TRANS_N_GROUPS,
-        transformer=transformer_cfg,
-        update_strategy=DEC_TRANS_UPDATE_STRATEGY,
+        n_groups=args.dec_trans_n_groups,
+        transformer={
+            "target": "src.models.trans_inr_helpers.Transformer",
+            "params": {
+                "dim": args.dec_trans_dim,
+                "encoder_depth": args.dec_trans_enc_depth,
+                "decoder_depth": args.dec_trans_dec_depth,
+                "n_head": args.dec_trans_n_head,
+                "head_dim": args.dec_trans_head_dim,
+                "ff_dim": args.dec_trans_ff_dim,
+            },
+        },
+        update_strategy=args.dec_trans_update_strategy,
     )
 
-    # Wrap up into VAE
-    model = VAEWrapper(encoder, decoder, img_size, DEVICE).to(DEVICE)
+    model = VAEWrapper(encoder, decoder, img_size, device).to(device)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # 3. Setup Optimization Components
-    optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    # KL warm-up: ramp over first kl_warmup_frac of total epochs
+    kl_warmup_epochs = max(1, int(args.kl_warmup_frac * args.epochs))
 
-    print(f"Training initialized on {DEVICE} for {EPOCHS} epochs.")
+    print(f"Training on {device} | {args.epochs} epochs | KL warm-up over {kl_warmup_epochs} epochs")
 
-    # 4. Core Optimization Loop
-    for epoch in range(1, EPOCHS + 1):
+    # Per-step loss history for the training graph
+    history = {"elbo": [], "recon": [], "kl": []}
+
+    # 3. Training Loop
+    for epoch in range(1, args.epochs + 1):
         model.train()
+
+        # KL annealing weight — linearly ramps from 0 → lambda_kl_max
+        lambda_kl = args.lambda_kl_max * min(1.0, epoch / kl_warmup_epochs)
+
         running_mse = 0.0
         running_kl = 0.0
-
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{EPOCHS}", unit="batch")
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{args.epochs}", unit="batch")
 
         for batch in progress_bar:
-            # Handle standard dataset returns where index 0 holds the image tensors
-            x = batch[0].to(DEVICE)
-
-            # Match reconstruction flattening rules if dataset returns flattened vectors
+            x = batch[0].to(device)
             if x.dim() == 2:
                 x = x.view(x.shape[0], channels, img_size, img_size)
 
             optimizer.zero_grad()
 
-            # Forward Pass
             x_recon, mu, logvar = model(x)
 
-            # Flatten targets and predictions to compute sum of squared errors per sample
             x_hat_flat = x_recon.reshape(x_recon.shape[0], -1)
             x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
 
-            # Scaled sum-squared error matching your exact formulation
-            loss_mse = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
-
-            # Analytical KL Divergence adjusted for the sum scale
+            loss_recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
             loss_kl = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3]))
+            total_loss = loss_recon + lambda_kl * loss_kl
 
-            # Total Loss
-            kl_weight = 0.1
-            total_loss = loss_mse + (kl_weight * loss_kl)
-
-            # Optimization step
             total_loss.backward()
-            if GRAD_CLIP > 0:
-                nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            if args.grad_clip > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
 
-            # Logging tracking metrics
-            running_mse += loss_mse.item()
-            running_kl += loss_kl.item()
+            # Record per-step values
+            history["elbo"].append(total_loss.item())
+            history["recon"].append(loss_recon.item())
+            history["kl"].append(loss_kl.item())
 
-            progress_bar.set_postfix({"MSE": f"{loss_mse.item():.4f}", "KL": f"{loss_kl.item():.2f}"})
+            running_mse += loss_recon.item()
+            running_kl += loss_kl.item()
+            progress_bar.set_postfix(
+                {
+                    "MSE": f"{loss_recon.item():.4f}",
+                    "KL": f"{loss_kl.item():.2f}",
+                    "λ_kl": f"{lambda_kl:.3f}",
+                }
+            )
 
         epoch_mse = running_mse / len(dataloader)
         epoch_kl = running_kl / len(dataloader)
-        print(f"      ↳ [Summary] Avg MSE: {epoch_mse:.5f} | Avg KL: {epoch_kl:.3f}")
+        print(f"      ↳ [Summary] Avg MSE: {epoch_mse:.5f} | Avg KL: {epoch_kl:.3f} | λ_kl: {lambda_kl:.4f}")
 
-    print("--- Training Execution Finished Successful ---")
+    # 4. Save artefacts
+    os.makedirs(args.results_dir, exist_ok=True)
 
-    print("--- Generating 5x5 Grid of Random Samples ---")
+    # Training graph
+    save_training_graph(
+        history=history,
+        steps_per_epoch=len(dataloader),
+        epochs=args.epochs,
+        save_path=os.path.join(args.results_dir, f"{args.run_name}_training_curves.png"),
+    )
+
+    # Model weights + config
+    save_model(model, args, args.results_dir)
+
+    # Sample grid
     import torchvision.utils as vutils
 
     model.eval()
-    os.makedirs("src/results", exist_ok=True)
-
     with torch.no_grad():
-        # Standard Gaussian prior samples matching spatial latent shape (5x5 grid = 25 images)
-        z_random = torch.randn(25, LATENT_DIM, LATENT_SIZE, LATENT_SIZE).to(DEVICE)
-
-        # Decode samples using your wrapper's contract path
+        z_random = torch.randn(25, args.latent_dim, args.latent_size, args.latent_size).to(device)
         samples = model._decode_latent(z_random)
-
-        # Denormalize to [0, 1] range if your data operates on standard [-1, 1] scales
         samples = (samples * 0.5 + 0.5).clamp(0, 1)
+        sample_path = os.path.join(args.results_dir, f"{args.run_name}_samples.png")
+        vutils.save_image(samples, sample_path, nrow=5, padding=2)
+        print(f"Sample grid saved to {sample_path}")
 
-        # Create grid and save to disk
-        vutils.save_image(samples, "src/results/vae_samples.png", nrow=5, padding=2)
-        print("Sample grid successfully saved to src/results/vae_samples.png")
+    print("--- Training Execution Finished Successfully ---")
 
 
 if __name__ == "__main__":
