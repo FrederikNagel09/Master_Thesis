@@ -732,6 +732,11 @@ def plot_reconstruction_progression(
             mu, logvar = model.latent_encoder(x)
             z = model.latent_encoder.reparameterize(mu, logvar)
             x_recon = model._decode_latent(z)
+    elif model_name == "ndm_static_transinr":
+        with torch.no_grad():
+            mean, logvar = model.weight_encoder(x)
+            theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+        x_recon = model._inr_decode(theta_prime_raw)
     else:
         with torch.no_grad():
             if hasattr(model, "F_phi"):
@@ -1580,6 +1585,25 @@ def plot_forward_trajectory_progression(
                 sigma_t = model.sigma[t]
                 epsilon = torch.randn_like(z)
                 theta_t = alpha_t * z + sigma_t * epsilon
+            new_row_data.append(theta_t.detach().cpu().numpy().flatten())
+    elif model_name == "ndm_static_transinr":
+        # encode latents
+        mean, logvar = model.weight_encoder(x)
+        theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+
+        if normalize:
+            theta_prime_raw = model.scaler(theta_prime_raw, reverse=False)
+
+        new_row_data = []
+        for t in T_values_sorted:
+            if t == 0:
+                # t=0 is the raw weight vector, no noise added
+                theta_t = theta_prime_raw
+            else:
+                alpha_t = model.sqrt_alpha_cumprod[t]
+                sigma_t = model.sigma[t]
+                epsilon = torch.randn_like(theta_prime_raw)
+                theta_t = alpha_t * theta_prime_raw + sigma_t * epsilon
             new_row_data.append(theta_t.detach().cpu().numpy().flatten())
     else:
         with torch.no_grad():

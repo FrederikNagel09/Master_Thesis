@@ -209,6 +209,7 @@ class NDMLatentDiffusion(nn.Module):
 
         mu, logvar = self.latent_encoder(x)
         z_raw = self.latent_encoder.reparameterize(mu, logvar)
+
         z = self._normalize_z(z_raw) if self._normalize else z_raw
 
         t_idx = torch.randint(0, self.T, (B,), device=x.device)

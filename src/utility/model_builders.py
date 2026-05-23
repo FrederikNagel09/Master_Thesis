@@ -83,18 +83,18 @@ def print_encoder_stats(model, mode="Static"):
     def count(params):
         return sum(p.numel() for p in params)
 
-    # Component counts
     tokenizer_p = count(model.tokenizer.parameters())
     transformer_p = count(model.transformer.parameters())
     base_p = count(model.base_params.values())
     wtoken_p = model.wtokens.numel()
-    postfc_p = count(model.wtoken_postfc.parameters())
+    postfc_mu_p = count(model.wtoken_postfc_mu.parameters())
+    postfc_lv_p = count(model.wtoken_postfc_logvar.parameters())
 
+    total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_mu_p + postfc_lv_p
     if mode == "Temporal":
         time_embedding = count(model.time_mlp.parameters())
-        total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p + time_embedding
-    else:
-        total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p
+        total_learnable += time_embedding
+
     inr_total = sum(s[0] * s[1] for s in model.inr.param_shapes.values())
 
     print("\n" + "=" * 60)
@@ -104,18 +104,17 @@ def print_encoder_stats(model, mode="Static"):
     print(f"Weight Dim (Total INR params): {model.weight_dim:,}")
     print(f"Encoder Mode: {mode}")
     print("-" * 60)
-
     print("Learnable Parameters:")
     print(f"  Vision Tokenizer:     {tokenizer_p:>12,} params")
     print(f"  Main Transformer:     {transformer_p:>12,} params")
-    print(f"  Weight Tokens (N_w):  {wtoken_p:>12,} params")
+    print(f"  Weight Tokens (2xNw): {wtoken_p:>12,} params")
     print(f"  Base INR Weights:     {base_p:>12,} params")
-    print(f"  Wtoken Post-FC:       {postfc_p:>12,} params")
+    print(f"  Wtoken Post-FC (mu):  {postfc_mu_p:>12,} params")
+    print(f"  Wtoken Post-FC (lv):  {postfc_lv_p:>12,} params")
     if mode == "Temporal":
-        print(f"  Time MLP:            {time_embedding:>12,} params")
+        print(f"  Time MLP:             {time_embedding:>12,} params")
     print(f"  {'─'*44}")
     print(f"  Total Learnable:      {total_learnable:>12,} params")
-
     print("\nGenerated INR Runtime Structure (Non-Learnable Output):")
     for name, shape in model.inr.param_shapes.items():
         l, r = model.wtoken_rng[name]  # noqa: E741
@@ -916,7 +915,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
         n_head=getattr(args, "noise_predictor_n_head", 8),
         head_dim=getattr(args, "noise_predictor_head_dim", 32),
         ff_dim=getattr(args, "noise_predictor_ff_dim", 1024),
-        chunk_size=getattr(args, "noise_predictor_chunk_size", 32),
+        chunk_size=getattr(args, "noise_predictor_chunk_size", 64),
         t_embed_dim=getattr(args, "noise_predictor_t_embed", 128),
         dropout=getattr(args, "dropout", 0.0),
     )

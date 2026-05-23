@@ -114,6 +114,7 @@ class NDMStaticTransInr(nn.Module):
         data_dim: int = 784,
         img_size: int = 28,
         normalize: bool = True,
+        lambda_kl: float = 5e-3,
     ):
         super().__init__()
         # Initialize model components and noise schedule buffers
@@ -132,6 +133,7 @@ class NDMStaticTransInr(nn.Module):
 
         if self.normalize:
             self.scaler = WeightScaler(WeightEncoder.weight_dim)
+        self.lambda_kl = lambda_kl
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
@@ -171,16 +173,16 @@ class NDMStaticTransInr(nn.Module):
         theta = self.sample_weight(n_samples)
         return self.decode_weights(theta, coords)
 
-    def loss(self, x: torch.Tensor) -> torch.Tensor:
+    def loss(self, x: torch.Tensor, lambda_kl: float = 5e-3) -> torch.Tensor:
         """
         Computes the negative ELBO for a batch of input images x.
         """
-        return self.negative_elbo(x)
+        return self.negative_elbo(x, lambda_kl=lambda_kl)
 
     # -------------------------------------------------------------------------
     # Negative ELBO Computation:
     # -------------------------------------------------------------------------
-    def negative_elbo(self, x: torch.Tensor) -> torch.Tensor:
+    def negative_elbo(self, x: torch.Tensor, lambda_kl: float = 5e-3) -> torch.Tensor:
         """
         Estimates the negative ELBO:
             L = E[ l_diff ] + prior_mask * l_prior + l_rec
@@ -195,22 +197,12 @@ class NDMStaticTransInr(nn.Module):
 
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
         t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
-        # Normalize time step to [0, 1] for network input
         t_norm = t_idx.float() / (self.T - 1)
 
-        if self.normalize:
-            # Send image through Weight Encoder to get Theta_prime
-            theta_prime_raw = self.weight_encoder(x)  # (batch, weight_dim)
-            theta_prime = self.scaler(theta_prime_raw, reverse=False)
-            print("\n####################################")
-            print("##########Scaled Weights##############")
-            print(f"DEBUG theta_prime: mean={theta_prime.mean():.4f}, std={theta_prime.std():.4f}")
-            print("####################################")
-        else:
-            theta_prime = self.weight_encoder(x)  # (batch, weight_dim)
-            theta_prime_raw = theta_prime
+        mean, logvar = self.weight_encoder(x)
+        theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
 
-        theta_prime_sg = theta_prime.detach()  # Detach for loss computations that shouldn't backprop through the scaler
+        theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
@@ -229,7 +221,7 @@ class NDMStaticTransInr(nn.Module):
             print("==============================================================\n")
 
             # Prints forwars process statistics for the first batch only, at specific time steps
-            if self.i == 0:
+            if self.i % 10 == 0:
                 print("\n######### Forward Process Statistics: #########")
                 # 1. Define the steps we want to see
                 t_steps = [
@@ -266,13 +258,11 @@ class NDMStaticTransInr(nn.Module):
                     print(f"DEBUG SAMPLE t={idx:3d}: mean={theta_t.mean():.4f}, std={theta_t.std():.4f}")
 
                 print("###############################################\n")
-                self.i += 1
-
                 print(f"DEBUG SCALED THETA: mean={theta_prime.mean():.4e}, std={theta_prime.std():.4e}")
                 print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
-
+        self.i += 1
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_t, epsilon = self._construct_theta_t(theta_prime_sg, t_idx)
+        theta_t, epsilon = self._construct_theta_t(theta_prime.detach(), t_idx)
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Construct Theta_t ====================")
@@ -281,13 +271,13 @@ class NDMStaticTransInr(nn.Module):
             print("================================================================\n")
 
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_t, t_norm, theta_prime_sg)
+        l_diff = self._l_diff(theta_t, t_norm, epsilon)
 
-        l_prior = self._l_prior(theta_prime=theta_prime)  # (batch,)
+        l_prior = self._l_prior(mean, logvar)
 
         l_rec = self._l_rec(x, theta_prime_raw)
 
-        elbo = l_diff + l_rec + l_prior
+        elbo = l_diff + l_rec + lambda_kl * l_prior
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -310,34 +300,30 @@ class NDMStaticTransInr(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, theta_prime):
+    def _l_diff(self, theta_t, t_norm, epsilon) -> torch.Tensor:
         """
         x0-prediction loss weighted by SNR(t) to prevent posterior mean collapse.
         Args:
             theta_t:     (B, weight_dim) noisy weights at timestep t
             t_norm:      (B,) timestep normalised to [0, 1]
-            theta_prime: (B, weight_dim) clean target weights (detached)
-            t_idx:       (B,) integer timestep indices into the noise schedule
+            epsilon:     (B, weight_dim) noise sample
         Returns:
             (B,) per-sample weighted MSE loss
         """
-        theta0_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
+        epsilon_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
 
-        mse = F.mse_loss(theta0_hat, theta_prime, reduction="none").sum(dim=-1)  # (B,)
+        mse = F.mse_loss(epsilon_hat, epsilon, reduction="none").sum(dim=-1)  # (B,)
 
         return mse
 
-    def _l_prior(self, theta_prime: torch.Tensor) -> torch.Tensor:
+    def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
         computes the KL divergence between the initial noise distribution at time step T and the distribution of Theta Prime.
         """
-        T_idx = self.T - 1  # noqa: N806
-        sigma_T_sq = self.sigma_sq[T_idx]  # noqa: N806
-        alpha_T_sq = self.alpha_cumprod[T_idx]  # noqa: N806
-        d = theta_prime.shape[-1]
+        # KL divergence between N(mean, var) and N(0, 1)
+        kl = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
 
-        kl = 0.5 * (d * (sigma_T_sq - torch.log(sigma_T_sq) - 1.0) + alpha_T_sq * (theta_prime**2).sum(dim=-1))
-        return kl
+        return kl.sum(dim=-1)
 
     # -------------------------------------------------------------------------
     # Sampling Helpers:
@@ -380,149 +366,45 @@ class NDMStaticTransInr(nn.Module):
             print(f"max abs diff   : {(eps_high - eps_low).abs().max():.4f}")
             print("==================================")
 
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            t_norm = torch.full((n_samples, 1), t / (self.T - 1), device=device)
-            theta0_hat = self.denoiser(curr_theta, t_norm)  # (B, weight_dim)
+        for t in tqdm(range(self.T - 1, -1, -1), desc="Sampling", total=self.T):
+            t_norm = torch.full((n_samples,), t / (self.T - 1), device=device).unsqueeze(-1)
+
+            # 2. Predict noise tokens
+            eps_hat = self.denoiser(curr_theta, t_norm)
+
+            alpha_t = self.alpha[t]
+            alpha_bar_t = self.alpha_cumprod[t]
+            beta_t = self.beta[t]
+
+            # Standard DDPM formulation for the posterior mean
+            coeff1 = 1.0 / torch.sqrt(alpha_t)
+            coeff2 = (1.0 - alpha_t) / torch.sqrt(1.0 - alpha_bar_t)
+
+            mean = coeff1 * (curr_theta - coeff2 * eps_hat)
 
             if t > 0:
-                alpha_bar = self.alpha_cumprod[t]
-                alpha_bar_prev = self.alpha_cumprod[t - 1]
-                alpha_t = self.alpha[t]
-                beta_t = self.beta[t]
-
-                coeff_x0 = torch.sqrt(alpha_bar_prev) * beta_t / (1.0 - alpha_bar)
-                coeff_xt = torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
-                mean = coeff_x0 * theta0_hat + coeff_xt * curr_theta
-
-                sigma = torch.sqrt(beta_t * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
-                z = torch.randn_like(curr_theta) if t > 1 else torch.zeros_like(curr_theta)
-                curr_theta = mean + sigma * z
+                # Standard simplified variance
+                sigma = torch.sqrt(beta_t)
+                curr_theta = mean + sigma * torch.randn_like(curr_theta)
             else:
-                curr_theta = theta0_hat  # t=0: just return the clean prediction
-
-            if GLOBAL_DEBUG_BOOL:
-                print(f"DEBUG torch.sqrt(alpha_bar):    {torch.sqrt(alpha_bar)}")
-                if t % 100 == 0 or t == self.T - 1:
-                    print(f"==================== DEBUG: Theta_0 Computation T={t} ====================")
-                    print(f"DEBUG curr_theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
-                    print(f"DEBUG curr_theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
-                    print("")
-                    print(f"DEBUG theta_0 before clipping: mean={theta0_hat.mean():.4f}, std={theta0_hat.std():.4f}")
-                    print(f"DEBUG theta_0 before clipping: min={theta0_hat.min():.4f}, max={theta0_hat.max():.4f}")
-                    print("================================================================")
+                curr_theta = mean
 
             if collect_snapshots and t in T_values:
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
-        if self.normalize:
-            curr_theta = self.scaler(curr_theta, reverse=True)
-
-        if collect_snapshots:
-            return curr_theta, snapshots
-        return curr_theta
-
-    @torch.no_grad()
-    def sample_weight_old(
-        self,
-        n_samples: int = 1,
-        collect_snapshots: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, dict[int, np.ndarray]]:
-        """
-        Sample weight vectors via reverse diffusion.
-        Args:
-            n_samples:          Number of samples to generate.
-            collect_snapshots:  If True, also return weight distributions at T_VALUES.
-        Returns:
-            curr_theta: (n_samples, weight_dim) sampled weights.
-            snapshots:  {t_value: flat np.ndarray} — only returned if collect_snapshots=True.
-        """
-        weight_dim = self.weight_encoder.weight_dim
-        device = self.sqrt_alpha_cumprod.device
-        clip_value = 3
-
-        # T-values at which to snapshot the weight distribution
-        T_values = {self.T - 1, 3 * self.T // 4, self.T // 2, self.T // 4, 0}  # noqa: N806
-        snapshots: dict[int, np.ndarray] = {}
-
-        curr_theta = torch.randn(n_samples, weight_dim, device=device)
-
-        if GLOBAL_DEBUG_BOOL:
-            fixed_theta = torch.randn(1, weight_dim, device=device)
-            t_high = torch.full((1, 1), 999 / (self.T - 1), device=device)
-            t_low = torch.full((1, 1), 0 / (self.T - 1), device=device)
-            eps_high = self.noise_predictor(fixed_theta, t_high)
-            eps_low = self.noise_predictor(fixed_theta, t_low)
-            print("===== TIME SENSITIVITY CHECK =====")
-            print(f"eps_hat @ t=999: mean={eps_high.mean():.4f}, std={eps_high.std():.4f}")
-            print(f"eps_hat @ t=0  : mean={eps_low.mean():.4f},  std={eps_low.std():.4f}")
-            print(f"max abs diff   : {(eps_high - eps_low).abs().max():.4f}")
-            print("==================================")
-
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T):
-            t_norm = torch.full((n_samples, 1), t / (self.T - 1), device=device)
-            eps_hat = self.noise_predictor(curr_theta, t_norm)
-            alpha_bar = self.alpha_cumprod[t]
-            alpha = self.alpha[t]
-            beta = self.beta[t]
-            sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
-            theta_0 = (curr_theta - sqrt_one_minus_alpha_bar * eps_hat) / torch.sqrt(alpha_bar)
-
-            if GLOBAL_DEBUG_BOOL:
-                print(f"DEBUG sqrt_one_minus_alpha_bar: {sqrt_one_minus_alpha_bar}")
-                print(f"DEBUG torch.sqrt(alpha_bar):    {torch.sqrt(alpha_bar)}")
-                if t % 100 == 0 or t == self.T - 1:
-                    print(f"==================== DEBUG: Theta_0 Computation T={t} ====================")
-                    print(f"DEBUG eps_hat: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}")
-                    print(f"DEBUG eps_hat: min={eps_hat.min():.4f}, max={eps_hat.max():.4f}")
-                    print("")
-                    print(f"DEBUG curr_theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
-                    print(f"DEBUG curr_theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
-                    print("")
-                    print(f"DEBUG theta_0 before clipping: mean={theta_0.mean():.4f}, std={theta_0.std():.4f}")
-                    print(f"DEBUG theta_0 before clipping: min={theta_0.min():.4f}, max={theta_0.max():.4f}")
-                    print("================================================================")
-
-            theta_0_clipped = torch.clamp(theta_0, -clip_value, clip_value)
-
-            if t > 0:
-                alpha_bar_prev = self.alpha_cumprod[t - 1]
-                coeff_x0 = (torch.sqrt(alpha_bar_prev) * beta) / (1.0 - alpha_bar)
-                coeff_xt = (torch.sqrt(alpha) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar)
-                mean = coeff_x0 * theta_0_clipped + coeff_xt * curr_theta
-                sigma = torch.sqrt(beta * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
-                noise = torch.randn_like(curr_theta)
-                curr_theta = mean + sigma * noise
-            else:
-                curr_theta = theta_0_clipped
-
-            # Snapshot curr_theta after the step at each target T-value
-            if collect_snapshots and t in T_values:
-                snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
-
-            if GLOBAL_DEBUG_BOOL:  # noqa: SIM102
-                if t % 100 == 0 or t == self.T - 1:
-                    print(f"==================== DEBUG: Sampling Process T={t}====================")
-                    print(f"DEBUG SAMPLE t={t}: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
-                    print(
-                        "DEBUG theta_0 before clipping: "
-                        f"mean={theta_0.mean():.4f}, std={theta_0.std():.4f}, "
-                        f"min={theta_0.min():.4f}, max={theta_0.max():.4f}"
-                    )
-                    print(
-                        "DEBUG curr_theta after clipping: "
-                        f"mean={theta_0_clipped.mean():.4f}, std={theta_0_clipped.std():.4f}, "
-                        f"min={theta_0_clipped.min():.4f}, max={theta_0_clipped.max():.4f}"
-                    )
-
-        if GLOBAL_DEBUG_BOOL:
-            print("==================== DEBUG: Final Theta after Reverse Scaling ====================")
-            print(f"DEBUG final theta: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}")
-            print(f"DEBUG final theta: min={curr_theta.min():.4f}, max={curr_theta.max():.4f}")
-            print("================================================================")
-
-        if self.normalize:
-            # Reverse scaling to get back to the original weight space before decoding
-            curr_theta = self.scaler(curr_theta, reverse=True)
+            # Print statistics every 100 steps for debugging
+            if (t % 100 == 0 and GLOBAL_DEBUG_BOOL) or (t == 0 and GLOBAL_DEBUG_BOOL):
+                print("################## Sampling: ##############################")
+                print(f"Sampling step {t}/{self.T}:")
+                print(
+                    f"predicted noise (eps_hat) stats: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}",
+                    f"min={eps_hat.min():.4f}, max={eps_hat.max():.4f}",
+                )
+                print(
+                    f"curr_theta stats: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}",
+                    f"min={curr_theta.min():.4f}, max={curr_theta.max():.4f}",
+                )
+                print("###########################################################\n")
 
         if collect_snapshots:
             return curr_theta, snapshots

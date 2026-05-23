@@ -44,12 +44,12 @@ from src.utility.model_builders import build_model
 from src.utility.plotting import (
     plot_forward_trajectory_progression,
     plot_fphi_progression,
-    plot_reconstruction_diffusion_progression,
+    plot_reconstruction_diffusion_progression,  # noqa: F401
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
-    plot_weight_distribution_progression,
-    plot_weight_profile_progression,
+    plot_weight_distribution_progression,  # noqa: F401
+    plot_weight_profile_progression,  # noqa: F401
 )
 from src.utility.training import train
 
@@ -226,7 +226,9 @@ def run_training(
                     device,
                     data_config,
                     filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
                 )
+                """
                 # noises image to t=n noise and then does "sampling" to get back to reconstruction
                 plot_reconstruction_diffusion_progression(
                     model,
@@ -237,6 +239,7 @@ def run_training(
                     data_config,
                     filename=f"reconstruction_diffusion_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
+                
                 # plots the weight_vector from weightencoder as a line with weightvector dim as x axis and weight value as y axis
                 plot_weight_profile_progression(
                     model=model,
@@ -257,6 +260,7 @@ def run_training(
                     data_config=data_config,
                     filename=f"weight_distribution_progression_ep{start_epoch + 1}-{end_epoch}",
                 )
+                """
                 plot_forward_trajectory_progression(
                     model=model,
                     batch=batch,
@@ -265,6 +269,8 @@ def run_training(
                     device=device,
                     data_config=data_config,
                     filename=f"Forward_noising_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                    normalize=args.normalize,
                 )
 
     # Load existing history for resumed runs; fresh dict otherwise

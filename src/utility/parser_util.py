@@ -131,6 +131,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_predictor_t_embed_dim", type=int, default=128)
     p.add_argument("--noise_predictor_depth", type=int, default=4)
     p.add_argument("--noise_predictor_dropout", type=float, default=0.1)
+    p.add_argument("--noise_predictor_chunk_size", type=int, default=128)
     # ── NDM Latent Diffusion ──────────────────────────────────────────────────────
     p.add_argument("--latent_size", type=int, default=14)
     p.add_argument("--latent_patch_size", type=int, default=2)
