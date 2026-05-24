@@ -56,32 +56,16 @@ class WeightScaler(nn.Module):
                 batch_mean = x.mean(dim=0, keepdim=True)
                 batch_std = x.std(dim=0, keepdim=True) + 1e-6
 
-                if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                    print(f"DEBUG WeightScaler Batch Mean: {batch_mean.mean().item():.4f}, Batch Std: {batch_std.mean().item():.4f}")
-
                 # Update running statistics (Exponential Moving Average)
                 with torch.no_grad():
                     self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean
                     self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
-
-                # Use current batch stats for standardization during training
-                if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                    print(f"DEBUG WeightScaler Forward: batch mean {batch_mean.mean().item():.4f} and std {batch_mean.std().item():.4f}")
-                    print(f"DEBUG WeightScaler Forward: batch std {batch_std.mean().item():.4f} and std {batch_std.std().item():.4f}")
                 return (x - batch_mean) / batch_std
             else:
                 # Use remembered stats for standardization during inference/validation
                 return (x - self.running_mean) / self.running_std
 
         else:
-            # Re-scaling for INR (Reverse process)
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                print(
-                    f"DEBUG WeightScaler Reverse: running mean {self.running_mean.mean().item():.4f} and {self.running_mean.std().item():.4f}"  # noqa: E501
-                )
-                print(
-                    f"DEBUG WeightScaler Reverse: running std {self.running_std.mean().item():.4f} and std {self.running_std.std().item():.4f}"  # noqa: E501
-                )
             return (x * self.running_std) + self.running_mean
 
 
@@ -200,14 +184,11 @@ class NDMStaticTransInr(nn.Module):
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
         t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
-        print("probablisitc flag:", self.probablistic)
         if self.probablistic:
             mean, logvar = self.weight_encoder(x)
             theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
-            print(f"theta_prime_raw shape (probabilistic): {theta_prime_raw.shape}")
         else:
             theta_prime_raw = self.weight_encoder(x)
-            print(f"theta_prime_raw shape (deterministic): {theta_prime_raw.shape}")
 
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
@@ -307,6 +288,25 @@ class NDMStaticTransInr(nn.Module):
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
 
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("############# Reconstruction Loss: #################")
+            print("x_flat shape:", x_flat.shape)
+            print(
+                "x_flat.min():",
+                x_flat.min(),
+                "\nx_flat.max():",
+                x_flat.max(),
+                "\nx_flat.mean():",
+                x_flat.mean(),
+                "\nx_flat.std():",
+                x_flat.std(),
+            )
+            print("x_recon shape:", x_recon.shape)
+            print(
+                "x_recon.min():", x_recon.min(), "\nx_recon.max():", x_recon.max(), "\nx_recon.mean():", x_recon.mean(), "\nx_recon.std():", x_recon.std()
+            )
+            print("###############################################\n")
+
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
     def _l_diff(self, theta_t, t_norm, epsilon) -> torch.Tensor:
@@ -322,6 +322,43 @@ class NDMStaticTransInr(nn.Module):
         epsilon_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
 
         mse = F.mse_loss(epsilon_hat, epsilon, reduction="none").sum(dim=-1)  # (B,)
+
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("############# Diffusion Loss: #################")
+            print("epsilon shape:", epsilon.shape)
+            print(
+                "epsilon.min():",
+                epsilon.min(),
+                "\nepsilon.max():",
+                epsilon.max(),
+                "\nepsilon.mean():",
+                epsilon.mean(),
+                "\nepsilon.std():",
+                epsilon.std(),
+            )
+            print("eps_hat shape:", epsilon_hat.shape)
+            print(
+                "eps_hat.min():",
+                epsilon_hat.min(),
+                "\neps_hat.max():",
+                epsilon_hat.max(),
+                "\neps_hat.mean():",
+                epsilon_hat.mean(),
+                "\neps_hat.std():",
+                epsilon_hat.std(),
+            )
+            print("MSE shape:", mse.shape)
+            print(
+                "MSE.min():",
+                mse.min(),
+                "\nMSE.max():",
+                mse.max(),
+                "\nMSE.mean():",
+                mse.mean(),
+                "\nMSE.std():",
+                mse.std(),
+            )
+            print("###############################################\n")
 
         return mse
 
@@ -392,13 +429,15 @@ class NDMStaticTransInr(nn.Module):
             mean = coeff1 * (curr_theta - coeff2 * eps_hat)
 
             if t > 0:
-                # Standard simplified variance
-                sigma = torch.sqrt(beta_t)
+                alpha_bar_prev = self.alpha_cumprod[t - 1]
+                beta_tilde = (1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t) * beta_t
+                sigma = torch.sqrt(beta_tilde)
                 curr_theta = mean + sigma * torch.randn_like(curr_theta)
             else:
                 curr_theta = mean
 
             if collect_snapshots and t in T_values:
+                
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
             # Print statistics every 100 steps for debugging
@@ -414,6 +453,9 @@ class NDMStaticTransInr(nn.Module):
                     f"min={curr_theta.min():.4f}, max={curr_theta.max():.4f}",
                 )
                 print("###########################################################\n")
+
+        if self.normalize:
+            curr_theta = self.scaler(curr_theta, reverse=True, training=False)
 
         if collect_snapshots:
             return curr_theta, snapshots
@@ -491,3 +533,5 @@ class NDMStaticTransInr(nn.Module):
         theta_t = alpha_t * theta_prime + sigma_t * epsilon
 
         return theta_t, epsilon
+
+

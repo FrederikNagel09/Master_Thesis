@@ -958,7 +958,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
             "ff_dim": encoder_ff_dim,
         },
     }
-    print("\nprobablistic: ", args.probablistic)
+    
     encoder = TransInrEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
