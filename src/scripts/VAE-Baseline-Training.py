@@ -235,9 +235,12 @@ def save_training_graph(
         save_path:        full file path to save the .png
     """
     total_steps = len(history["elbo"])
-    # Tick positions and labels at epoch boundaries
-    tick_positions = [i * steps_per_epoch for i in range(epochs + 1)]
-    tick_labels = [str(i) for i in range(epochs + 1)]
+
+    # Sample ~10 evenly spaced ticks regardless of epoch count
+    max_ticks = 10
+    step = max(1, epochs // max_ticks)
+    tick_positions = [i * steps_per_epoch for i in range(0, epochs + 1, step)]
+    tick_labels = [str(i) for i in range(0, epochs + 1, step)]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     panels = [
