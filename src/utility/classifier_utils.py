@@ -88,33 +88,52 @@ def _load_or_compute_real_features(
     classifier: UNetClassifier,
     inception,
     device: str,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Returns (mnist_features, inception_features) for the real MNIST train set.
+    Returns (mnist_features, inception_features, label_distribution) for the real MNIST train set.
     Computes once and caches to CACHE_PATH; loads from cache on subsequent runs.
+
+    Args:
+        classifier: trained MNIST classifier
+        inception: inception model for feature extraction
+        device: torch device string
+    Returns:
+        mnist_feats:    (N, D1) classifier features
+        inception_feats:(N, D2) inception features
+        dist_real:      (10,)   class distribution over digits 0-9
     """
     if os.path.exists(CACHE_PATH):
         print("  Loading cached real MNIST features …")
         data = np.load(CACHE_PATH)
-        return data["mnist_features"], data["inception_features"]
+        return data["mnist_features"], data["inception_features"], data["label_distribution"]
 
     print("  Computing real MNIST features (first run — will be cached) …")
     mnist = datasets.MNIST("data/", train=True, download=True, transform=transforms.ToTensor())
     loader = torch.utils.data.DataLoader(mnist, batch_size=512, shuffle=False)
 
     all_imgs = []
-    for x, _ in tqdm(loader, desc="    Loading MNIST", leave=False):
+    all_labels = []
+    for x, y in tqdm(loader, desc="    Loading MNIST", leave=False):
         all_imgs.append(x)
+        all_labels.append(y)
+
     real_images = torch.cat(all_imgs)  # (60000, 1, 28, 28)
+    all_labels = torch.cat(all_labels)  # (60000,)
 
     print("    Extracting MNIST classifier features …")
     mnist_feats, _ = _mnist_features(real_images, classifier, device)
-
     print("    Extracting Inception features …")
     inception_feats = _inception_features(real_images, inception, device)
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    np.savez(CACHE_PATH, mnist_features=mnist_feats, inception_features=inception_feats)
-    print(f"  Real features cached → {CACHE_PATH}")
+    # Use ground-truth labels for the real distribution (not classifier predictions)
+    dist_real = np.bincount(all_labels.numpy(), minlength=10) / len(all_labels)
 
-    return mnist_feats, inception_feats
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    np.savez(
+        CACHE_PATH,
+        mnist_features=mnist_feats,
+        inception_features=inception_feats,
+        label_distribution=dist_real,
+    )
+    print(f"  Real features cached → {CACHE_PATH}")
+    return mnist_feats, inception_feats, dist_real

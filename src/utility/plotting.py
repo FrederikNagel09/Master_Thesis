@@ -25,10 +25,10 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import torch
+from torchvision import datasets, transforms
 from tqdm import tqdm
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL
-from src.configs.results_config import MODEL_COLORS, MODEL_LABELS
 from src.configs.train_plot_config import _COLORS, _LABELS
 
 # =============================================================================
@@ -734,8 +734,11 @@ def plot_reconstruction_progression(
             x_recon = model._decode_latent(z)
     elif model_name == "ndm_static_transinr":
         with torch.no_grad():
-            mean, logvar = model.weight_encoder(x)
-            theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+            if model.probablistic:
+                mean, logvar = model.weight_encoder(x)
+                theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+            else:
+                theta_prime_raw = model.weight_encoder(x)
         x_recon = model._inr_decode(theta_prime_raw)
     else:
         with torch.no_grad():
@@ -1588,8 +1591,11 @@ def plot_forward_trajectory_progression(
             new_row_data.append(theta_t.detach().cpu().numpy().flatten())
     elif model_name == "ndm_static_transinr":
         # encode latents
-        mean, logvar = model.weight_encoder(x)
-        theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+        if model.probablistic:
+            mean, logvar = model.weight_encoder(x)
+            theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+        else:
+            theta_prime_raw = model.weight_encoder(x)
 
         if normalize:
             theta_prime_raw = model.scaler(theta_prime_raw, reverse=False)
@@ -1741,46 +1747,84 @@ def plot_forward_trajectory_progression(
 
 def _build_figure(
     metrics: dict,
+    sample_images: dict[str, np.ndarray],
+    real_dist: np.ndarray,
     out_path: str,
 ) -> None:
     """
-    metrics: dict keyed by model_key, each with:
-        mnist_fid, inception_fid, uniformity, dist_gen (np array len 10)
+    Builds and saves the comparison figure with three sections:
+    table (top, 3 models only), 4x4 image grids (middle, real + 3 models),
+    bar charts (bottom, real + 3 models).
+
+    Args:
+        metrics:       dict keyed by slot ("model_1/2/3") →
+                       {mnist_fid, inception_fid, uniformity, dist_gen, label, color}
+        sample_images: dict keyed by slot → np.ndarray (16, C, H, W) in [0,1]
+        real_dist:     (10,) ground-truth class distribution for real MNIST
+        out_path:      path to save the figure
+    Returns:
+        None
     """
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
     model_keys = list(metrics.keys())
     n_models = len(model_keys)
+    n_grids = 1 + n_models
     digits = np.arange(10)
 
+    REAL_COLOR = "#444444"  # noqa: N806
+    REAL_LABEL = "Real MNIST"  # noqa: N806
+
+    # Load 16 real MNIST images for the grid
+    mnist = datasets.MNIST("data/", train=False, download=True, transform=transforms.ToTensor())
+    indices = np.random.choice(len(mnist), 16, replace=False)
+    real_grid = np.stack([mnist[i][0].numpy() for i in indices])  # (16, 1, 28, 28)
+
     # ── Figure layout ─────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(5 * n_models, 9))
+    fig = plt.figure(figsize=(5 * n_grids, 13))
     fig.patch.set_facecolor("white")
 
-    # Table takes top 30%, bar plots take bottom 60%, small gap in between
-    ax_table = fig.add_axes([0.05, 0.68, 0.90, 0.28])
+    ax_table = fig.add_axes([0.05, 0.76, 0.90, 0.21])
     ax_table.axis("off")
 
+    grid_gap = 0.02
+    grid_w = (0.88 - (n_grids - 1) * grid_gap) / n_grids
+    grid_bottom = 0.495
+    grid_height = 0.245
+    grid_axes = []
+    grid_labels = [REAL_LABEL] + [metrics[k]["label"] for k in model_keys]
+    grid_colors = [REAL_COLOR] + [metrics[k]["color"] for k in model_keys]
+
+    for g in range(n_grids):
+        axes_row = []
+        for row in range(4):
+            for col in range(4):
+                left = 0.06 + g * (grid_w + grid_gap) + col * (grid_w / 4)
+                bottom = grid_bottom + (3 - row) * (grid_height / 4)
+                ax = fig.add_axes([left, bottom, grid_w / 4, grid_height / 4])
+                ax.axis("off")
+                axes_row.append(ax)
+        grid_axes.append(axes_row)
+
+    bar_w = 0.82 / n_grids
+    bar_gap = 0.02
     bar_axes = []
-    bar_w = 0.82 / n_models
-    for i in range(n_models):
-        ax = fig.add_axes([0.08 + i * (bar_w + 0.02), 0.08, bar_w, 0.52])
+    for i in range(n_grids):
+        ax = fig.add_axes([0.06 + i * (bar_w + bar_gap), 0.06, bar_w, 0.40])
         bar_axes.append(ax)
 
-    # ── Table ─────────────────────────────────────────────────────────────────
+    # ── Table (3 models only) ─────────────────────────────────────────────────
     col_labels = ["Model", "MNIST FID ↓", "Inception FID ↓", "Uniformity ↓"]
     table_data = []
     for key in model_keys:
         m = metrics[key]
         table_data.append(
             [
-                MODEL_LABELS[key],
+                m["label"],
                 f"{m['mnist_fid']:.2f}",
                 f"{m['inception_fid']:.2f}",
                 f"{m['uniformity']:.2f}",
             ]
         )
-
     tbl = ax_table.table(
         cellText=table_data,
         colLabels=col_labels,
@@ -1791,7 +1835,6 @@ def _build_figure(
     tbl.set_fontsize(11)
     tbl.scale(1, 2.2)
 
-    # Find best (lowest) value per metric column
     best_mnist = min(range(n_models), key=lambda i: metrics[model_keys[i]]["mnist_fid"])
     best_inception = min(range(n_models), key=lambda i: metrics[model_keys[i]]["inception_fid"])
     best_uniformity = min(range(n_models), key=lambda i: metrics[model_keys[i]]["uniformity"])
@@ -1801,16 +1844,12 @@ def _build_figure(
         cell.set_edgecolor("#dddddd")
         cell.set_facecolor("#f5f5f5" if row % 2 == 0 else "white")
         cell.set_text_props(color="#111111")
-
-        if row == 0:  # header
+        if row == 0:
             cell.set_facecolor("#eeeeee")
             cell.set_text_props(fontweight="bold", color="#111111")
-
-        if row > 0 and col == 0:  # model name — colour coded
-            key = model_keys[row - 1]
-            cell.set_text_props(color=MODEL_COLORS[key], fontweight="bold")
-
-        if row > 0 and col in best_cols:  # best value — bold green  # noqa: SIM102
+        if row > 0 and col == 0:
+            cell.set_text_props(color=metrics[model_keys[row - 1]]["color"], fontweight="bold")
+        if row > 0 and col in best_cols:  # noqa: SIM102
             if best_cols[col] == row - 1:
                 cell.set_text_props(color="#2a9d3a", fontweight="bold")
 
@@ -1822,22 +1861,43 @@ def _build_figure(
         color="#111111",
     )
 
-    # ── Bar plots ─────────────────────────────────────────────────────────────
-    y_max = max(metrics[k]["dist_gen"].max() for k in model_keys) * 100 * 1.25
+    # ── Image grids (real + 3 models) ─────────────────────────────────────────
+    all_grids = [real_grid] + [sample_images[k] for k in model_keys]
 
-    for i, (ax, key) in enumerate(zip(bar_axes, model_keys, strict=False)):
-        dist = metrics[key]["dist_gen"]
-        color = MODEL_COLORS[key]
+    for g, (images, label, color) in enumerate(zip(all_grids, grid_labels, grid_colors, strict=False)):
+        for idx in range(16):
+            ax = grid_axes[g][idx]
+            img = images[idx]
+            if img.shape[0] == 1:
+                ax.imshow(img[0], cmap="gray", vmin=0, vmax=1, aspect="auto")
+            else:
+                ax.imshow(np.transpose(img, (1, 2, 0)).clip(0, 1), aspect="auto")
+        grid_centre_x = 0.06 + g * (grid_w + grid_gap) + grid_w / 2
+        fig.text(
+            grid_centre_x,
+            grid_bottom + grid_height + 0.01,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+            color=color,
+        )
 
+    # ── Bar plots (real + 3 models) ───────────────────────────────────────────
+    all_dists = [real_dist] + [metrics[k]["dist_gen"] for k in model_keys]
+    all_colors = [REAL_COLOR] + [metrics[k]["color"] for k in model_keys]
+    all_labels = [REAL_LABEL] + [metrics[k]["label"] for k in model_keys]
+    y_max = max(d.max() for d in all_dists) * 100 * 1.25
+
+    for i, (ax, dist, color, label) in enumerate(zip(bar_axes, all_dists, all_colors, all_labels, strict=False)):
         ax.bar(digits, dist * 100, color=color, alpha=0.85, width=0.65)
         ax.axhline(10, color="#999999", linewidth=1.0, linestyle="--", label="Uniform (10%)")
-
         ax.set_xticks(digits)
         ax.set_xticklabels([str(d) for d in digits], fontsize=10)
         ax.set_ylim(0, y_max)
         ax.set_xlabel("Digit", fontsize=10)
-        ax.set_title(MODEL_LABELS[key], fontsize=11, fontweight="bold", color=color, pad=6)
-
+        ax.set_title(label, fontsize=11, fontweight="bold", color=color, pad=6)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.spines["left"].set_edgecolor("#cccccc")
@@ -1845,7 +1905,6 @@ def _build_figure(
         ax.tick_params(colors="#555555")
         ax.yaxis.grid(True, color="#eeeeee", linewidth=0.8, zorder=0)
         ax.set_axisbelow(True)
-
         if i == 0:
             ax.set_ylabel("% of samples", fontsize=10)
             ax.legend(fontsize=9, framealpha=0.8, loc="upper right")

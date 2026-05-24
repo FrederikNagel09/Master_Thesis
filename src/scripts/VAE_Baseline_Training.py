@@ -15,7 +15,7 @@ from src.models.trans_inr import TransInr, make_coord_grid
 from src.utility.dataset_builders import build_dataset
 
 """
-python src/scripts/VAE-Baseline-Training.py \
+python src/scripts/VAE_Baseline_Training.py \
     --run_name vae-test \
     --dataset mnist \
     --epochs 50 \

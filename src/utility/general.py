@@ -157,17 +157,12 @@ def _save_config(
     start_time: datetime,
     end_time: datetime,
 ) -> None:
-    from src.configs.hyperparameter_config import MODEL_SECTIONS, SECTIONS
-
     duration = end_time - start_time
     hours, remainder = divmod(int(duration.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
 
     # ── Build hparam sections ─────────────────────────────────────────────────
     # Unknown models fall back to saving all sections
-    active_sections = MODEL_SECTIONS.get(args.model, list(SECTIONS.keys()))
-    args_dict = vars(args)
-    hparams = {section: {k: args_dict[k] for k in SECTIONS[section] if k in args_dict} for section in active_sections}
 
     config = {
         "run_name": args.run_name,
@@ -188,7 +183,7 @@ def _save_config(
             "run_dir": run_dir,
         },
         "data": data_config,
-        **hparams,  # each section becomes a top-level key in the JSON
+        "hparams": vars(args),
     }
     metadata_path = os.path.join(run_dir, "metadata")
     path = os.path.join(metadata_path, "config.json")

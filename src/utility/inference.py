@@ -17,10 +17,14 @@ For models that support multi-resolution (inr_vae, ndm_inr) pass:
     images = sample(..., resolution=128)
 """
 
+import argparse
+import json
+import os
 import sys
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 sys.path.append(".")
 
@@ -30,11 +34,139 @@ from src.utility.general import (
     _load_config,
     _make_coord_grid,
 )
-from src.utility.model_builders import build_model
+from src.utility.model_builders import _build_ndm_latent_diffusion, _build_ndm_static_transinr, _build_transinr_vae
+
+
+def _load_vae_config(config_path: str) -> tuple[argparse.Namespace, dict, str]:
+    """
+    Loads a flat VAE config JSON and returns (args, data_config, weights_path).
+
+    Args:
+        config_path: path to the flat VAE config JSON
+    Returns:
+        args:         Namespace with all VAE hyperparameters
+        data_config:  dict with channels and img_size (inferred from dataset name)
+        weights_path: path to the saved weights .pt file
+    """
+    with open(config_path) as f:
+        config = json.load(f)
+
+    args = argparse.Namespace(**config)
+
+    # Infer data_config from dataset name — VAE config has no "data" block
+    dataset_defaults = {
+        "mnist": {"channels": 1, "img_size": 28},
+        "cifar10": {"channels": 3, "img_size": 32},
+    }
+    dataset_name = config.get("dataset", "mnist")
+    data_config = dataset_defaults.get(dataset_name, {"channels": 1, "img_size": 28})
+
+    # Weights sit next to the config, named <run_name>_weights.pt
+    weights_path = os.path.join(
+        os.path.dirname(config_path),
+        f"{config['run_name']}_weights.pt",
+    )
+
+    return args, data_config, weights_path
+
 
 # =============================================================================
 # Per-model sampling
 # =============================================================================
+
+
+def _sample_latent_inr_diffusion(
+    model: nn.Module,
+    n_samples: int,
+    data_config: dict,
+    **kwargs,  # noqa: ARG001
+) -> torch.Tensor:
+    """
+    Sample from LatentINRDiffusion via model.sample().
+    Returns (N, C, H, W) in [0, 1].
+
+    Args:
+        model:       LatentINRDiffusion instance
+        n_samples:   number of images to generate
+        device:      torch device string
+        data_config: dict with channels and img_size
+    Returns:
+        samples: (N, C, H, W) float tensor in [0, 1]
+    """
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+
+    model.eval()
+    with torch.no_grad():
+        raw = model.sample(n_samples)  # (N, C*H*W) in [-1, 1]
+
+    return (raw * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+
+
+def _sample_ndm_static_transinr(
+    model: nn.Module,
+    n_samples: int,
+    data_config: dict,
+    **kwargs,  # noqa: ARG001
+) -> torch.Tensor:
+    """
+    Sample from NdmStaticTransInr via model.sample_weight() + model._inr_decode().
+    Returns (N, C, H, W) in [0, 1].
+
+    Args:
+        model:       NdmStaticTransInr instance
+        n_samples:   number of images to generate
+        device:      torch device string
+        data_config: dict with channels and img_size
+    Returns:
+        samples: (N, C, H, W) float tensor in [0, 1]
+    """
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+
+    model.eval()
+    with torch.no_grad():
+        raw = model.sample_weight(n_samples)  # (N, weight_dim)
+        decoded = model._inr_decode(raw[:n_samples])  # (N, C*H*W)
+
+    return (decoded * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+
+
+def _sample_transinr_vae(
+    model: nn.Module,
+    n_samples: int,
+    device: str,
+    **kwargs,  # noqa: ARG001
+) -> torch.Tensor:
+    """
+    Sample from VAEWrapper by drawing z ~ N(0, I) and decoding.
+    Returns (N, C, H, W) in [0, 1].
+
+    Args:
+        model:       VAEWrapper instance
+        n_samples:   number of images to generate
+        device:      torch device string
+        data_config: dict with channels and img_size
+    Returns:
+        samples: (N, C, H, W) float tensor in [0, 1]
+    """
+    dev = torch.device(device)
+
+    # Update the VAE's internal device reference and coord buffer
+    model.device = dev
+    model.coord_grid = model.coord_grid.to(dev)
+
+    model.eval()
+    with torch.no_grad():
+        z = torch.randn(
+            n_samples,
+            model.latent_encoder.upsample_mu.out_channels,
+            model.latent_encoder.latent_size[0],
+            model.latent_encoder.latent_size[1],
+        ).to(dev)
+        samples = model._decode_latent(z)  # (N, C, H, W) in [-1, 1]
+
+    return (samples * 0.5 + 0.5).clamp(0, 1)
 
 
 def _sample_ndm(
@@ -188,16 +320,17 @@ def _sample_at_resolutions_ndm_inr(
 # =============================================================================
 
 
-_SAMPLE_FN = {
-    "ndm": _sample_ndm,
-    "inr_vae": _sample_inr_vae,
-    "ndm_inr": _sample_ndm_inr,
+_BUILD_FN = {
+    "latent_inr_diffusion": _build_ndm_latent_diffusion,
+    "ndm_static_transinr": _build_ndm_static_transinr,
+    "transinr_vae": _build_transinr_vae,
 }
 
-
-# =============================================================================
-# Public API
-# =============================================================================
+_SAMPLE_FN = {
+    "latent_inr_diffusion": _sample_latent_inr_diffusion,
+    "ndm_static_transinr": _sample_ndm_static_transinr,
+    "transinr_vae": _sample_transinr_vae,
+}
 
 
 def sample(
@@ -211,46 +344,44 @@ def sample(
     """
     Load a trained model from a config file and sample from it.
 
-    Parameters
-    ----------
-    model_name  : One of "ndm", "inr_vae", "ndm_inr".
-    config_path : Path to the config.json saved during training.
-    n_samples   : Number of images to sample.
-    device      : Device to run on. Defaults to the best available.
-    resolution  : Optional output resolution (only used by inr_vae and ndm_inr).
-                  If None, uses the native training resolution.
-
-    Returns
-    -------
-    images : torch.Tensor of shape (N, C, H, W) in [0, 1] on CPU.
+    Args:
+        model_name:  One of "latent_inr_diffusion", "ndm_static_transinr", "transinr_vae".
+        config_path: Path to the config.json saved during training.
+        n_samples:   Number of images to sample.
+        device:      Device to run on. Defaults to the best available.
+        resolution:  Optional output resolution. If None, uses native training resolution.
+        batch_size:  Number of images to sample per batch.
+    Returns:
+        images: torch.Tensor of shape (N, C, H, W) in [0, 1] on CPU.
     """
-    # ── Load config ───────────────────────────────────────────────────────────
-    config = _load_config(config_path)
-    args = _config_to_namespace(config)
-    data_config = config["data"]
-    weights_path = config["paths"]["weights"]
+    # VAE has a flat config — handle separately before generic loading
+    if model_name == "transinr_vae":
+        args, data_config, weights_path = _load_vae_config(config_path)
+    else:
+        config = _load_config(config_path)
+        args = _config_to_namespace(config)
+        data_config = config["data"]
+        weights_path = config["paths"]["weights"]
 
-    # ── Device ────────────────────────────────────────────────────────────────
+    print(f"  Inference on  : {device}")
+    print(f"  Building model: {model_name}")
 
-    print(f"  Inference on : {device}")
+    build_fn = _BUILD_FN.get(model_name)
+    if build_fn is None:
+        raise ValueError(f"Unknown model '{model_name}'. Choose from: {list(_BUILD_FN.keys())}")
 
-    # ── Build & load model ────────────────────────────────────────────────────
-    print(f"  Building model : {model_name}")
-    model = build_model(args, data_config).to(device)
+    model = build_fn(args, data_config).to(device)
 
     checkpoint = torch.load(weights_path, map_location=device)
-    if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
-    else:
-        model.load_state_dict(checkpoint)
-    print(f"  Weights loaded : {weights_path}")
+    model.load_state_dict(
+        checkpoint["model_state_dict"] if "model_state_dict" in checkpoint else checkpoint  # noqa: SIM401
+    )
+    print(f"  Weights loaded: {weights_path}")
 
-    # ── Sample ────────────────────────────────────────────────────────────────
     sample_fn = _SAMPLE_FN.get(model_name)
     if sample_fn is None:
-        raise ValueError(f"Unknown model '{model_name}'. Choose from: {list(_SAMPLE_FN.keys())}")
+        raise ValueError(f"No sample function registered for '{model_name}'.")
 
-    # ── Batched sampling ──────────────────────────────────────────────────────
     print(f"  Sampling {n_samples} images in batches of {batch_size} …")
     all_images = []
     remaining = n_samples
@@ -263,9 +394,9 @@ def sample(
             data_config=data_config,
             resolution=resolution,
         )
-        all_images.append(batch.cpu())  # move to CPU immediately to free VRAM
+        all_images.append(batch.cpu())
         remaining -= n
 
     images = torch.cat(all_images, dim=0)
-    print(f"  Done. Output shape: {tuple(images.shape)}  range: [{images.min():.3f}, {images.max():.3f}]")
+    print(f"  Done. shape={tuple(images.shape)}  range=[{images.min():.3f}, {images.max():.3f}]")
     return images

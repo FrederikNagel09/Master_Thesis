@@ -11,7 +11,10 @@ Supported model names (args.model):
     "ndm_inr"   - NeuralDiffusionModel with INR reconstruction
 """
 
-import torch.nn as nn  # noqa: I001
+import argparse
+
+import torch
+import torch.nn as nn
 
 from src.models.LatentEncoder import ResNetLatentEncoder
 from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor
@@ -29,8 +32,9 @@ from src.models.NDM_INR import (
     TransformerStaticWeightEncoder,
     TransformerTemporalWeightEncoder,
 )
-from src.models.trans_inr_encoder import TransInrNoisePredictor, TransInrTemporalEncoder
 from src.models.trans_inr import TransInr, make_coord_grid
+from src.models.trans_inr_encoder import TransInrNoisePredictor, TransInrTemporalEncoder
+from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
 
 # =============================================================================
 # Public API
@@ -201,6 +205,71 @@ def print_mlp_noise_predictor_stats(model):
     print(f"  {'─'*44}")
     print(f"  Total Predictor:   {total:>12,} params")
     print("=" * 60 + "\n")
+
+
+# =============================================================================
+# Trans-INR VAE model builder
+# =============================================================================
+def _build_transinr_vae(args: argparse.Namespace, data_config: dict) -> nn.Module:
+    """
+    Builds a VAEWrapper from a flat VAE config.
+
+    Args:
+        args:        Namespace with VAE hyperparameters (from flat config)
+        data_config: dict with channels and img_size
+    Returns:
+        Uninstantiated VAEWrapper (not yet moved to device)
+    """
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+
+    encoder = ProbabilisticResNetLatentEncoder(
+        in_channels=channels,
+        latent_dim=args.latent_dim,
+        latent_size=(args.latent_size, args.latent_size),
+        hidden_dim=args.latent_enc_hidden_dim,
+    )
+
+    decoder = TransInr(
+        tokenizer={
+            "target": "src.models.trans_inr_helpers.LatentTokenizer",
+            "params": {
+                "latent_dim": args.latent_dim,
+                "latent_size": args.latent_size,
+                "patch_size": args.latent_patch_size,
+                "dim": args.dec_trans_dim,
+                "n_head": args.dec_trans_n_head,
+                "head_dim": args.dec_trans_head_dim,
+            },
+        },
+        inr={
+            "target": "src.models.trans_inr_helpers.SIREN",
+            "params": {
+                "depth": args.inr_layers,
+                "in_dim": 2,
+                "out_dim": channels,
+                "hidden_dim": args.inr_hidden_dim,
+                "out_bias": 0.5,
+            },
+        },
+        data_shape=(img_size, img_size),
+        n_groups=args.dec_trans_n_groups,
+        transformer={
+            "target": "src.models.trans_inr_helpers.Transformer",
+            "params": {
+                "dim": args.dec_trans_dim,
+                "encoder_depth": args.dec_trans_enc_depth,
+                "decoder_depth": args.dec_trans_dec_depth,
+                "n_head": args.dec_trans_n_head,
+                "head_dim": args.dec_trans_head_dim,
+                "ff_dim": args.dec_trans_ff_dim,
+            },
+        },
+        update_strategy=args.dec_trans_update_strategy,
+    )
+
+    # Device is set later in sample(); pass cpu as placeholder
+    return VAEWrapper(encoder, decoder, img_size, device=torch.device("cpu"))
 
 
 # =============================================================================
@@ -889,7 +958,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
             "ff_dim": encoder_ff_dim,
         },
     }
-
+    print("\nprobablistic: ", args.probablistic)
     encoder = TransInrEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
@@ -898,6 +967,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
         update_strategy=encoder_update_strat,
         in_channels=channels,
         img_size=img_size,
+        probablistic=args.probablistic,
     )
 
     weight_dim = encoder.weight_dim
@@ -936,6 +1006,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
         sigma_tilde_factor=args.sigma_tilde,
         data_dim=data_dim,
         img_size=img_size,
+        probablistic=args.probablistic,
     )
     return model
 

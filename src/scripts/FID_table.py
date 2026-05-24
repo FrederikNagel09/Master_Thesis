@@ -2,16 +2,28 @@
 results_fid.py
 Computes MNIST-classifier FID, Inception FID, and class distribution
 for all three models. Caches real MNIST features to avoid recomputation.
-
 Usage
 -----
 python src/scripts/FID_table.py \
-    --ndm     src/train_results/ndm_unet_mnist/metadata/config.json \
-    --inr_vae src/train_results/vae_inr_mnist/metadata/config.json \
-    --ndm_inr src/train_results/ndm_inr_mlp_mnist/metadata/config.json \
-    --out     src/results/fid_comparison.png
+    --model_1_name latent_inr_diffusion \
+    --model_1_config src/trained_models/latent_inr_diffusion_probablistic_annealing_bigger/metadata/config.json \
+    --model_2_name latent_inr_diffusion \
+    --model_2_config src/trained_models/latent_inr_diffusion_probablistic_noNorm_noscaling/metadata/config.json \
+    --model_3_name latent_inr_diffusion \
+    --model_3_config src/trained_models/latent_inr_diffusion_probablistic_noscaling/metadata/config.json \
+    --out src/results/fid_comparison.png
 
-All three model config paths are optional.
+python src/scripts/FID_table.py \
+    --model_1_name transinr_vae \
+    --model_1_config src/results/vae-mnist-0.1_config.json \
+    --model_2_name transinr_vae \
+    --model_2_config src/results/vae-mnist-0.5_config.json \
+    --model_3_name transinr_vae \
+    --model_3_config src/results/vae-mnist-1.0_config.json \
+    --out src/results/fid_comparison.png
+
+
+All three model names and config paths are required.
 """
 
 from __future__ import annotations
@@ -23,12 +35,14 @@ import sys
 import time
 
 sys.path.append(".")
+import warnings
 
 import numpy as np
 
 from src.configs.results_config import (
     FID_SAMPLE_BATCH,
     FID_SCORE_SAMPLES,
+    MODEL_COLORS,
     MODEL_LABELS,
 )
 from src.utility.classifier_utils import (
@@ -43,51 +57,48 @@ from src.utility.inference import sample as model_sample
 from src.utility.metrics_util import _fid, _uniformity_score
 from src.utility.plotting import _build_figure
 
-# =============================================================================
-# Main
-# =============================================================================
+warnings.filterwarnings("ignore", message="The operator 'aten::im2col' is not currently supported on the MPS backend")
+
+VALID_MODELS = {"latent_inr_diffusion", "ndm_static_transinr", "transinr_vae"}
 
 
 def main():
     parser = argparse.ArgumentParser(description="FID and class distribution comparison.")
-    parser.add_argument("--ndm", type=str, default=None)
-    parser.add_argument("--inr_vae", type=str, default=None)
-    parser.add_argument("--ndm_inr", type=str, default=None)
+    for i in (1, 2, 3):
+        parser.add_argument(f"--model_{i}_name", type=str, required=True, choices=VALID_MODELS)
+        parser.add_argument(f"--model_{i}_config", type=str, required=True)
     parser.add_argument("--out", type=str, default="src/results/fid_comparison.png")
     args = parser.parse_args()
 
-    requested = {}
-    for key in ("ndm", "inr_vae", "ndm_inr"):
-        path = getattr(args, key)
-        if path is not None:
-            requested[key] = path
-
-    if not requested:
-        print("No config paths provided. Pass at least one of --ndm, --inr_vae, --ndm_inr.")
-        sys.exit(1)
+    requested = {
+        f"model_{i}": {
+            "name": getattr(args, f"model_{i}_name"),
+            "config": getattr(args, f"model_{i}_config"),
+        }
+        for i in (1, 2, 3)
+    }
 
     device = _get_device()
     print(f"\n{'=' * 55}")
     print(f"  FID Comparison  |  device={device}  |  n={FID_SCORE_SAMPLES:,}")
     print(f"{'=' * 55}\n")
 
-    # ── Load classifier and inception ─────────────────────────────────────────
     print("  Loading MNIST classifier …")
     classifier = _load_classifier(device)
     print("  Loading Inception …")
     inception = _get_inception(device)
 
-    # ── Real MNIST features (cached) ──────────────────────────────────────────
-    real_mnist_feats, real_inception_feats = _load_or_compute_real_features(classifier, inception, device)
+    real_mnist_feats, real_inception_feats, real_dist = _load_or_compute_real_features(classifier, inception, device)
 
-    # ── Per-model evaluation ──────────────────────────────────────────────────
     metrics = {}
+    sample_images = {}  # populated across all iterations before _build_figure
 
-    for model_key, config_path in requested.items():
+    for slot, model_info in requested.items():
+        model_key = model_info["name"]
+        config_path = model_info["config"]
         label = MODEL_LABELS[model_key]
         print(f"\n── {label} ──────────────────────────────────────────")
 
-        # Sample
         print(f"  Sampling {FID_SCORE_SAMPLES:,} images …")
         t0 = time.time()
         images = model_sample(
@@ -96,22 +107,18 @@ def main():
             n_samples=FID_SCORE_SAMPLES,
             device=device,
             batch_size=FID_SAMPLE_BATCH,
-        )  # (N, C, H, W) in [0,1]
+        )
+        sample_images[slot] = images[:16].cpu().numpy()
         print(f"  Sampling done in {time.time() - t0:.1f}s")
 
-        # MNIST classifier features + predictions
         print("  Extracting MNIST classifier features …")
         gen_mnist_feats, gen_preds = _mnist_features(images, classifier, device)
 
-        # Inception features
         print("  Extracting Inception features …")
         gen_inception_feats = _inception_features(images, inception, device)
 
-        # FID scores
         mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
         inception_fid = _fid(real_inception_feats, gen_inception_feats)
-
-        # Class distribution
         dist_gen = np.bincount(gen_preds, minlength=10) / len(gen_preds)
         uniformity = _uniformity_score(dist_gen)
 
@@ -119,11 +126,13 @@ def main():
         print(f"  Inception FID : {inception_fid:.2f}")
         print(f"  Uniformity    : {uniformity:.2f}")
 
-        metrics[model_key] = {
+        metrics[slot] = {
             "mnist_fid": mnist_fid,
             "inception_fid": inception_fid,
             "uniformity": uniformity,
             "dist_gen": dist_gen,
+            "label": MODEL_LABELS[model_key],
+            "color": MODEL_COLORS[model_key],
         }
 
     # ── Save JSON ─────────────────────────────────────────────────────────────
@@ -144,12 +153,12 @@ def main():
 
     # ── Build figure ──────────────────────────────────────────────────────────
     print("  Building figure …")
-    _build_figure(metrics, args.out)
+    _build_figure(metrics, sample_images, real_dist, args.out)
 
     print(f"\n{'=' * 55}")
-    for key, m in metrics.items():
+    for _, m in metrics.items():
         print(
-            f"  {MODEL_LABELS[key]:<10} MNIST FID={m['mnist_fid']:.2f}  "
+            f"  {m['label']:<25} MNIST FID={m['mnist_fid']:.2f}  "
             f"Inception FID={m['inception_fid']:.2f}  "
             f"Uniformity={m['uniformity']:.2f}"
         )
