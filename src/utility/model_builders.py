@@ -958,7 +958,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
             "ff_dim": encoder_ff_dim,
         },
     }
-
+    print("\nprobablistic: ", args.probablistic)
     encoder = TransInrEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
@@ -967,6 +967,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
         update_strategy=encoder_update_strat,
         in_channels=channels,
         img_size=img_size,
+        probablistic=args.probablistic,
     )
 
     weight_dim = encoder.weight_dim
@@ -1005,6 +1006,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
         sigma_tilde_factor=args.sigma_tilde,
         data_dim=data_dim,
         img_size=img_size,
+        probablistic=args.probablistic,
     )
     return model
 

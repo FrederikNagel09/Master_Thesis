@@ -115,6 +115,7 @@ class NDMStaticTransInr(nn.Module):
         img_size: int = 28,
         normalize: bool = True,
         lambda_kl: float = 5e-3,
+        probablistic: bool = False,
     ):
         super().__init__()
         # Initialize model components and noise schedule buffers
@@ -130,6 +131,7 @@ class NDMStaticTransInr(nn.Module):
         self.sigma_tilde_factor = sigma_tilde_factor
 
         self.normalize = normalize
+        self.probablistic = probablistic
 
         if self.normalize:
             self.scaler = WeightScaler(WeightEncoder.weight_dim)
@@ -198,9 +200,14 @@ class NDMStaticTransInr(nn.Module):
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
         t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
-
-        mean, logvar = self.weight_encoder(x)
-        theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+        print("probablisitc flag:", self.probablistic)
+        if self.probablistic:
+            mean, logvar = self.weight_encoder(x)
+            theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+            print(f"theta_prime_raw shape (probabilistic): {theta_prime_raw.shape}")
+        else:
+            theta_prime_raw = self.weight_encoder(x)
+            print(f"theta_prime_raw shape (deterministic): {theta_prime_raw.shape}")
 
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
@@ -272,12 +279,14 @@ class NDMStaticTransInr(nn.Module):
 
         # Given theta_t, and theta_prime we compute the three loss terms:
         l_diff = self._l_diff(theta_t, t_norm, epsilon)
-
-        l_prior = self._l_prior(mean, logvar)
-
         l_rec = self._l_rec(x, theta_prime_raw)
 
-        elbo = l_diff + l_rec + lambda_kl * l_prior
+        if self.probablistic:
+            l_prior = self._l_prior(mean, logvar)
+            elbo = l_diff + l_rec + lambda_kl * l_prior
+        else:
+            l_prior = torch.zeros_like(l_diff)  # dummy zero tensor for logging
+            elbo = l_diff + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 

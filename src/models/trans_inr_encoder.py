@@ -119,6 +119,7 @@ class TransInrEncoder(nn.Module):
         update_strategy: str = "normalize",
         in_channels: int = 1,
         img_size: int = 28,
+        probablistic: bool = False,
     ):
         super().__init__()
 
@@ -129,6 +130,8 @@ class TransInrEncoder(nn.Module):
         self.tokenizer = instantiate_from_config(tokenizer, extra_args={"dim": dim})
         self.inr: SIREN = instantiate_from_config(inr)
         self.transformer = instantiate_from_config(transformer)
+
+        self.probablistic = probablistic
 
         self.base_params = nn.ParameterDict()
         # Two postfc dicts: one for mu, one for logvar
@@ -267,10 +270,12 @@ class TransInrEncoder(nn.Module):
         else:
             raise ValueError(f"Unsupported transformer class: {cls_name}")
 
-        mu = self._modulate_params(trans_out, self.wtoken_postfc_mu, wtoken_offset=0, B=B)
-        logvar = self._modulate_params(trans_out, self.wtoken_postfc_logvar, wtoken_offset=self.n_wtokens, B=B)
-
-        return mu, logvar
+        if self.probablistic:
+            mu = self._modulate_params(trans_out, self.wtoken_postfc_mu, wtoken_offset=0, B=B)
+            logvar = self._modulate_params(trans_out, self.wtoken_postfc_logvar, wtoken_offset=self.n_wtokens, B=B)
+            return mu, logvar
+        else:
+            return self._modulate_params(trans_out, self.wtoken_postfc_mu, wtoken_offset=0, B=B)
 
 
 class TransInrTemporalEncoder(nn.Module):

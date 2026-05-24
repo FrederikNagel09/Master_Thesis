@@ -734,8 +734,11 @@ def plot_reconstruction_progression(
             x_recon = model._decode_latent(z)
     elif model_name == "ndm_static_transinr":
         with torch.no_grad():
-            mean, logvar = model.weight_encoder(x)
-            theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+            if model.probablistic:
+                mean, logvar = model.weight_encoder(x)
+                theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+            else:
+                theta_prime_raw = model.weight_encoder(x)
         x_recon = model._inr_decode(theta_prime_raw)
     else:
         with torch.no_grad():
@@ -1588,8 +1591,11 @@ def plot_forward_trajectory_progression(
             new_row_data.append(theta_t.detach().cpu().numpy().flatten())
     elif model_name == "ndm_static_transinr":
         # encode latents
-        mean, logvar = model.weight_encoder(x)
-        theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+        if model.probablistic:
+            mean, logvar = model.weight_encoder(x)
+            theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+        else:
+            theta_prime_raw = model.weight_encoder(x)
 
         if normalize:
             theta_prime_raw = model.scaler(theta_prime_raw, reverse=False)

@@ -135,16 +135,19 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.01 \
+    --subset_frac 0.1 \
+    --single_class \
+    --single_class_label 3 5 \
     --use_scheduler \
     --normalize True\
+    --probablistic False \
     --peak_lr 1e-4 \
     --T 100 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 128 \
-    --inr_layers 3 \
+    --inr_hidden_dim 64 \
+    --inr_layers 4 \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 8 \
     --encoder_trans_head_dim 32 \
@@ -168,56 +171,6 @@ python main.py \
         --single_class \
     --single_class_label 3 5 \
     
-python main.py \
-    --run_name MLP-MLP-TESTING\
-    --model ndm_static_mlpinr \
-    --dataset mnist \
-    --epochs 5\
-    --batch_size 64 \
-    --lr 1e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 50 \
-    --subset_frac 0.01 \
-    --normalize True\
-    --peak_lr 1e-4 \
-    --T 1000 \
-    --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --sigma_tilde 1.0 \
-    --inr_hidden_dim 16 \
-    --inr_layers 3 \
-    --f_phi_hidden 512 512 512 \
-    --noise_hidden_dim 512 \
-    --noise_n_blocks 3 \
-    --noise_t_embed 256
-
-
-######### Testing ############  
-python main.py \
-    --run_name test_run\
-    --model ndm_static_mlpinr \
-    --dataset mnist \
-    --epochs 5\
-    --batch_size 16 \
-    --lr 1e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 1 \
-    --subset_frac 0.01 \
-    --peak_lr 1e-4 \
-    --normalize True\
-    --T 100 \
-    --beta_1 1e-4 \
-    --beta_T 0.004 \
-    --sigma_tilde 1.0 \
-    --inr_hidden_dim 8 \
-    --inr_layers 2 \
-    --f_phi_hidden 8 8 \
-    --noise_hidden_dim 16 \
-    --noise_n_blocks 2 \
-    --noise_t_embed 8   
-
     
 ######### Latent Diffusion Training ############
 python main.py \
