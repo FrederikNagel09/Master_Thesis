@@ -321,7 +321,7 @@ class NDMStaticTransInr(nn.Module):
         """
         epsilon_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
 
-        mse = F.mse_loss(epsilon_hat, epsilon, reduction="none").sum(dim=-1)  # (B,)
+        mse = F.mse_loss(epsilon_hat, epsilon, reduction="none").mean(dim=-1)  # (B,)
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Diffusion Loss: #################")
@@ -433,6 +433,7 @@ class NDMStaticTransInr(nn.Module):
                 beta_tilde = (1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t) * beta_t
                 sigma = torch.sqrt(beta_tilde)
                 curr_theta = mean + sigma * torch.randn_like(curr_theta)
+                curr_theta = curr_theta.clamp(-4, 4)
             else:
                 curr_theta = mean
 
@@ -461,6 +462,7 @@ class NDMStaticTransInr(nn.Module):
             return curr_theta, snapshots
         return curr_theta
 
+    
     def _inr_decode(
         self,
         flat_weights: torch.Tensor,
