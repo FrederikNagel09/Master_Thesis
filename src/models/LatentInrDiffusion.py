@@ -201,27 +201,44 @@ class NDMLatentDiffusion(nn.Module):
         Returns:
             (total_loss, l_diff, l_prior, l_rec) — scalar means
         """
+        ######### Input shape check ##########
         B = x.shape[0]  # noqa: N806
-
         if x.dim() == 2:
             channels = self.data_dim // (self.img_size * self.img_size)
             x = x.view(B, channels, self.img_size, self.img_size)
 
+        ######### Encode Image ##########
         mu, logvar = self.latent_encoder(x)
         z_raw = self.latent_encoder.reparameterize(mu, logvar)
 
+        ######### Normalize Latents ##########
         z = self._normalize_z(z_raw) if self._normalize else z_raw
 
+        ######### Sample Time Steps ##########
         t_idx = torch.randint(0, self.T, (B,), device=x.device)
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
+        ######### Apply noise ##########
         z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
-        l_diff = self._l_diff(z_t, t_norm, epsilon, t_idx)
+        ######### Compute diffusion loss terms ##########
+        mask_t0 = t_idx == 0
+        mask_tdiff = ~mask_t0
+
+        # --- Diffusion loss: only t>0 ---
+        l_diff = torch.zeros(B, device=x.device)
+        if mask_tdiff.any():
+            l_diff[mask_tdiff] = self._l_diff(z_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], t_idx[mask_tdiff])
+        # --- Latent reconstruction loss: only t=0 ---
+        l_latent_rec = torch.zeros(B, device=x.device)
+        if mask_t0.any():
+            l_latent_rec[mask_t0] = self._l_latent_rec(z_t[mask_t0], t_norm[mask_t0], z[mask_t0])
+
+        ######### Compute image reconstruction and entropy loss ##########
         l_prior = self._l_prior(mu, logvar)
         l_rec = self._l_rec(x, z_raw)
 
-        total = (self.T - 1) * l_diff + lambda_kl * l_prior + l_rec
+        total = (self.T - 1) * l_diff + l_latent_rec + lambda_kl * l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -423,6 +440,33 @@ class NDMLatentDiffusion(nn.Module):
             print("###############################################\n")
 
         return 0.5 * ((x_flat - x_hat) ** 2).sum(dim=-1)
+
+    def _l_latent_rec(
+        self,
+        z_t0: torch.Tensor,
+        t_norm_t0: torch.Tensor,
+        z_clean_t0: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Computes the t=0 reconstruction term: -log p_θ(z_0 | z_1).
+        Predicts epsilon at t=0, recovers denoiser mean, returns MSE / (2*beta_0).
+
+        Args:
+            z_t0:       (B0, C, H, W) — noisy latents where t=0
+            t_norm_t0:  (B0, 1)       — normalised time (all zeros)
+            z_clean_t0: (B0, C, H, W) — corresponding clean latents
+        Returns:
+            (B0,) per-sample losses
+        """
+        eps_pred = self.noise_predictor(z_t0, t_norm_t0)
+
+        alpha_0 = self.sqrt_alpha_cumprod[0]
+        sigma_0 = self.sigma[0]
+        beta_0 = self.beta[0]
+
+        mu_theta = (z_t0 - (beta_0 / sigma_0) * eps_pred) / alpha_0
+
+        return F.mse_loss(mu_theta, z_clean_t0, reduction="none").mean(dim=[1, 2, 3]) / (2.0 * beta_0)
 
     # -------------------------------------------------------------------------
     # Diffusion helpers
