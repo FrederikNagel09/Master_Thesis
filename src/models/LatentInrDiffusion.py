@@ -217,11 +217,11 @@ class NDMLatentDiffusion(nn.Module):
 
         z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
-        l_diff = self._l_diff(z_t, t_norm, epsilon)
+        l_diff = self._l_diff(z_t, t_norm, epsilon, t_idx)
         l_prior = self._l_prior(mu, logvar)
         l_rec = self._l_rec(x, z_raw)
 
-        total = l_diff + lambda_kl * l_prior + l_rec
+        total = (self.T - 1) * l_diff + lambda_kl * l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -295,6 +295,7 @@ class NDMLatentDiffusion(nn.Module):
         z_t: torch.Tensor,
         t_norm: torch.Tensor,
         epsilon: torch.Tensor,
+        t_idx: torch.Tensor,
     ) -> torch.Tensor:
         """
         Noise-prediction MSE loss.
@@ -313,10 +314,16 @@ class NDMLatentDiffusion(nn.Module):
         # 2. Compute MSE over the channel, height, and width dimensions
         mse = F.mse_loss(eps_hat, epsilon, reduction="none")  # (B, C, H', W')
 
+        alpha_t = self.alpha[t_idx]
+        alpha_bar_t = self.alpha_cumprod[t_idx]
+        beta_t = self.beta[t_idx]
+
+        scaling = beta_t / (2 * alpha_t * (1.0 - alpha_bar_t))
+
         unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
         # 4. Scale the per-sample loss
-        l_diff_loss = unscaled_loss  # (B,)
+        l_diff_loss = scaling * unscaled_loss  # (B,)
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:

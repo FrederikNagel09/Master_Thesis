@@ -177,14 +177,14 @@ python main.py \
     --run_name latent_diffusion_probablistic \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 100 \
+    --epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --lambda_kl 5e-3 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.33 \
+    --subset_frac 0.05 \
     --single_class \
     --single_class_label 3 8 \
     --normalize True\
