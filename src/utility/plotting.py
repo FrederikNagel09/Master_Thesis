@@ -205,7 +205,7 @@ def _model_to_grid(
             pixels = model.inr(coords_batch, flat_weights)
             samples = pixels.permute(0, 2, 1).reshape(n_samples, channels, img_size, img_size).clamp(0, 1)
 
-        elif model_type == "ndm_inr" or model_type == "latent_inr_diffusion":
+        elif model_type == "ndm_inr" or model_type in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True)
             else:
@@ -544,6 +544,7 @@ def plot_fphi_progression(
     device: str,
     data_config: dict,
     filename: str = "fphi_progression",
+    model_name: str = "",
 ) -> None:
     """
     Append a row showing one image passed through F_phi at 6 evenly spaced
@@ -581,18 +582,40 @@ def plot_fphi_progression(
 
     # ── Run F_phi at each timestep ────────────────────────────────────────────
     model.eval()
-    row_images = []
-    with torch.no_grad():
-        for t in timesteps:
-            t_norm = torch.full((1, 1), t / max(T - 1, 1), device=device)
-            z_t = model.F_phi(x, t_norm)  # (1, data_dim)
-            img = (z_t * 0.5 + 0.5).clamp(0, 1)  # [-1,1] → [0,1]
-            img = img.reshape(channels, img_size, img_size).cpu().numpy()
-            if channels == 1:  # noqa: SIM108
-                img = img[0]  # (H, W)
-            else:
-                img = img.transpose(1, 2, 0)  # (H, W, C)
-            row_images.append(img)
+
+    if model_name == "latent_ndm_inr_diffusion":
+        row_images = []
+        with torch.no_grad():
+            for t in timesteps:
+                t_norm = torch.full((1, 1), t / max(T - 1, 1), device=device)
+                if x.dim() == 2:
+                    channels = x.shape[1] // (model.img_size * model.img_size)
+                    x = x.view(x.shape[0], channels, model.img_size, model.img_size)
+                mu, logvar = model.latent_encoder(x)
+                z = model.latent_encoder.reparameterize(mu, logvar)
+                z_trans = model.latent_transformer(z, t_norm)
+                x_recon = model._decode_latent(z_trans)
+                img = (x_recon * 0.5 + 0.5).clamp(0, 1)  # [-1,1] → [0,1]
+                img = img.reshape(channels, img_size, img_size).cpu().numpy()
+                if channels == 1:  # noqa: SIM108
+                    img = img[0]  # (H, W)
+                else:
+                    img = img.transpose(1, 2, 0)  # (H, W, C)
+                row_images.append(img)
+    else:
+        row_images = []
+        with torch.no_grad():
+            for t in timesteps:
+                t_norm = torch.full((1, 1), t / max(T - 1, 1), device=device)
+                z_t = model.F_phi(x, t_norm)  # (1, data_dim)
+                img = (z_t * 0.5 + 0.5).clamp(0, 1)  # [-1,1] → [0,1]
+                img = img.reshape(channels, img_size, img_size).cpu().numpy()
+                if channels == 1:  # noqa: SIM108
+                    img = img[0]  # (H, W)
+                else:
+                    img = img.transpose(1, 2, 0)  # (H, W, C)
+                row_images.append(img)
+
     model.train()
 
     new_row = np.stack(row_images, axis=0)  # (6, H, W) or (6, H, W, C)
@@ -676,6 +699,120 @@ def plot_fphi_progression(
     plt.close(fig)
 
 
+def plot_ztrans_histogram(
+    model: object,
+    batch: tuple,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    filename: str = "ztrans_histogram",
+) -> None:
+    """
+    Compute z_trans for the entire batch at 6 evenly spaced t values and append
+    a row of histograms to a persistent figure. One row per epoch call, always
+    rendering all epochs together in one saved figure.
+
+    Args:
+        model    : Trained latent_ndm_inr_diffusion model, already on device.
+        batch    : Current training batch tuple; batch[0] is the images tensor (N, C, H, W).
+        epoch    : Current epoch number, used as the row label.
+        run_dir  : Run results directory (src/train_results/{run_name}).
+        device   : Device string.
+        filename : Base name for the saved png and metadata files.
+
+    Returns:
+        None
+    """
+    os.makedirs(run_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    N_COLS = 6  # noqa: N806
+    T = model.T  # noqa: N806
+
+    timesteps = [round(T * i / (N_COLS - 1)) for i in range(N_COLS)]
+    timesteps[-1] = T - 1
+
+    x = batch[0].to(device)
+    if x.dim() == 2:
+        channels = x.shape[1] // (model.img_size * model.img_size)
+        x = x.view(x.shape[0], channels, model.img_size, model.img_size)
+
+    # ── Compute z_trans for full batch at each t ──────────────────────────────
+    model.eval()
+    row_hists = []  # list of (N*latent_dim,) arrays, one per t
+    with torch.no_grad():
+        mu, logvar = model.latent_encoder(x)
+        z = model.latent_encoder.reparameterize(mu, logvar)  # (N, latent_dim)
+        for t in timesteps:
+            t_norm = torch.full((x.shape[0], 1), t / max(T - 1, 1), device=device)
+            z_trans = model.latent_transformer(z, t_norm)  # (N, latent_dim)
+            row_hists.append(z_trans.cpu().numpy().flatten())
+    model.train()
+
+    # ── Persist histogram data ────────────────────────────────────────────────
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
+
+    new_row = np.array(row_hists, dtype=object)  # (N_COLS,) of flat arrays
+
+    if os.path.exists(meta_path) and os.path.exists(rows_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        existing_rows = np.load(rows_path, allow_pickle=True)
+        all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
+        all_epochs = meta["epochs"] + [epoch]
+    else:
+        all_rows = new_row[None]
+        all_epochs = [epoch]
+
+    np.save(rows_path, all_rows)
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs, "timesteps": timesteps}, f)
+
+    # ── Pad to N_ROWS_TOTAL ───────────────────────────────────────────────────
+    n_existing = len(all_epochs)
+    padded_rows = list(all_rows) + [None] * (N_ROWS_TOTAL - n_existing)
+    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
+
+    # ── Build figure ──────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(
+        N_ROWS_TOTAL,
+        N_COLS,
+        figsize=(N_COLS * 2.5, N_ROWS_TOTAL * 2.0),
+        sharey=False,
+    )
+    fig.patch.set_facecolor("white")
+    fig.suptitle("z_trans Distribution Progression", fontsize=11, fontweight="bold")
+
+    # t= labels along the top
+    for c, t in enumerate(timesteps):
+        axes[0, c].set_title(f"t={t}", fontsize=8, color="#555555", pad=4)
+
+    for r, (row_hists_r, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+        for c in range(N_COLS):
+            ax = axes[r, c]
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.tick_params(labelsize=6)
+
+            if row_hists_r is not None:
+                ax.hist(row_hists_r[c], bins=60, color="#4C72B0", edgecolor="none", alpha=0.85)
+            else:
+                # Empty placeholder row
+                ax.set_facecolor("#f5f5f5")
+                ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+
+        # Epoch label on the left of each row
+        axes[r, 0].set_ylabel(f"ep {ep}", fontsize=8, color="#333333", labelpad=6)
+
+    fig.tight_layout()
+
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def plot_reconstruction_progression(
     model: object,
     batch: torch.Tensor,
@@ -724,7 +861,7 @@ def plot_reconstruction_progression(
     # ── Reconstruct via encoder(t=0) → INR decode ────────────────────────────
     model.eval()
 
-    if model_name == "latent_inr_diffusion":
+    if model_name in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
         with torch.no_grad():
             if x.dim() == 2:
                 channels = x.shape[1] // (model.img_size * model.img_size)
@@ -1568,7 +1705,7 @@ def plot_forward_trajectory_progression(
     # ── 1. Encode batch to weights ────────────────────────────────────────────
     x = batch[0].to(device)
     model.eval()
-    if model_name == "latent_inr_diffusion":
+    if model_name in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
         if x.dim() == 2:
             channels = x.shape[1] // (model.img_size * model.img_size)
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)

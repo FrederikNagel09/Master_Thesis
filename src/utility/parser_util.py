@@ -147,6 +147,11 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--latent_enc_ff_dim", type=int, default=512)
     p.add_argument("--lambda_kl", type=float, default=-1)
 
+    # Latent Transformer args
+    p.add_argument("--latent_transformer_hidden_dim", type=int, default=64)
+    p.add_argument("--latent_transformer_n_blocks", type=int, default=2)
+    p.add_argument("--latent_transformer_t_embed_dim", type=int, default=128)
+
     # TransInr decoder args
     p.add_argument("--dec_trans_dim", type=int, default=256)
     p.add_argument("--dec_trans_n_head", type=int, default=8)

@@ -56,7 +56,7 @@ class LatentScaler(nn.Module):
             return z * self.running_std + self.running_mean
 
 
-class LatentDiffusion(nn.Module):
+class LatentNDMDiffusion(nn.Module):
     """
     Latent-space diffusion model using noise prediction (ε-prediction).
 
@@ -84,6 +84,7 @@ class LatentDiffusion(nn.Module):
         self,
         noise_predictor: nn.Module,
         latent_encoder: nn.Module,
+        latent_transformer: nn.Module,
         decoder: nn.Module,
         coord_grid: torch.Tensor,  # (H, W, 2)
         latent_dim: int,
@@ -106,6 +107,7 @@ class LatentDiffusion(nn.Module):
         self.noise_predictor = noise_predictor
         self.latent_encoder = latent_encoder
         self.decoder = decoder
+        self.latent_transformer = latent_transformer
 
         self.beta_1 = beta_1
         self.beta_T = beta_T
@@ -218,8 +220,11 @@ class LatentDiffusion(nn.Module):
         t_idx = torch.randint(0, self.T, (B,), device=x.device)
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
+        ######### latent transformer ##########
+        z_trans = self.latent_transformer(z.detach(), t_norm)
+
         ######### Apply noise ##########
-        z_t, epsilon = self._forward_process(z.detach(), t_idx)
+        z_t, epsilon = self._forward_process(z_trans, t_idx)
 
         ######### Compute diffusion loss terms ##########
         mask_t0 = t_idx == 0
@@ -247,6 +252,17 @@ class LatentDiffusion(nn.Module):
             print("normed time (t_norm):", t_norm.shape, "min/max:", t_norm.min(), t_norm.max())
             print("z shape:", z.shape)
             print("z.min():", z.min(), "\nz.max():", z.max(), "\nz.mean():", z.mean(), "\nz.std():", z.std())
+            print("z_trans shape:", z_trans.shape)
+            print(
+                "z_trans.min():",
+                z_trans.min(),
+                "\nz_trans.max():",
+                z_trans.max(),
+                "\nz_trans.mean():",
+                z_trans.mean(),
+                "\nz_trans.std():",
+                z_trans.std(),
+            )
             print("z_t shape:", z_t.shape)
             print("z_t.min():", z_t.min(), "\nz_t.max():", z_t.max(), "\nz_t.mean():", z_t.mean(), "\nz_t.std():", z_t.std())
             print("epsilon shape:", epsilon.shape)

@@ -174,8 +174,48 @@ python main.py \
     
 ######### Latent Diffusion Training ############
 python main.py \
-    --run_name latent_diffusion_probablistic_with_scaling \
+    --run_name latent_resume-test-scheduler \
     --model latent_inr_diffusion \
+    --dataset mnist \
+    --epochs 10 \
+    --batch_size 64 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 50 \
+    --subset_frac 0.15 \
+    --normalize True\
+    --use_scheduler \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --inr_hidden_dim 64 \
+    --inr_layers 3 \
+    --latent_dim 16 \
+    --latent_size 4 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 10\
+    --pred_d_model 64 \
+    --pred_n_heads 2 \
+    --pred_n_layers 2 \
+    --pred_d_ff 256 \
+    --pred_t_embed_dim 128 \
+    --dec_trans_dim 64 \
+    --dec_trans_n_head 4 \
+    --dec_trans_head_dim 16 \
+    --dec_trans_ff_dim 256 \
+    --dec_trans_enc_depth 2 \
+    --dec_trans_dec_depth 2 \
+    --dec_trans_n_groups 32 \
+    --dec_trans_update_strategy scale \
+    --resume src/train_results/latent_resume-test-scheduler/weights/weights.pt
+    
+
+
+######### Latent NDM Diffusion Training ############
+python main.py \
+    --run_name latent_ndm_diffusion \
+    --model latent_ndm_inr_diffusion \
     --dataset mnist \
     --epochs 200 \
     --batch_size 128 \
@@ -199,6 +239,9 @@ python main.py \
     --pred_n_layers 4 \
     --pred_d_ff 1024 \
     --pred_t_embed_dim 128 \
+    --latent_transformer_hidden_dim 32 \
+    --latent_transformer_n_blocks 4 \
+    --latent_transformer_t_embed_dim 128 \
     --dec_trans_dim 128 \
     --dec_trans_n_head 8 \
     --dec_trans_head_dim 32 \
@@ -207,35 +250,45 @@ python main.py \
     --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale
-    
-
 
 python main.py \
-    --run_name LATENT-UNET-TESTING_v4 \
-    --model latent_inr_diffusion \
+    --run_name latent_ndm_diffusion-TEST \
+    --model latent_ndm_inr_diffusion \
     --dataset mnist \
-    --epochs 40 \
+    --epochs 5 \
     --batch_size 128 \
-    --lr 2e-4 \
+    --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 50 \
-    --subset_frac 0.25 \
+    --log_every_n_steps 1 \
+    --subset_frac 0.05 \
+    --normalize True\
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
-    --latent_encoder_type mlp \
-    --latent_predictor_type mlp \
-    --latent_decoder_type mlp \
     --inr_hidden_dim 32 \
-    --inr_layers 4 \
+    --inr_layers 3 \
     --latent_dim 16 \
-    --latent_size 8 \
+    --latent_size 4 \
     --latent_patch_size 2 \
-    --dec_mlp_hidden_dim 256 \
-    --dec_mlp_n_layers 6 \
-    --pred_hidden_dim 64 \
-    --pred_t_embed_dim 128
+    --latent_enc_hidden_dim 10\
+    --pred_d_model 64 \
+    --pred_n_heads 2 \
+    --pred_n_layers 2 \
+    --pred_d_ff 256 \
+    --pred_t_embed_dim 64 \
+    --latent_transformer_hidden_dim 16 \
+    --latent_transformer_n_blocks 2 \
+    --latent_transformer_t_embed_dim 64 \
+    --dec_trans_dim 64 \
+    --dec_trans_n_head 4 \
+    --dec_trans_head_dim 16 \
+    --dec_trans_ff_dim 256 \
+    --dec_trans_enc_depth 2 \
+    --dec_trans_dec_depth 2 \
+    --dec_trans_n_groups 32 \
+    --dec_trans_update_strategy scale
+
 """
 
 import warnings

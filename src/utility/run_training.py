@@ -48,8 +48,7 @@ from src.utility.plotting import (
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
-    plot_weight_distribution_progression,  # noqa: F401
-    plot_weight_profile_progression,  # noqa: F401
+    plot_ztrans_histogram,
 )
 from src.utility.training import train
 
@@ -103,6 +102,7 @@ def run_training(
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
             "fphi_progression_ep*.png",
+            "ztrans_histogram_ep*.png",
             "reconstruction_progression_ep*.png",
             "reconstruction_norm_progression_ep*.png",
             "reconstruction_diffusion_progression_ep*.png",
@@ -127,7 +127,12 @@ def run_training(
             "metadata/Forward_noising_progression_*.npy",
             "metadata/Reverse_denoising_progression_*.json",
             "metadata/Reverse_denoising_progression_*.npy",
+            "metadata/fphi_progression_*.json",
+            "metadata/fphi_progression_*.npy",
+            "metadata/ztrans_histogram_*.json",
+            "metadata/ztrans_histogram_*.npy",
             "weights/weights.pt",
+            "metadata/config.json",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):
                 os.remove(fpath)
@@ -190,11 +195,59 @@ def run_training(
             collect_snapshots=True,
         )
         if batch is not None:
-            if args.model == "ndm":
+            if args.model in ("ndm"):
                 plot_fphi_progression(
-                    model, batch, epoch, run_dir, device, data_config, filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}"
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
                 )
-            elif args.model == "latent_inr_diffusion":
+            elif args.model == "latent_ndm_inr_diffusion":
+                plot_ztrans_histogram(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    filename=f"ztrans_histogram_ep{start_epoch + 1}-{end_epoch}",
+                )
+                plot_fphi_progression(
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                )
+                plot_reconstruction_progression(
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                )
+                plot_forward_trajectory_progression(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    data_config=data_config,
+                    filename=f"Forward_noising_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                    normalize=args.normalize,
+                )
+
+            elif args.model in ("latent_inr_diffusion"):
                 plot_reconstruction_progression(
                     model,
                     batch,

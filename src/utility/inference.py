@@ -34,7 +34,7 @@ from src.utility.general import (
     _load_config,
     _make_coord_grid,
 )
-from src.utility.model_builders import _build_ndm_latent_diffusion, _build_ndm_static_transinr, _build_transinr_vae
+from src.utility.model_builders import _build_latent_diffusion, _build_ndm_static_transinr, _build_transinr_vae
 
 
 def _load_vae_config(config_path: str) -> tuple[argparse.Namespace, dict, str]:
@@ -321,7 +321,7 @@ def _sample_at_resolutions_ndm_inr(
 
 
 _BUILD_FN = {
-    "latent_inr_diffusion": _build_ndm_latent_diffusion,
+    "latent_inr_diffusion": _build_latent_diffusion,
     "ndm_static_transinr": _build_ndm_static_transinr,
     "transinr_vae": _build_transinr_vae,
 }

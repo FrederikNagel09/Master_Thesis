@@ -218,10 +218,7 @@ def train(
             else:
                 x = batch[0] if isinstance(batch, list | tuple) else batch
                 x = x.to(device)
-                if lambda_kl_max > 0:
-                    lambda_kl = lambda_kl_max * min(1.0, epoch / kl_warmup_epochs)
-                else:
-                    lambda_kl = 1.0
+                lambda_kl = lambda_kl_max * min(1.0, epoch / kl_warmup_epochs) if lambda_kl_max > 0 else 1.0
                 loss, l_diff, l_prior, l_rec = model.loss(x, lambda_kl)  # type: ignore
 
             # ── NaN/divergence diagnostics ──────────────────────────────────
@@ -282,6 +279,7 @@ def train(
                         "ndm_temporal_transinr",
                         "ndm_static_transinr",
                         "latent_inr_diffusion",
+                        "latent_ndm_inr_diffusion",
                     ):
                         sample_fn(model, global_step, device, batch=batch)
                     else:
