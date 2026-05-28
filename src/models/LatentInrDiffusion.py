@@ -340,7 +340,7 @@ class LatentDiffusion(nn.Module):
         unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
         # 4. Scale the per-sample loss
-        l_diff_loss = scaling * unscaled_loss  # (B,)
+        l_diff_loss = unscaled_loss  # (B,)
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
