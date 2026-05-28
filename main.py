@@ -214,7 +214,7 @@ python main.py \
 
 ######### Latent NDM Diffusion Training ############
 python main.py \
-    --run_name latent_ndm_diffusion \
+    --run_name latent_ndm_diffusion-TEST  \
     --model latent_ndm_inr_diffusion \
     --dataset mnist \
     --epochs 200 \
@@ -239,9 +239,9 @@ python main.py \
     --pred_n_layers 4 \
     --pred_d_ff 1024 \
     --pred_t_embed_dim 128 \
-    --latent_transformer_hidden_dim 32 \
+    --latent_transformer_hidden_dim 64 \
     --latent_transformer_n_blocks 4 \
-    --latent_transformer_t_embed_dim 128 \
+    --latent_transformer_t_embed_dim 256 \
     --dec_trans_dim 128 \
     --dec_trans_n_head 8 \
     --dec_trans_head_dim 32 \
