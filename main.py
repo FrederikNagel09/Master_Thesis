@@ -185,8 +185,8 @@ python main.py \
     --log_every_n_steps 50 \
     --subset_frac 0.15 \
     --normalize True\
-    --do_scaling False \
-    --do_latent_recon False \
+    --do_scaling True \
+    --do_latent_recon True \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \

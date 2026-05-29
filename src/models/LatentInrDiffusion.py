@@ -243,7 +243,9 @@ class LatentDiffusion(nn.Module):
             l_latent_rec = torch.zeros_like(l_diff)
 
         ######### Compute image reconstruction and entropy loss ##########
-        l_prior = self._l_prior(mu, logvar)
+        # l_prior = self._l_prior(mu, logvar)
+        l_prior = self._l_entropy(logvar)
+
         l_rec = self._l_rec(x, z_raw)
 
         if self.__do_scaling:
@@ -406,6 +408,18 @@ class LatentDiffusion(nn.Module):
             print("###############################################\n")
 
         return l_diff_loss
+
+    def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
+        """
+        Negative entropy of q(z|x) = N(mu, exp(logvar)), excluding constants.
+
+        Args:
+            logvar: (B, latent_dim, H', W')
+        Returns:
+            (B,) per-sample negative entropy — minimizing this maximizes entropy.
+        """
+        # E[log q(z|x)] = -0.5 * sum(1 + logvar), dropping log(2*pi) constant
+        return -0.5 * logvar.sum(dim=(-3, -2, -1))
 
     def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
