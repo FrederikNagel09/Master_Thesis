@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J trans-trans-WeightSpace-Smallerinr_clip4_mean           # Job name
+#BSUB -J latent_inr_diffusion          # Job name
 #BSUB -q gpuv100                           # Queue to submit the job to
 #BSUB -W 300                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/trans-trans-WeightSpace-Smallerinr_clip4_mean.out                        # Standard output redirection
-#BSUB -e src/outputs/trans-trans-WeightSpace-Smallerinr_clip4_mean.err                        # Standard error redirection
+#BSUB -o src/outputs/latent_inr_diffusion.out                        # Standard output redirection
+#BSUB -e src/outputs/latent_inr_diffusion.err                        # Standard error redirection
 ##BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,7 +16,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name latent_diffusion_probablistic_with_scaling \
+    --run_name latent_inr_diffusion \
     --model latent_inr_diffusion \
     --dataset mnist \
     --epochs 200 \
@@ -26,6 +26,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
     --subset_frac 1.0 \
+    --lambda_kl 0.05 \
     --normalize True\
     --T 1000 \
     --beta_1 1e-4 \
