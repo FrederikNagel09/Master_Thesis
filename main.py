@@ -185,7 +185,7 @@ python main.py \
     --log_every_n_steps 50 \
     --subset_frac 0.15 \
     --normalize True\
-    --use_scheduler \
+    --do_scaling False \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \

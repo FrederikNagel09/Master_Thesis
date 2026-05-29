@@ -95,6 +95,7 @@ class LatentDiffusion(nn.Module):
         img_size: int = 28,
         normalize: bool = True,
         lambda_kl: float = 5e-3,
+        scaling: bool = True,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -111,6 +112,7 @@ class LatentDiffusion(nn.Module):
         self.beta_T = beta_T
         self.T = T
         self._normalize = normalize
+        self.__do_scaling = scaling
 
         self.i = 0
         self.latent_scaler = LatentScaler(latent_dim)
@@ -238,7 +240,10 @@ class LatentDiffusion(nn.Module):
         l_prior = self._l_prior(mu, logvar)
         l_rec = self._l_rec(x, z_raw)
 
-        total = (self.T - 1) * l_diff + l_latent_rec + lambda_kl * l_prior + l_rec
+        if self.__do_scaling:
+            total = (self.T - 1) * l_diff + l_latent_rec + lambda_kl * l_prior + l_rec
+        else:
+            total = l_diff + l_latent_rec + lambda_kl * l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -339,8 +344,11 @@ class LatentDiffusion(nn.Module):
 
         unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
-        # 4. Scale the per-sample loss
-        l_diff_loss = unscaled_loss  # (B,)
+        if self.__do_scaling:  # noqa: SIM108
+            # 4. Scale the per-sample loss
+            l_diff_loss = scaling * unscaled_loss
+        else:
+            l_diff_loss = unscaled_loss
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
