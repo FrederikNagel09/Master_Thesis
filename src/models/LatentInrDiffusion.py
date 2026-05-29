@@ -95,6 +95,8 @@ class LatentDiffusion(nn.Module):
         img_size: int = 28,
         normalize: bool = True,
         lambda_kl: float = 5e-3,
+        scaling: bool = True,
+        latent_recon: bool = True,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -111,6 +113,8 @@ class LatentDiffusion(nn.Module):
         self.beta_T = beta_T
         self.T = T
         self._normalize = normalize
+        self.__do_scaling = scaling
+        self._do_latent_recon = latent_recon
 
         self.i = 0
         self.latent_scaler = LatentScaler(latent_dim)
@@ -222,23 +226,32 @@ class LatentDiffusion(nn.Module):
         z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
         ######### Compute diffusion loss terms ##########
-        mask_t0 = t_idx == 0
-        mask_tdiff = ~mask_t0
+        if self._do_latent_recon:
+            mask_t0 = t_idx == 0
+            mask_tdiff = ~mask_t0
 
-        # --- Diffusion loss: only t>0 ---
-        l_diff = torch.zeros(B, device=x.device)
-        if mask_tdiff.any():
-            l_diff[mask_tdiff] = self._l_diff(z_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], t_idx[mask_tdiff])
-        # --- Latent reconstruction loss: only t=0 ---
-        l_latent_rec = torch.zeros(B, device=x.device)
-        if mask_t0.any():
-            l_latent_rec[mask_t0] = self._l_latent_rec(z_t[mask_t0], t_norm[mask_t0], z[mask_t0])
+            # --- Diffusion loss: only t>0 ---
+            l_diff = torch.zeros(B, device=x.device)
+            if mask_tdiff.any():
+                l_diff[mask_tdiff] = self._l_diff(z_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], t_idx[mask_tdiff])
+            # --- Latent reconstruction loss: only t=0 ---
+            l_latent_rec = torch.zeros(B, device=x.device)
+            if mask_t0.any():
+                l_latent_rec[mask_t0] = self._l_latent_rec(z_t[mask_t0], t_norm[mask_t0], z[mask_t0])
+        else:
+            l_diff = self._l_diff(z_t, t_norm, epsilon, t_idx)
+            l_latent_rec = torch.zeros_like(l_diff)
 
         ######### Compute image reconstruction and entropy loss ##########
-        l_prior = self._l_prior(mu, logvar)
+        # l_prior = self._l_prior(mu, logvar)
+        l_prior = self._l_entropy(logvar)
+
         l_rec = self._l_rec(x, z_raw)
 
-        total = (self.T - 1) * l_diff + l_latent_rec + lambda_kl * l_prior + l_rec
+        if self.__do_scaling:
+            total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_prior + l_rec
+        else:
+            total = l_diff + l_latent_rec + lambda_kl * l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -339,8 +352,11 @@ class LatentDiffusion(nn.Module):
 
         unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
-        # 4. Scale the per-sample loss
-        l_diff_loss = unscaled_loss  # (B,)
+        if self.__do_scaling:  # noqa: SIM108
+            # 4. Scale the per-sample loss
+            l_diff_loss = scaling * unscaled_loss
+        else:
+            l_diff_loss = unscaled_loss
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
@@ -392,6 +408,18 @@ class LatentDiffusion(nn.Module):
             print("###############################################\n")
 
         return l_diff_loss
+
+    def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
+        """
+        Negative entropy of q(z|x) = N(mu, exp(logvar)), excluding constants.
+
+        Args:
+            logvar: (B, latent_dim, H', W')
+        Returns:
+            (B,) per-sample negative entropy — minimizing this maximizes entropy.
+        """
+        # E[log q(z|x)] = -0.5 * sum(1 + logvar), dropping log(2*pi) constant
+        return -0.5 * logvar.sum(dim=(-3, -2, -1))
 
     def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """

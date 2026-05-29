@@ -1187,6 +1187,8 @@ def _build_latent_diffusion(args, data_config: dict):
         img_size=img_size,
         normalize=args.normalize,
         lambda_kl=args.lambda_kl,
+        scaling=args.do_scaling,
+        latent_recon=args.do_latent_recon,
     )
 
     # Final print of total model params (encoder + decoder + predictor)
