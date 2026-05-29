@@ -186,6 +186,7 @@ python main.py \
     --subset_frac 0.15 \
     --normalize True\
     --do_scaling False \
+    --do_latent_recon False \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \

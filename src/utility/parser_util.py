@@ -46,6 +46,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--normalize", type=lambda x: x.lower() == "true", default=True)
     p.add_argument("--probablistic", type=lambda x: x.lower() == "true", default=False)
     p.add_argument("--do_scaling", type=lambda x: x.lower() == "true", default=True)
+    p.add_argument("--do_latent_recon", type=lambda x: x.lower() == "true", default=True)
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
     p.add_argument("--use_scheduler", action="store_true")
