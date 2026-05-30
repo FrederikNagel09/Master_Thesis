@@ -135,7 +135,7 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.1 \
+    --subset_frac 0.05 \
     --normalize True\
     --probablistic False \
     --peak_lr 1e-4 \
