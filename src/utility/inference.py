@@ -34,7 +34,7 @@ from src.utility.general import (
     _load_config,
     _make_coord_grid,
 )
-from src.utility.model_builders import _build_latent_diffusion, _build_ndm_static_transinr, _build_transinr_vae
+from src.utility.model_builders import _build_latent_diffusion, _build_transinr_vae, _build_weight_diffusion
 
 
 def _load_vae_config(config_path: str) -> tuple[argparse.Namespace, dict, str]:
@@ -110,11 +110,11 @@ def _sample_ndm_static_transinr(
     **kwargs,  # noqa: ARG001
 ) -> torch.Tensor:
     """
-    Sample from NdmStaticTransInr via model.sample_weight() + model._inr_decode().
+    Sample from WeightDiffusion via model.sample_weight() + model._inr_decode().
     Returns (N, C, H, W) in [0, 1].
 
     Args:
-        model:       NdmStaticTransInr instance
+        model:       WeightDiffusion instance
         n_samples:   number of images to generate
         device:      torch device string
         data_config: dict with channels and img_size
@@ -322,13 +322,13 @@ def _sample_at_resolutions_ndm_inr(
 
 _BUILD_FN = {
     "latent_inr_diffusion": _build_latent_diffusion,
-    "ndm_static_transinr": _build_ndm_static_transinr,
+    "weight_inr_diffusion": _build_weight_diffusion,
     "transinr_vae": _build_transinr_vae,
 }
 
 _SAMPLE_FN = {
     "latent_inr_diffusion": _sample_latent_inr_diffusion,
-    "ndm_static_transinr": _sample_ndm_static_transinr,
+    "weight_inr_diffusion": _sample_ndm_static_transinr,
     "transinr_vae": _sample_transinr_vae,
 }
 
@@ -345,7 +345,7 @@ def sample(
     Load a trained model from a config file and sample from it.
 
     Args:
-        model_name:  One of "latent_inr_diffusion", "ndm_static_transinr", "transinr_vae".
+        model_name:  One of "latent_inr_diffusion", "weight_inr_diffusion", "transinr_vae".
         config_path: Path to the config.json saved during training.
         n_samples:   Number of images to sample.
         device:      Device to run on. Defaults to the best available.

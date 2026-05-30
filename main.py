@@ -126,19 +126,16 @@ python main.py \
 
 ######################### TRANSFORMER ENCODER NDM-INR Training ####################################
 python main.py \
-    --run_name trans-trans-ndm-inr\
-    --model ndm_static_transinr\
+    --run_name weight-diffusion-Test\
+    --model weight_inr_diffusion\
     --dataset mnist \
     --epochs 5 \
-    --batch_size 64 \
+    --batch_size 32 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
     --subset_frac 0.1 \
-    --single_class \
-    --single_class_label 3 5 \
-    --use_scheduler \
     --normalize True\
     --probablistic False \
     --peak_lr 1e-4 \
@@ -146,26 +143,26 @@ python main.py \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 64 \
-    --inr_layers 4 \
-    --encoder_trans_dim 128 \
-    --encoder_trans_n_head 8 \
-    --encoder_trans_head_dim 32 \
-    --encoder_trans_ff_dim 1024 \
-    --encoder_trans_enc_depth 4 \
-    --encoder_trans_dec_depth 4 \
+    --inr_hidden_dim 16 \
+    --inr_layers 3 \
+    --encoder_trans_dim 64 \
+    --encoder_trans_n_head 4 \
+    --encoder_trans_head_dim 8 \
+    --encoder_trans_ff_dim 256 \
+    --encoder_trans_enc_depth 2 \
+    --encoder_trans_dec_depth 2 \
     --encoder_trans_patch_size 4 \
     --encoder_trans_n_groups 32 \
     --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
-    --noise_predictor_dim 128 \
-    --noise_predictor_n_head 8 \
-    --noise_predictor_head_dim 32 \
-    --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 4 \
+    --noise_predictor_dim 64 \
+    --noise_predictor_n_head 4 \
+    --noise_predictor_head_dim 8 \
+    --noise_predictor_ff_dim 256 \
+    --noise_predictor_depth 2 \
     --noise_predictor_dropout 0.1 \
     --noise_predictor_chunk_size 128 \
-    --noise_predictor_t_embed_dim 256
+    --noise_predictor_t_embed_dim 64
 
     --freeze_encoder 0.2 \
         --single_class \

@@ -224,7 +224,7 @@ def _model_to_grid(
                 )
                 print("###########################################################\n")
 
-        elif model_type == "ndm_transinr" or model_type in ("ndm_static_transinr", "ndm_temporal_transinr", "ndm_static_mlpinr"):
+        elif model_type == "ndm_transinr" or model_type in ("weight_inr_diffusion", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True)
             else:
@@ -869,7 +869,7 @@ def plot_reconstruction_progression(
             mu, logvar = model.latent_encoder(x)
             z = model.latent_encoder.reparameterize(mu, logvar)
             x_recon = model._decode_latent(z)
-    elif model_name == "ndm_static_transinr":
+    elif model_name == "weight_inr_diffusion":
         with torch.no_grad():
             if model.probablistic:
                 mean, logvar = model.weight_encoder(x)
@@ -1210,7 +1210,7 @@ def plot_reconstruction_diffusion_progression(
               -> reverse diffusion t=T..0 -> scaler(denormalize) -> INR -> x_recon
     Parameters
     ----------
-    model       : NDMStaticTransInr, already on device.
+    model       : WeightDiffusion, already on device.
     batch       : Current training batch — list/tuple where batch[0] is images.
     epoch       : Current epoch, used as the row label.
     run_dir     : Run results directory.
@@ -1726,7 +1726,7 @@ def plot_forward_trajectory_progression(
                 epsilon = torch.randn_like(z)
                 theta_t = alpha_t * z + sigma_t * epsilon
             new_row_data.append(theta_t.detach().cpu().numpy().flatten())
-    elif model_name == "ndm_static_transinr":
+    elif model_name == "weight_inr_diffusion":
         # encode latents
         if model.probablistic:
             mean, logvar = model.weight_encoder(x)

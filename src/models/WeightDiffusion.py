@@ -69,7 +69,7 @@ class WeightScaler(nn.Module):
             return (x * self.running_std) + self.running_mean
 
 
-class NDMStaticTransInr(nn.Module):
+class WeightDiffusion(nn.Module):
     """
     NDMStaticINR with TransInrEncoder as W(x) and the TransInr SIREN
     for decoding.
@@ -303,7 +303,14 @@ class NDMStaticTransInr(nn.Module):
             )
             print("x_recon shape:", x_recon.shape)
             print(
-                "x_recon.min():", x_recon.min(), "\nx_recon.max():", x_recon.max(), "\nx_recon.mean():", x_recon.mean(), "\nx_recon.std():", x_recon.std()
+                "x_recon.min():",
+                x_recon.min(),
+                "\nx_recon.max():",
+                x_recon.max(),
+                "\nx_recon.mean():",
+                x_recon.mean(),
+                "\nx_recon.std():",
+                x_recon.std(),
             )
             print("###############################################\n")
 
@@ -438,7 +445,6 @@ class NDMStaticTransInr(nn.Module):
                 curr_theta = mean
 
             if collect_snapshots and t in T_values:
-                
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
             # Print statistics every 100 steps for debugging
@@ -462,7 +468,6 @@ class NDMStaticTransInr(nn.Module):
             return curr_theta, snapshots
         return curr_theta
 
-    
     def _inr_decode(
         self,
         flat_weights: torch.Tensor,
@@ -535,5 +540,3 @@ class NDMStaticTransInr(nn.Module):
         theta_t = alpha_t * theta_prime + sigma_t * epsilon
 
         return theta_t, epsilon
-
-

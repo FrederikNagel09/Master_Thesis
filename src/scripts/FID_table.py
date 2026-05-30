@@ -59,7 +59,7 @@ from src.utility.plotting import _build_figure
 
 warnings.filterwarnings("ignore", message="The operator 'aten::im2col' is not currently supported on the MPS backend")
 
-VALID_MODELS = {"latent_inr_diffusion", "ndm_static_transinr", "transinr_vae"}
+VALID_MODELS = {"latent_inr_diffusion", "weight_inr_diffusion", "transinr_vae"}
 
 
 def main():

@@ -277,7 +277,7 @@ def train(
                         "ndm_static_mlpinr",
                         "ndm_transinr",
                         "ndm_temporal_transinr",
-                        "ndm_static_transinr",
+                        "weight_inr_diffusion",
                         "latent_inr_diffusion",
                         "latent_ndm_inr_diffusion",
                     ):

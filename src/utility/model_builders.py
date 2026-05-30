@@ -66,8 +66,8 @@ def build_model(args, data_config: dict) -> nn.Module:
         model = _build_ndm_transinr(args, data_config)
     elif name == "ndm_temporal_transinr":
         model = _build_ndm_temporal_transinr(args, data_config)
-    elif name == "ndm_static_transinr":
-        model = _build_ndm_static_transinr(args, data_config)
+    elif name == "weight_inr_diffusion":
+        model = _build_weight_diffusion(args, data_config)
     elif name == "ndm_static_mlpinr":
         model = _build_ndm_static_mlpinr(args, data_config)
     elif name == "latent_inr_diffusion":
@@ -899,12 +899,14 @@ def _build_ndm_temporal_transinr(args, data_config: dict):
     return model
 
 
-def _build_ndm_static_transinr(args, data_config: dict):
+## Approach 1:
+def _build_weight_diffusion(args, data_config: dict):
     """
-    Build NDMStaticTransInr:
+    Build WeightDiffusion:
         TransInrEncoder as W(x) + NDM diffusion in weight space.
     """
-    from src.models.NDM_StaticTransInr import NDMStaticTransInr
+    from models.WeightDiffusion import WeightDiffusion
+
     from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor
 
     channels = data_config["channels"]
@@ -995,7 +997,7 @@ def _build_ndm_static_transinr(args, data_config: dict):
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
 
     # ── Assemble ──────────────────────────────────────────────────────────────
-    model = NDMStaticTransInr(
+    model = WeightDiffusion(
         NoisePredictor=network,
         WeightEncoder=encoder,
         coord_grid=coord_grid,
@@ -1011,8 +1013,9 @@ def _build_ndm_static_transinr(args, data_config: dict):
 
 
 def _build_ndm_static_mlpinr(args, data_config: dict):
+    from models.WeightDiffusion import WeightDiffusion
+
     from src.models.NDM_INR import MLPStaticWeightEncoder, NoisePredictor
-    from src.models.NDM_StaticTransInr import NDMStaticTransInr
 
     data_dim = data_config["data_dim"]
     img_size = data_config["img_size"]
@@ -1048,7 +1051,7 @@ def _build_ndm_static_mlpinr(args, data_config: dict):
 
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
     print(f"normalize in builder is {args.normalize}")
-    model = NDMStaticTransInr(
+    model = WeightDiffusion(
         NoisePredictor=network,
         WeightEncoder=encoder,
         coord_grid=coord_grid,
@@ -1063,6 +1066,7 @@ def _build_ndm_static_mlpinr(args, data_config: dict):
     return model
 
 
+## Approach 2:
 def _build_latent_diffusion(args, data_config: dict):
     """
     Build LatentDiffusion with LatentEncoder + TransInr decoder + noise predictor.
@@ -1301,6 +1305,7 @@ def _print_latent_encoder_info(encoder: ResNetLatentEncoder) -> int:
 ############# Neural Latent Diffusion ###################
 
 
+## Approach 3:
 def _build_latent_ndm_diffusion(args, data_config: dict):
     """
     Build LatentDiffusion with LatentEncoder + TransInr decoder + noise predictor.

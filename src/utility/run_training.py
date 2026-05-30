@@ -269,7 +269,7 @@ def run_training(
                     model_name=args.model,
                     normalize=args.normalize,
                 )
-            elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "ndm_static_transinr"):
+            elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "weight_inr_diffusion"):
                 # Just simple reconstruction
                 plot_reconstruction_progression(
                     model,

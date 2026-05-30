@@ -11,13 +11,13 @@ CACHE_PATH = os.path.join(CACHE_DIR, "real_mnist_features.npz")
 
 MODEL_LABELS = {
     "latent_inr_diffusion": "Latent INR Diffusion",
-    "ndm_static_transinr": "NDM Static TransINR",
+    "weight_inr_diffusion": "Weight INR Diffusion",
     "transinr_vae": "TransINR VAE",
 }
 
 MODEL_COLORS = {
     "latent_inr_diffusion": "#2a6fdb",
-    "ndm_static_transinr": "#e07b39",
+    "weight_inr_diffusion": "#e07b39",
     "transinr_vae": "#2ca05a",
 }
 
