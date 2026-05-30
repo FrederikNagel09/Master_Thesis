@@ -184,6 +184,7 @@ class WeightDiffusion(nn.Module):
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
         t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
+
         if self.probablistic:
             mean, logvar = self.weight_encoder(x)
             theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)

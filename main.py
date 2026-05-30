@@ -124,7 +124,7 @@ python main.py \
 
 
 
-######################### TRANSFORMER ENCODER NDM-INR Training ####################################
+######################### Weight Diffusion Training ####################################
 python main.py \
     --run_name weight-diffusion-Test\
     --model weight_inr_diffusion\
