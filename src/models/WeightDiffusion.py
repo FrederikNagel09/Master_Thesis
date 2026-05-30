@@ -260,7 +260,7 @@ class WeightDiffusion(nn.Module):
             print("================================================================\n")
 
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_t, t_norm, epsilon)
+        l_diff = self._l_diff(theta_t, t_norm, epsilon, t_idx)
         l_rec = self._l_rec(x, theta_prime_raw)
 
         if self.probablistic:
@@ -268,7 +268,7 @@ class WeightDiffusion(nn.Module):
             elbo = l_diff + l_rec + lambda_kl * l_prior
         else:
             l_prior = torch.zeros_like(l_diff)  # dummy zero tensor for logging
-            elbo = l_diff + l_rec
+            elbo = (self.T-1)*l_diff + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -317,7 +317,7 @@ class WeightDiffusion(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, epsilon) -> torch.Tensor:
+    def _l_diff(self, theta_t, t_norm, epsilon, t_idx) -> torch.Tensor:
         """
         x0-prediction loss weighted by SNR(t) to prevent posterior mean collapse.
         Args:
@@ -329,7 +329,26 @@ class WeightDiffusion(nn.Module):
         """
         epsilon_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
 
-        mse = F.mse_loss(epsilon_hat, epsilon, reduction="none").mean(dim=-1)  # (B,)
+        alpha_t = self.alpha[t_idx]
+        alpha_bar_t = self.alpha_cumprod[t_idx]
+        beta_t = self.beta[t_idx]
+
+        scaling = beta_t / (2 * alpha_t * (1.0 - alpha_bar_t))
+
+        mse = F.mse_loss(epsilon_hat, epsilon, reduction="none")
+
+        unscaled_mse = mse.sum(dim=-1)
+        weighted_mse = scaling * unscaled_mse
+
+        # Bin MSE by timestep to see where the model fails
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            t_flat = t_norm.flatten()
+            low_t_mask  = t_flat < 0.2   # t in [0, 0.2]
+            high_t_mask = t_flat > 0.8   # t in [0.8, 1.0]
+            if low_t_mask.any():
+                print(f"MSE @ low  t (<0.2): {mse[low_t_mask].mean():.4f}")
+            if high_t_mask.any():
+                print(f"MSE @ high t (>0.8): {mse[high_t_mask].mean():.4f}")
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Diffusion Loss: #################")
@@ -368,7 +387,7 @@ class WeightDiffusion(nn.Module):
             )
             print("###############################################\n")
 
-        return mse
+        return weighted_mse
 
     def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -437,11 +456,8 @@ class WeightDiffusion(nn.Module):
             mean = coeff1 * (curr_theta - coeff2 * eps_hat)
 
             if t > 0:
-                alpha_bar_prev = self.alpha_cumprod[t - 1]
-                beta_tilde = (1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t) * beta_t
-                sigma = torch.sqrt(beta_tilde)
+                sigma = torch.sqrt(beta_t)
                 curr_theta = mean + sigma * torch.randn_like(curr_theta)
-                curr_theta = curr_theta.clamp(-4, 4)
             else:
                 curr_theta = mean
 
@@ -468,6 +484,7 @@ class WeightDiffusion(nn.Module):
         if collect_snapshots:
             return curr_theta, snapshots
         return curr_theta
+
 
     def _inr_decode(
         self,

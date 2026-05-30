@@ -125,44 +125,47 @@ python main.py \
 
 
 ######################### Weight Diffusion Training ####################################
-python main.py \
-    --run_name weight-diffusion-Test\
+CUDA_VISIBLE_DEVICES=0 python main.py \
+    --run_name weight-diffusion-Test6_v3\
     --model weight_inr_diffusion\
     --dataset mnist \
-    --epochs 5 \
-    --batch_size 32 \
+    --epochs 10 \
+    --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.05 \
+    --subset_frac 1.0 \
     --normalize True\
     --probablistic False \
     --peak_lr 1e-4 \
-    --T 100 \
+    --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 16 \
+    --inr_hidden_dim 32 \
     --inr_layers 3 \
-    --encoder_trans_dim 64 \
-    --encoder_trans_n_head 4 \
-    --encoder_trans_head_dim 8 \
-    --encoder_trans_ff_dim 256 \
-    --encoder_trans_enc_depth 2 \
-    --encoder_trans_dec_depth 2 \
+    --encoder_trans_dim 128 \
+    --encoder_trans_n_head 8 \
+    --encoder_trans_head_dim 32 \
+    --encoder_trans_ff_dim 1024 \
+    --encoder_trans_enc_depth 4 \
+    --encoder_trans_dec_depth 4 \
     --encoder_trans_patch_size 4 \
     --encoder_trans_n_groups 32 \
     --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
-    --noise_predictor_dim 64 \
-    --noise_predictor_n_head 4 \
-    --noise_predictor_head_dim 8 \
-    --noise_predictor_ff_dim 256 \
-    --noise_predictor_depth 2 \
-    --noise_predictor_dropout 0.1 \
-    --noise_predictor_chunk_size 128 \
-    --noise_predictor_t_embed_dim 64
+    --noise_predictor_dim 128 \
+    --noise_predictor_n_head 8 \
+    --noise_predictor_head_dim 64 \
+    --noise_predictor_ff_dim 1024 \
+    --noise_predictor_depth 6 \
+    --noise_predictor_dropout 0.0 \
+    --noise_predictor_chunk_size 8 \
+    --noise_predictor_t_embed_dim 256
+
+
+    --lambda_kl 0.05 \
 
     --freeze_encoder 0.2 \
         --single_class \

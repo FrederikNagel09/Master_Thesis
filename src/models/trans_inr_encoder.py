@@ -24,7 +24,7 @@ import copy
 import importlib
 import math
 import sys
-
+import random
 # ---------------------------------------------------------------------------
 # Re-use helpers from trans_inr_helpers
 # ---------------------------------------------------------------------------
@@ -37,6 +37,8 @@ sys.path.append(".")
 
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
 from src.models.trans_inr_helpers import SIREN, TransformerEncoder
+
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
 # ---------------------------------------------------------------------------
 # Config utilities (copied from trans_inr.py to keep this file self-contained)
@@ -470,6 +472,7 @@ class TransInrTemporalEncoder(nn.Module):
         return self._flatten_params(param_dict)
 
 
+
 class TransInrNoisePredictor(nn.Module):
     """ """
 
@@ -496,7 +499,7 @@ class TransInrNoisePredictor(nn.Module):
 
         # 2. Time Embedding (MLP for richer signal)
         self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
-        self.time_mlp = nn.Sequential(nn.Linear(t_embed_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
+        self.time_mlp = nn.Sequential(nn.Linear(t_embed_dim, dim), nn.SiLU())
 
         # 3. Input Projection
         self.token_embed = nn.Linear(chunk_size, dim)
@@ -531,10 +534,24 @@ class TransInrNoisePredictor(nn.Module):
         # Reshape to (B, N_tokens, Chunk_size)
         tokens = z_pad.view(B, self.n_tokens, self.chunk_size)
         x = self.token_embed(tokens)  # (B, N, dim)
+        # === TIME SIGNAL DIAGNOSTIC ===
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            t_high = torch.ones_like(t)  # t=1.0 (999/999 = 1.0)
+            t_low  = torch.zeros_like(t)
 
+            t_sin_high = self.time_embed(t_high)
+            t_sin_low  = self.time_embed(t_low)
+            t_mlp_high = self.time_mlp(t_sin_high)
+            t_mlp_low  = self.time_mlp(t_sin_low)
+
+            print(f"[DIAG] t shape: {t.shape}, values: {t.flatten()[:4]}")
+            print(f"[DIAG] sinusoidal diff: {(t_sin_high - t_sin_low).abs().max():.6f}")
+            print(f"[DIAG] after time_mlp: {(t_mlp_high - t_mlp_low).abs().max():.6f}")
+
+        # ==============================
         # --- Step 2: Dense Conditioning (Option B) ---
         # Get time vector
-        t_emb = self.time_mlp(self.time_embed(t))  # (B, dim)
+        t_emb = self.time_mlp(self.time_embed(t))
 
         # Inject time and position into EVERY token
         x = x + self.pos_embed + t_emb.unsqueeze(1)

@@ -41,7 +41,6 @@ class SinusoidalLearnableTimeEmbedding(nn.Module):
 
         # Scale t to [0, T] range and compute sinusoidal features
         args = t * freqs.unsqueeze(0) * self.T
-
         # Gets Sinusodal time embedding by concatenating sin and cos features
         time_embedding = torch.cat([args.sin(), args.cos()], dim=-1)  # (batch, embed_dim)
 
