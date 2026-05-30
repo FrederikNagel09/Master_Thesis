@@ -33,7 +33,8 @@ from src.models.NDM_INR import (
     TransformerTemporalWeightEncoder,
 )
 from src.models.trans_inr import TransInr, make_coord_grid
-from src.models.trans_inr_encoder import TransInrNoisePredictor, TransInrTemporalEncoder
+from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor, TransInrTemporalEncoder
+from src.models.WeightDiffusion import WeightDiffusion
 from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
 
 # =============================================================================
@@ -905,9 +906,6 @@ def _build_weight_diffusion(args, data_config: dict):
     Build WeightDiffusion:
         TransInrEncoder as W(x) + NDM diffusion in weight space.
     """
-    from models.WeightDiffusion import WeightDiffusion
-
-    from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor
 
     channels = data_config["channels"]
     img_size = data_config["img_size"]
@@ -1013,10 +1011,6 @@ def _build_weight_diffusion(args, data_config: dict):
 
 
 def _build_ndm_static_mlpinr(args, data_config: dict):
-    from models.WeightDiffusion import WeightDiffusion
-
-    from src.models.NDM_INR import MLPStaticWeightEncoder, NoisePredictor
-
     data_dim = data_config["data_dim"]
     img_size = data_config["img_size"]
     channels = data_config["channels"]
