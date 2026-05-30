@@ -510,8 +510,8 @@ class TransInrNoisePredictor(nn.Module):
         self.noise_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, chunk_size))
 
         # Initialize head to zero or small values to help initial stability
-        #nn.init.zeros_(self.noise_head[1].weight)
-        #nn.init.zeros_(self.noise_head[1].bias)
+        # nn.init.zeros_(self.noise_head[1].weight)
+        # nn.init.zeros_(self.noise_head[1].bias)
 
     def forward(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
