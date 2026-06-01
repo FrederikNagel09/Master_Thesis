@@ -188,7 +188,7 @@ class WeightDiffusion(nn.Module):
         if self.probablistic:
             mean, logvar = self.weight_encoder(x)
             theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
-            if GLOBAL_DEBUG_BOOL:
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
                 std = torch.exp(0.5 * logvar)
                 print(f"==================== Probablistic Components {self.i}: ====================")
                 print(f"[Encoder] mu:     mean={mean.mean():.3f}, std={mean.std():.3f}, min={mean.min():.3f}, max={mean.max():.3f}")

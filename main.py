@@ -126,10 +126,10 @@ python main.py \
 
 ######################### Weight Diffusion Training ####################################
 CUDA_VISIBLE_DEVICES=0 python main.py \
-    --run_name weight-diffusion-probablistic-v4\
+    --run_name weight-diffusion-probablistic-v5\
     --model weight_inr_diffusion\
     --dataset mnist \
-    --epochs 5 \
+    --epochs 20 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -138,7 +138,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --subset_frac 1.0 \
     --normalize True\
     --probablistic True \
-    --lambda_kl 1e-3 \
+    --lambda_kl 5e-3 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \

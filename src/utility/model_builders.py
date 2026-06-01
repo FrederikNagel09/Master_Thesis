@@ -91,10 +91,11 @@ def print_encoder_stats(model, mode="Static"):
     transformer_p = count(model.transformer.parameters())
     base_p = count(model.base_params.values())
     wtoken_p = model.wtokens.numel()
-    postfc_mu_p = count(model.wtoken_postfc_mu.parameters())
-    postfc_lv_p = count(model.wtoken_postfc_logvar.parameters())
+    postfc_p = count(model.wtoken_postfc.parameters())
+    logvar_p = count(model.logvar_mlp.parameters()) if model.probabilistic else 0
 
-    total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_mu_p + postfc_lv_p
+    total_learnable = tokenizer_p + transformer_p + base_p + wtoken_p + postfc_p + logvar_p
+
     if mode == "Temporal":
         time_embedding = count(model.time_mlp.parameters())
         total_learnable += time_embedding
@@ -106,15 +107,16 @@ def print_encoder_stats(model, mode="Static"):
     print("=" * 60)
     print(f"Architecture: {model.transformer.__class__.__name__}")
     print(f"Weight Dim (Total INR params): {model.weight_dim:,}")
-    print(f"Encoder Mode: {mode}")
+    print(f"Encoder Mode: {mode} | Probabilistic: {model.probabilistic}")
     print("-" * 60)
     print("Learnable Parameters:")
     print(f"  Vision Tokenizer:     {tokenizer_p:>12,} params")
     print(f"  Main Transformer:     {transformer_p:>12,} params")
-    print(f"  Weight Tokens (2xNw): {wtoken_p:>12,} params")
+    print(f"  Weight Tokens:        {wtoken_p:>12,} params")
     print(f"  Base INR Weights:     {base_p:>12,} params")
-    print(f"  Wtoken Post-FC (mu):  {postfc_mu_p:>12,} params")
-    print(f"  Wtoken Post-FC (lv):  {postfc_lv_p:>12,} params")
+    print(f"  Wtoken Post-FC:       {postfc_p:>12,} params")
+    if model.probabilistic:
+        print(f"  Logvar MLP:           {logvar_p:>12,} params")
     if mode == "Temporal":
         print(f"  Time MLP:             {time_embedding:>12,} params")
     print(f"  {'─'*44}")
@@ -127,7 +129,7 @@ def print_encoder_stats(model, mode="Static"):
     print(f"Total INR Weights: {inr_total:,}")
     print("=" * 60 + "\n")
 
-
+    
 def print_noise_predictor_stats(model):
     def count(params):
         return sum(p.numel() for p in params)
