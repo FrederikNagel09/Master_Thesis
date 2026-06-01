@@ -216,16 +216,17 @@ python main.py \
 
 ######### Latent NDM Diffusion Training ############
 python main.py \
-    --run_name latent_ndm_diffusion-TEST  \
+    --run_name latent_ndm_diffusion-v1  \
     --model latent_ndm_inr_diffusion \
     --dataset mnist \
-    --epochs 200 \
+    --epochs 10 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
     --subset_frac 1.0 \
+    --lambda_kl 5e-3 \
     --normalize True\
     --T 1000 \
     --beta_1 1e-4 \

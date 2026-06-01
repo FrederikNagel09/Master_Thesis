@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J weight-diffusion-probablistic5e-3         # Job name
+#BSUB -J weight-diffusion-probablistic1         # Job name
 #BSUB -q gpuv100                           # Queue to submit the job to
 #BSUB -W 600                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/weight-diffusion-probablistic5e-3.out                        # Standard output redirection
-#BSUB -e src/outputs/weight-diffusion-probablistic5e-3.err                        # Standard error redirection
+#BSUB -o src/outputs/weight-diffusion-probablistic1.out                        # Standard output redirection
+#BSUB -e src/outputs/weight-diffusion-probablistic1.err                        # Standard error redirection
 ##BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,7 +16,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name weight-diffusion-probablistic-5e-3\
+    --run_name weight-diffusion-probablistic-1\
     --model weight_inr_diffusion\
     --dataset mnist \
     --epochs 300 \
@@ -28,7 +28,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --subset_frac 1.0 \
     --normalize True\
     --probablistic True \
-    --lambda_kl 5e-3 \
+    --lambda_kl 1.0 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \

@@ -70,7 +70,7 @@ class LatentTransformation(nn.Module):
         Returns:
             (B, C, H, W) — transformed latent, same shape as input
         """
-        t_emb = self.time_embed(t)  # (B, t_embed_dim)
+        t_emb = self.time_embed(t.view(-1, 1))  # (B, t_embed_dim)
         h = self.proj_in(z)
         for block in self.blocks:
             h = block(h, t_emb)

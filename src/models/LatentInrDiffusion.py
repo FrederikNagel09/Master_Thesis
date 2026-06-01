@@ -352,6 +352,16 @@ class LatentDiffusion(nn.Module):
 
         unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
+        # Bin MSE by timestep to see where the model fails
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            t_flat = t_norm.flatten()
+            low_t_mask  = t_flat < 0.2   # t in [0, 0.2]
+            high_t_mask = t_flat > 0.8   # t in [0.8, 1.0]
+            if low_t_mask.any():
+                print(f"MSE @ low  t (<0.2): {unscaled_loss[low_t_mask].mean():.4f}")
+            if high_t_mask.any():
+                print(f"MSE @ high t (>0.8): {unscaled_loss[high_t_mask].mean():.4f}")
+
         if self.__do_scaling:  # noqa: SIM108
             # 4. Scale the per-sample loss
             l_diff_loss = scaling * unscaled_loss
