@@ -173,8 +173,15 @@ def train(
         for param in model.denoiser.parameters():
             param.requires_grad = False
 
-    kl_warmup_epochs = int(0.4 * (start_epoch + epochs))  # ramp over 40% of total training
+    kl_free_epochs = int(0.2 * epochs)       # flat zero for first 20%
+    kl_warmup_epochs = int(0.6 * epochs)     # then ramp over next 60%
     lambda_kl_max = model.lambda_kl
+
+    def get_kl_weight(epoch: int) -> float:
+        if epoch < kl_free_epochs:
+            return 0.0
+        ramp_progress = (epoch - kl_free_epochs) / kl_warmup_epochs
+        return lambda_kl_max * min(ramp_progress, 1.0)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
@@ -189,6 +196,12 @@ def train(
                 for param in model.denoiser.parameters():
                     param.requires_grad = True
                 print("##################################################################\n")
+        
+        if epoch < kl_free_epochs:
+            lambda_kl = 0.0
+        else:
+            ramp_progress = (epoch - kl_free_epochs) / kl_warmup_epochs
+            lambda_kl = lambda_kl_max * min(1.0, ramp_progress)
 
         if GLOBAL_DEBUG_BOOL:
             print(f"\n############## EPOCH: {epoch} ##############\n")
@@ -218,8 +231,8 @@ def train(
             else:
                 x = batch[0] if isinstance(batch, list | tuple) else batch
                 x = x.to(device)
-                lambda_kl = lambda_kl_max * min(1.0, epoch / kl_warmup_epochs) if lambda_kl_max > 0 else 1.0
-                loss, l_diff, l_prior, l_rec = model.loss(x, lambda_kl)  # type: ignore
+
+                loss, l_diff, l_prior, l_rec = model.loss(x, lambda_kl)
 
             # ── NaN/divergence diagnostics ──────────────────────────────────
 
@@ -245,12 +258,11 @@ def train(
 
             # ── Progress bar postfix ─────────────────────────────────────────
             progress_bar.set_postfix(
-                epoch=f"{epoch}/{start_epoch + epochs}",
+                #epoch=f"{epoch}/{start_epoch + epochs}",
                 loss=f"{loss.item():.4f}",
                 diff=f"{l_diff.item():.4f}",
                 prior=f"{l_prior.item():.4f}",
                 rec=f"{l_rec.item():.4f}",
-                lr=f"{current_lr:.2e}",
                 lambda_kl=f"{lambda_kl:.2e}",
             )
             progress_bar.update()

@@ -188,8 +188,18 @@ class WeightDiffusion(nn.Module):
         if self.probablistic:
             mean, logvar = self.weight_encoder(x)
             theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+            if GLOBAL_DEBUG_BOOL:
+                std = torch.exp(0.5 * logvar)
+                print(f"==================== Probablistic Components {self.i}: ====================")
+                print(f"[Encoder] mu:     mean={mean.mean():.3f}, std={mean.std():.3f}, min={mean.min():.3f}, max={mean.max():.3f}")
+                print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
+                print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
+                print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+                print("================================================================\n")
         else:
             theta_prime_raw = self.weight_encoder(x)
+            print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+
 
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
@@ -265,9 +275,9 @@ class WeightDiffusion(nn.Module):
 
         if self.probablistic:
             l_prior = self._l_prior(mean, logvar)
-            elbo = l_diff + l_rec + lambda_kl * l_prior
+            elbo = (self.T-1)*l_diff + l_rec + lambda_kl * l_prior
         else:
-            l_prior = torch.zeros_like(l_diff)  # dummy zero tensor for logging
+            l_prior = torch.zeros_like(l_diff)
             elbo = (self.T-1)*l_diff + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()

@@ -154,6 +154,10 @@ class TransInrEncoder(nn.Module):
                 nn.LayerNorm(dim),
                 nn.Linear(dim, shape[0] - 1),
             )
+            
+            nn.init.zeros_(self.wtoken_postfc_logvar[name][1].weight)
+            nn.init.constant_(self.wtoken_postfc_logvar[name][1].bias, -10.0)
+            
             self.wtoken_rng[name] = (n_wtokens, n_wtokens + g)
             n_wtokens += g
 
@@ -170,6 +174,25 @@ class TransInrEncoder(nn.Module):
     def weight_dim(self) -> int:
         """Flat weight vector dimension."""
         return self._weight_dim
+
+    def _modulate_logvar(self, trans_out, wtoken_offset, B):
+        """
+        Produce logvar via additive modulation (not scale), so init bias=-6 is meaningful.
+        Args: trans_out : (B, 2*N_w, dim), wtoken_offset : int, B : int
+        Returns: flat logvar : (B, weight_dim)
+        """
+        param_dict = {}
+        for name, shape in self.inr.param_shapes.items():
+            l, r = self.wtoken_rng[name]
+            x_mod = self.wtoken_postfc_logvar[name](
+                trans_out[:, wtoken_offset + l : wtoken_offset + r, :]
+            )                                     # (B, g, shape[0]-1)
+            x_mod = x_mod.transpose(-1, -2)      # (B, shape[0]-1, g)
+            # repeat across weight dim, then append zeros for bias row
+            x_mod = x_mod.repeat(1, 1, shape[1] // x_mod.shape[2])  # (B, shape[0]-1, shape[1])
+            bias_row = torch.zeros(B, 1, shape[1], device=x_mod.device)
+            param_dict[name] = torch.cat([x_mod, bias_row], dim=1)   # (B, shape[0], shape[1])
+        return self._flatten_params(param_dict)
 
     def _flatten_params(self, param_dict: dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -238,12 +261,8 @@ class TransInrEncoder(nn.Module):
         return self._flatten_params(param_dict)
 
     def _reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """
-        Reparameterization trick: z = mu + eps * std.
-
-        Args: mu, logvar : (B, weight_dim)
-        Returns: z : (B, weight_dim)
-        """
+        #logvar = logvar.clamp(-10, 2)  # prevent std explosion/vanishing
+        logvar = logvar.clamp(-10, 2)
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
@@ -274,7 +293,7 @@ class TransInrEncoder(nn.Module):
 
         if self.probablistic:
             mu = self._modulate_params(trans_out, self.wtoken_postfc_mu, wtoken_offset=0, B=B)
-            logvar = self._modulate_params(trans_out, self.wtoken_postfc_logvar, wtoken_offset=self.n_wtokens, B=B)
+            logvar = self._modulate_logvar(trans_out, wtoken_offset=self.n_wtokens, B=B)
             return mu, logvar
         else:
             return self._modulate_params(trans_out, self.wtoken_postfc_mu, wtoken_offset=0, B=B)
