@@ -1189,6 +1189,7 @@ def _build_latent_diffusion(args, data_config: dict):
         lambda_kl=args.lambda_kl,
         scaling=args.do_scaling,
         latent_recon=args.do_latent_recon,
+        probabilistic=args.probablistic,
     )
 
     # Final print of total model params (encoder + decoder + predictor)

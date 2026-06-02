@@ -175,42 +175,43 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     
 ######### Latent Diffusion Training ############
 python main.py \
-    --run_name latent_resume-test-scheduler \
+    --run_name Latent-Diffusion-Deterministic-test \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 10 \
-    --batch_size 64 \
+    --epochs 40 \
+    --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.15 \
-    --normalize True\
+    --subset_frac 1.0 \
+    --normalize False\
     --do_scaling True \
-    --do_latent_recon True \
+    --do_latent_recon False \
+    --probablistic False \
+    --lambda_kl 1e-5 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
-    --inr_hidden_dim 64 \
+    --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --latent_dim 16 \
+    --latent_dim 32 \
     --latent_size 4 \
     --latent_patch_size 2 \
-    --latent_enc_hidden_dim 10\
-    --pred_d_model 64 \
-    --pred_n_heads 2 \
-    --pred_n_layers 2 \
-    --pred_d_ff 256 \
-    --pred_t_embed_dim 128 \
-    --dec_trans_dim 64 \
-    --dec_trans_n_head 4 \
-    --dec_trans_head_dim 16 \
-    --dec_trans_ff_dim 256 \
-    --dec_trans_enc_depth 2 \
-    --dec_trans_dec_depth 2 \
+    --latent_enc_hidden_dim 12\
+    --pred_d_model 128 \
+    --pred_n_heads 8 \
+    --pred_n_layers 3 \
+    --pred_d_ff 1024 \
+    --pred_t_embed_dim 256 \
+    --dec_trans_dim 128 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 64 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 4 \
+    --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
-    --dec_trans_update_strategy scale \
-    --resume src/train_results/latent_resume-test-scheduler/weights/weights.pt
+    --dec_trans_update_strategy scale
     
 
 

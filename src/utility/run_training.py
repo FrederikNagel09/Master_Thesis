@@ -49,6 +49,7 @@ from src.utility.plotting import (
     plot_sample_progression,
     plot_training,
     plot_ztrans_histogram,
+    plot_val_elbo_progression,
 )
 from src.utility.training import train
 
@@ -97,7 +98,7 @@ def run_training(
             "tqdm.log",
             "denoising_trajectory_progression.png",
             "Forward_noising_progression_*.png",
-            "Reverse_denoising_progression.png",
+            "Reverse_denoising_progression_ep*.png",
             "training_graph.png",
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
@@ -133,27 +134,36 @@ def run_training(
             "metadata/ztrans_histogram_*.npy",
             "weights/weights.pt",
             "metadata/config.json",
+            "val_elbo_progression.png",        
+            "metadata/val_elbo_progression_*.json",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):
                 os.remove(fpath)
 
     # ── 1. Dataset ────────────────────────────────────────────────────────────
     print("\n[ 1 / 4 ]  Building dataset …")
-    dataset, data_config = build_dataset(
+    train_dataset, val_dataset, data_config = build_dataset(
         dataset_name=args.dataset,
         data_root=getattr(args, "data_root", "data/"),
         subset_frac=getattr(args, "subset_frac", 1.0),
         single_class=getattr(args, "single_class", False),
         single_class_label=getattr(args, "single_class_label", 1),
     )
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
+    data_loader_train = torch.utils.data.DataLoader(
+        train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
         num_workers=getattr(args, "num_workers", 0),
     )
-    print(f"  Batches per epoch : {len(data_loader)}")
+    data_loader_val = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=True,
+        num_workers=getattr(args, "num_workers", 0),
+    )
+    print(f"  Batches per epoch : {len(data_loader_train)}")
 
     # ── 2. Model ──────────────────────────────────────────────────────────────
     print("\n[ 2 / 4 ]  Building model …")
@@ -183,7 +193,7 @@ def run_training(
     progression_filename = f"sample_progression_ep{start_epoch + 1}-{end_epoch}"
 
     def _sample_fn(model, step, device, batch=None):
-        epoch = step // len(data_loader)
+        epoch = step // len(data_loader_train)
         plot_sample_progression(
             model,
             args.model,
@@ -269,6 +279,14 @@ def run_training(
                     model_name=args.model,
                     normalize=args.normalize,
                 )
+                plot_val_elbo_progression(
+                    model=model,
+                    data_loader_val=data_loader_val,  # Captured directly from the outer scope
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    filename=f"val_elbo_progression"
+                )
+                
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "weight_inr_diffusion"):
                 # Just simple reconstruction
                 plot_reconstruction_progression(
@@ -336,7 +354,7 @@ def run_training(
     model = train(
         model=model,
         model_type=args.model,
-        data_loader=data_loader,
+        data_loader=data_loader_train,
         epochs=args.epochs,
         device=device,
         name=args.run_name,

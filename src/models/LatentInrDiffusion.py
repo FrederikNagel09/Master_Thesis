@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
+import math
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
@@ -97,6 +98,7 @@ class LatentDiffusion(nn.Module):
         lambda_kl: float = 5e-3,
         scaling: bool = True,
         latent_recon: bool = True,
+        probabilistic: bool = True,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -115,6 +117,7 @@ class LatentDiffusion(nn.Module):
         self._normalize = normalize
         self.__do_scaling = scaling
         self._do_latent_recon = latent_recon
+        self._probabilistic = probabilistic
 
         self.i = 0
         self.latent_scaler = LatentScaler(latent_dim)
@@ -213,7 +216,10 @@ class LatentDiffusion(nn.Module):
 
         ######### Encode Image ##########
         mu, logvar = self.latent_encoder(x)
-        z_raw = self.latent_encoder.reparameterize(mu, logvar)
+        if self._probabilistic:
+            z_raw = self.latent_encoder.reparameterize(mu, logvar)
+        else: 
+            z_raw = mu  # Use mean directly for deterministic latents (ablation)
 
         ######### Normalize Latents ##########
         z = self._normalize_z(z_raw) if self._normalize else z_raw
@@ -243,15 +249,17 @@ class LatentDiffusion(nn.Module):
             l_latent_rec = torch.zeros_like(l_diff)
 
         ######### Compute image reconstruction and entropy loss ##########
-        l_prior = self._l_prior(mu, logvar)
-        #l_prior = self._l_entropy(logvar)
-
+        if self._probabilistic:
+            l_entropy = self._l_entropy(logvar)
+        else: 
+            l_entropy = torch.zeros_like(l_diff)
+        
         l_rec = self._l_rec(x, z_raw)
 
         if self.__do_scaling:
-            total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_prior + l_rec
+            total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl*l_entropy + l_rec
         else:
-            total = l_diff + l_latent_rec + lambda_kl * l_prior + l_rec
+            total = l_diff + l_latent_rec + lambda_kl*l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -315,7 +323,65 @@ class LatentDiffusion(nn.Module):
                 print("###############################################\n")
         self.i += 1
 
-        return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+        return total.mean(), l_diff.mean(), l_entropy.mean(), l_rec.mean()
+
+
+    @torch.no_grad()
+    def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
+        """
+        Computes the exact ELBO over the full validation set.
+        Loops over all T timesteps per batch — expensive, only call at checkpoints.
+
+        Args:
+            val_loader: DataLoader yielding (x, label) batches
+        Returns:
+            mean ELBO scalar (higher is better)
+        """
+        self.eval()
+        device = self.sqrt_alpha_cumprod.device
+        total_elbo = 0.0
+        n_batches = 0
+
+        for x, _ in val_loader:
+            x = x.to(device)
+            B = x.shape[0]  # noqa: N806
+
+            if x.dim() == 2:
+                channels = self.data_dim // (self.img_size * self.img_size)
+                x = x.view(B, channels, self.img_size, self.img_size)
+
+            # Encode once per batch
+            mu, logvar = self.latent_encoder(x)
+            if self._probabilistic:
+                z_raw = self.latent_encoder.reparameterize(mu, logvar)
+            else:
+                z_raw = mu
+            z = self._normalize_z(z_raw) if self._normalize else z_raw
+
+            # l_rec and l_entropy computed once per batch
+            l_rec = self._l_rec(x, z_raw)                                      # (B,)
+            l_entropy = self._l_entropy(logvar) if self._probabilistic else torch.zeros(B, device=device)  # (B,)
+
+            # Sum l_diff over all t
+            l_diff_sum = torch.zeros(B, device=device)                          # (B,)
+            for t in range(self.T):
+                t_idx = torch.full((B,), t, dtype=torch.long, device=device)
+                t_norm = torch.full((B, 1), t / (self.T - 1), device=device)
+                z_t, epsilon = self._forward_process(z, t_idx)
+
+                if t == 0 and self._do_latent_recon:
+                    l_diff_sum += self._l_latent_rec(z_t, t_norm, z)           # (B,)
+                else:
+                    l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx)    # (B,)
+
+            # Full ELBO per sample (negative, so lower is better during training)
+            elbo = l_diff_sum + l_entropy + l_rec                               # (B,)
+            total_elbo += elbo.mean().item()
+            n_batches += 1
+
+        self.train()
+        return total_elbo / n_batches
+
 
     # -------------------------------------------------------------------------
     # Loss terms
@@ -419,30 +485,19 @@ class LatentDiffusion(nn.Module):
 
         return l_diff_loss
 
+    
     def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
         """
-        Negative entropy of q(z|x) = N(mu, exp(logvar)), excluding constants.
+        Negative entropy of q(z|x) = N(mu, exp(logvar)), including constants.
 
         Args:
             logvar: (B, latent_dim, H', W')
         Returns:
-            (B,) per-sample negative entropy — minimizing this maximizes entropy.
+            (B,) per-sample negative entropy
         """
-        # E[log q(z|x)] = -0.5 * sum(1 + logvar), dropping log(2*pi) constant
-        return 0.5 * logvar.sum(dim=(-3, -2, -1))
+        D = logvar[0].numel()  # total number of latent dimensions
+        return 0.5 * (logvar.sum(dim=(-3, -2, -1)) + D * (1 + math.log(2 * math.pi)))
 
-    def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """
-        KL divergence between q(z|x) = N(mu, exp(logvar)) and N(0, I).
-
-        Args:
-            mu:     (B, latent_dim, H', W')
-            logvar: (B, latent_dim, H', W')
-        Returns:
-            (B,) per-sample KL, scaled by lambda_kl
-        """
-        kl = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())  # (B, C, H', W')
-        return kl.sum(dim=(-3, -2, -1))
 
     def _l_rec(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
@@ -478,6 +533,7 @@ class LatentDiffusion(nn.Module):
             print("###############################################\n")
 
         return 0.5 * ((x_flat - x_hat) ** 2).sum(dim=-1)
+
 
     def _l_latent_rec(
         self,
@@ -606,3 +662,4 @@ class LatentDiffusion(nn.Module):
         # TransInr expects (B, C, H, W) and returns (B, C_out, H, W)
         x_hat = self.decoder(z, self.coord_grid)  # (B, C_out, H, W)
         return x_hat.reshape(x_hat.shape[0], -1)  # (B, data_dim)
+

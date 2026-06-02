@@ -17,11 +17,11 @@ Supported dataset names (args.dataset):
 
 from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
-
+import torch
+from torch.utils.data import random_split
 # =============================================================================
 # Public API
 # =============================================================================
-
 
 def build_dataset(
     dataset_name: str,
@@ -29,9 +29,10 @@ def build_dataset(
     subset_frac: float = 1.0,
     single_class: bool = False,
     single_class_label: list[int] = [3, 8, 5],  # noqa: B006
-) -> tuple[Dataset, dict]:
+    val_frac: float = 0.05,
+) -> tuple[Dataset, Dataset, dict]:
     """
-    Build a training dataset and return it together with a data_config dict.
+    Build train/val datasets and return them together with a data_config dict.
 
     Parameters
     ----------
@@ -40,11 +41,13 @@ def build_dataset(
     subset_frac         : Fraction of the (possibly filtered) dataset to keep.
     single_class        : If True, keep only samples with single_class_label.
     single_class_label  : Class label to keep when single_class=True.
+    val_frac            : Fraction of data to use as validation set.
 
     Returns
     -------
-    dataset     : torch Dataset ready to be wrapped in a DataLoader.
-    data_config : Dict with keys "channels", "img_size", "data_dim".
+    train_dataset : Dataset for training.
+    val_dataset   : Dataset for validation.
+    data_config   : Dict with keys "channels", "img_size", "data_dim".
     """
     name = dataset_name.lower()
 
@@ -68,17 +71,26 @@ def build_dataset(
         n = int(len(dataset) * subset_frac)
         dataset = Subset(dataset, range(n))
 
+    # ── Train / val split ────────────────────────────────────────────────────
+    n_total = len(dataset)
+    n_val = int(n_total * val_frac)
+    n_train = n_total - n_val
+    train_dataset, val_dataset = random_split(
+        dataset,
+        [n_train, n_val],
+        generator=torch.Generator().manual_seed(42),  # reproducible split
+    )
+
     print(
         f"  Dataset : {dataset_name.upper()}  "
-        f"| samples={len(dataset):,}  "
+        f"| train={n_train:,}  "
+        f"| val={n_val:,}  "
         f"| channels={data_config['channels']}  "
         f"| img_size={data_config['img_size']}  "
         f"| data_dim={data_config['data_dim']}"
     )
 
-    return dataset, data_config
-
-
+    return train_dataset, val_dataset, data_config
 # =============================================================================
 # Per-dataset builders
 # =============================================================================

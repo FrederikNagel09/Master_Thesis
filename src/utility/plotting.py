@@ -397,12 +397,18 @@ def plot_sample_progression(
 
     # ── Plot denoising trajectory if snapshots were collected ─────────────────
     if collect_snapshots and snapshots is not None:
+        # Dynamically derive the denoising filename to match the segment suffix of this run
+        denoising_filename = filename.replace("sample_progression", "Reverse_denoising_progression")
+        if denoising_filename == filename:
+            # Fallback guard just in case a custom filename without 'sample_progression' was passed
+            denoising_filename = f"Reverse_denoising_progression_{filename}"
+
         plot_denoising_trajectory_progression(
             snapshots=snapshots,
             epoch=epoch,
             run_dir=run_dir,
+            filename=denoising_filename,  # <── Pass the new segment name here!
         )
-
 
 def plot_denoising_trajectory_progression(
     snapshots: dict[int, np.ndarray],
@@ -412,62 +418,69 @@ def plot_denoising_trajectory_progression(
 ) -> None:
     """
     Append a row of 4 weight distribution histograms to the denoising trajectory
-    progression figure and save to <run_dir>/<filename>.png, overwriting each call.
-    Always renders 5 rows x 4 columns — empty rows shown as blank until filled.
-    Each row is one sampling run (epoch), each column one T-value snapshot.
-    Args:
-        snapshots: {t_value: flat np.ndarray} from sample_weight with collect_snapshots=True.
-        epoch:     Current epoch, used as row label.
-        run_dir:   Run results directory.
-        filename:  Base filename for outputs.
-    Returns: None
+    progression figure, saved to <run_dir>/<filename>.png.
+    
+    Now safely handles resets, restarts, and dynamic segmentation by grouping 
+    and sorting snapshots explicitly by epoch.
     """
     import json
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
 
     os.makedirs(run_dir, exist_ok=True)
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
 
     N_ROWS_TOTAL = 5  # noqa: N806
-    # Sorted descending so columns go T-1 → T//4 (high noise → clean)
     t_keys_sorted = sorted(snapshots.keys(), reverse=True)
-    n_cols = len(t_keys_sorted)  # always 4
+    n_cols = len(t_keys_sorted)  
 
-    # New row: list of flat arrays in column order
+    # New row data to inject
     new_row_data = [snapshots[t] for t in t_keys_sorted]
 
-    # ── Load or init persisted data ───────────────────────────────────────────
     meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
     data_path = os.path.join(metadata_dir, f"{filename}_data.npy")
 
+    # ── 1. Load, Deduplicate, and Synchronize History ─────────────────────────
     if os.path.exists(meta_path) and os.path.exists(data_path):
-        with open(meta_path) as f:
-            meta = json.load(f)
-        all_rows = list(np.load(data_path, allow_pickle=True))
-        all_rows.append(new_row_data)
-        all_epochs = meta["epochs"] + [epoch]
-        all_t_keys = meta["t_keys"]  # reuse column order from first call
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+            loaded_rows = list(np.load(data_path, allow_pickle=True))
+            loaded_epochs = meta["epochs"]
+            all_t_keys = meta["t_keys"]
+            
+            # Map epoch -> row data to protect layout budgets from duplicate rows
+            history_map = {ep: row for ep, row in zip(loaded_epochs, loaded_rows)}
+        except Exception:
+            history_map = {}
+            all_t_keys = t_keys_sorted
     else:
-        all_rows = [new_row_data]
-        all_epochs = [epoch]
+        history_map = {}
         all_t_keys = t_keys_sorted
 
+    # Insert or overwrite current epoch row
+    history_map[epoch] = new_row_data
+
+    # Sort everything chronologically by epoch
+    sorted_epochs = sorted(history_map.keys())
+    all_rows = [history_map[ep] for ep in sorted_epochs]
+
+    # Save tracking history back to disk
     np.save(data_path, np.array(all_rows, dtype=object))
     with open(meta_path, "w") as f:
-        json.dump({"epochs": all_epochs, "t_keys": all_t_keys}, f)
+        json.dump({"epochs": sorted_epochs, "t_keys": all_t_keys}, f)
 
-    # ── Pad to N_ROWS_TOTAL ───────────────────────────────────────────────────
-    padded_rows = all_rows + [None] * (N_ROWS_TOTAL - len(all_rows))
-    padded_epochs = all_epochs + [""] * (N_ROWS_TOTAL - len(all_epochs))
+    # ── 2. Pad to N_ROWS_TOTAL (Strict Layout Isolation) ──────────────────────
+    padded_rows = all_rows[:N_ROWS_TOTAL] + [None] * (N_ROWS_TOTAL - len(all_rows))
+    padded_epochs = sorted_epochs[:N_ROWS_TOTAL] + [""] * (N_ROWS_TOTAL - len(sorted_epochs))
 
-    # ── Build figure: 5 rows x 4 cols of histograms ───────────────────────────
-    col_width = 2.2  # inches per histogram
-    row_height = 1.6  # inches per histogram
+    # ── 3. Build Figure Layout ────────────────────────────────────────────────
+    col_width, row_height = 2.2, 1.6  
     label_width = 0.75
-    col_gap = 0.35
-    row_gap = 0.25
-    title_pad = 0.5
-    header_pad = 0.35
+    col_gap, row_gap = 0.35, 0.25
+    title_pad, header_pad = 0.5, 0.35
 
     fig_w = label_width + n_cols * col_width + (n_cols - 1) * col_gap
     fig_h = title_pad + header_pad + N_ROWS_TOTAL * row_height + (N_ROWS_TOTAL - 1) * row_gap
@@ -475,58 +488,51 @@ def plot_denoising_trajectory_progression(
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
-    # Column headers (T-value labels)
+    # Draw Column Headers
     for c, t_val in enumerate(all_t_keys):
         cx = (label_width + c * (col_width + col_gap) + col_width * 0.5) / fig_w
         cy = 1.0 - (title_pad / fig_h) - (header_pad * 0.6 / fig_h)
         fig.text(cx, cy, f"t = {t_val}", ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
 
-    for r, (row_data, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+    # Draw Rows safely bound within N_ROWS_TOTAL
+    for r in range(N_ROWS_TOTAL):
+        row_data = padded_rows[r]
+        ep = padded_epochs[r]
         row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (row_height / fig_h) - r * (row_gap / fig_h)
 
         for c in range(n_cols):
             left = (label_width + c * (col_width + col_gap)) / fig_w
-            width = col_width / fig_w
-            height = row_height / fig_h
-            ax = fig.add_axes([left, row_bottom, width, height])
+            ax = fig.add_axes([left, row_bottom, col_width / fig_w, row_height / fig_h])
 
             if row_data is not None:
                 w = row_data[c]
                 mu_val, std_val = np.mean(w), np.std(w)
                 ax.hist(w, bins=80, color="#4A90E2", alpha=0.75, density=True)
 
-                # Reference N(0,1)
+                # Overlay ideal N(0,1) reference Gaussian
                 xs = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 300)
                 gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
                 ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--")
 
                 ax.text(
-                    0.97,
-                    0.93,
-                    f"μ:{mu_val:.2f}\n σ:{std_val:.2f}",  # noqa: RUF001
-                    transform=ax.transAxes,
-                    ha="right",
-                    va="top",
-                    fontsize=7,
+                    0.97, 0.93,
+                    f"μ:{mu_val:.2f}\nσ:{std_val:.2f}",
+                    transform=ax.transAxes, ha="right", va="top", fontsize=7,
                     bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
                 )
 
             ax.spines[["top", "right"]].set_visible(False)
             ax.tick_params(labelsize=6)
 
-            # X-axis label only on bottom row
             if r == N_ROWS_TOTAL - 1:
                 ax.set_xlabel("weight value", fontsize=7)
 
-        # Epoch label on the left, vertically centred on the row
+        # Draw left-hand epoch index label
         fig.text(
             (label_width * 0.5) / fig_w,
             row_bottom + (row_height * 0.5) / fig_h,
-            f"ep {ep}",
-            ha="center",
-            va="center",
-            fontsize=8,
-            color="#333333",
+            f"ep {ep}" if ep != "" else "",
+            ha="center", va="center", fontsize=8, color="#333333",
         )
 
     fig.suptitle("Denoising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
@@ -1880,6 +1886,111 @@ def plot_forward_trajectory_progression(
 # =============================================================================
 # Plotting for FID table (per-model sample quality metrics)
 # =============================================================================
+
+import os
+import json
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_val_elbo_progression(
+    model: torch.nn.Module,
+    data_loader_val: torch.utils.data.DataLoader,
+    epoch: int,
+    run_dir: str,
+    filename: str = "val_elbo_progression",
+) -> None:
+    """
+    Invokes compute_full_elbo, appends the result to a persistent JSON file, 
+    and updates a single continuous progression graph across restarts/resumes.
+    """
+    os.makedirs(run_dir, exist_ok=True)
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    
+    # ── 1. Extract Validation ELBO ───────────────────────────────────────────
+    avg_elbo = model.compute_full_elbo(data_loader_val)
+    
+    # ── 2. Load and Append History ───────────────────────────────────────────
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            all_epochs = meta.get("epochs", []) + [epoch]
+            all_elbos = meta.get("elbo_values", []) + [avg_elbo]
+        except (json.JSONDecodeError, KeyError):
+            all_epochs = [epoch]
+            all_elbos = [avg_elbo]
+    else:
+        all_epochs = [epoch]
+        all_elbos = [avg_elbo]
+        
+    # Remove duplicates and sort by epoch to keep the line moving clean linearly
+    # (Crucial for handling crashes/resumes where an epoch might get re-logged)
+    history_dict = {}
+    for ep, val in zip(all_epochs, all_elbos):
+        history_dict[ep] = val  # overwrites old duplicate epoch keys with fresh values
+        
+    sorted_epochs = sorted(history_dict.keys())
+    sorted_elbos = [history_dict[ep] for ep in sorted_epochs]
+        
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": sorted_epochs, "elbo_values": sorted_elbos}, f, indent=4)
+        
+    # ── 3. Build & Render Progression Graph ───────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("#fcfcfc")
+    
+    # Plot historical trajectory tracking lines
+    ax.plot(
+        sorted_epochs, 
+        sorted_elbos, 
+        marker="o", 
+        color="#2b5c8f", 
+        linestyle="-", 
+        linewidth=2, 
+        markersize=5,
+        label="Validation ELBO"
+    )
+    
+    # Text annotation for the most recent tracking point
+    ax.annotate(
+        f"{avg_elbo:.4f}",
+        xy=(epoch, avg_elbo),
+        xytext=(5, 5),
+        textcoords="offset points",
+        fontsize=9,
+        fontweight="bold",
+        color="#1a365d"
+    )
+    
+    # Layout and styling cleanups
+    ax.set_title("Validation Full ELBO Progression", fontsize=12, fontweight="bold", pad=12)
+    ax.set_xlabel("Epoch", fontsize=10, color="#333333")
+    ax.set_ylabel("ELBO (higher is better)", fontsize=10, color="#333333")
+    ax.grid(True, linestyle="--", alpha=0.5, color="#cccccc")
+    
+    if len(sorted_epochs) > 1:
+        ax.set_xlim(min(sorted_epochs) - 0.5, max(sorted_epochs) + 0.5)
+        
+    ax.legend(loc="upper left", frameon=True, facecolor="white", edgecolor="none")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#888888")
+    ax.spines["bottom"].set_color("#888888")
+    
+    fig.tight_layout()
+    
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    
+    print(f"  [Eval Checkpoint] Epoch {epoch} Validation ELBO: {avg_elbo:.6f}")
+
+
 
 
 def _build_figure(
