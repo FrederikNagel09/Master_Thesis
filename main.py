@@ -125,18 +125,18 @@ python main.py \
 
 
 ######################### Weight Diffusion Training ####################################
-CUDA_VISIBLE_DEVICES=0 python main.py \
-    --run_name weight-diffusion-probablistic-v2-sumKLPrior\
+python main.py \
+    --run_name Weight-Diffusion-Probabilistic-Test\
     --model weight_inr_diffusion\
     --dataset mnist \
-    --epochs 30 \
+    --epochs 40 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
     --subset_frac 1.0 \
-    --normalize True\
+    --normalize False\
     --probablistic True \
     --lambda_kl 1e-5 \
     --peak_lr 1e-4 \
@@ -148,7 +148,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --inr_layers 3 \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 8 \
-    --encoder_trans_head_dim 32 \
+    --encoder_trans_head_dim 64 \
     --encoder_trans_ff_dim 1024 \
     --encoder_trans_enc_depth 4 \
     --encoder_trans_dec_depth 4 \

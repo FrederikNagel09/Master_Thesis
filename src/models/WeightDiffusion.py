@@ -26,6 +26,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
+import math
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
@@ -187,7 +188,6 @@ class WeightDiffusion(nn.Module):
 
         if self.probablistic:
             mean, logvar = self.weight_encoder(x)
-
             theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
 
             if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
@@ -275,7 +275,7 @@ class WeightDiffusion(nn.Module):
         l_rec = self._l_rec(x, theta_prime_raw)
 
         if self.probablistic:
-            l_prior = self._l_prior(mean, logvar)
+            l_prior = self._l_entropy(logvar)
             elbo = (self.T-1)*l_diff + l_rec + lambda_kl * l_prior
         else:
             l_prior = torch.zeros_like(l_diff)
@@ -400,14 +400,20 @@ class WeightDiffusion(nn.Module):
 
         return weighted_mse
 
-    def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
         """
-        computes the KL divergence between the initial noise distribution at time step T and the distribution of Theta Prime.
-        """
-        # KL divergence between N(mean, var) and N(0, 1)
-        kl = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+        Negative entropy of q(z|x) = N(mu, exp(logvar)), including constants.
 
-        return kl.sum(dim=-1)
+        Args:
+            logvar: (B, latent_dim, H', W')
+        Returns:
+            (B,) per-sample negative entropy
+        """
+        D = logvar[0].numel()  # total number of latent dimensions
+        print("DEBUG logvar shape: ", logvar.shape)
+        print(f"DEBUG logvar stats: mean={logvar.mean():.4f}, std={logvar.std():.4f}, min={logvar.min():.4f}, max={logvar.max():.4f}")
+        print(D)
+        return 0.5 * (logvar.sum(dim=(-1)) + D * (1 + math.log(2 * math.pi)))
 
     # -------------------------------------------------------------------------
     # Sampling Helpers:
