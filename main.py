@@ -126,7 +126,7 @@ python main.py \
 
 ######################### Weight Diffusion Training ####################################
 python main.py \
-    --run_name Weight-Diffusion-Probabilistic-Test\
+    --run_name Weight-Diffusion-Probabilistic\
     --model weight_inr_diffusion\
     --dataset mnist \
     --epochs 40 \
@@ -138,7 +138,7 @@ python main.py \
     --subset_frac 1.0 \
     --normalize False\
     --probablistic True \
-    --lambda_kl 1e-5 \
+    --lambda_kl 1e-4 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -160,9 +160,9 @@ python main.py \
     --noise_predictor_n_head 8 \
     --noise_predictor_head_dim 64 \
     --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
+    --noise_predictor_depth 3 \
     --noise_predictor_dropout 0.0 \
-    --noise_predictor_chunk_size 8 \
+    --noise_predictor_chunk_size 64 \
     --noise_predictor_t_embed_dim 256
 
 

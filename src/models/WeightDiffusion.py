@@ -19,6 +19,7 @@ The key contract satisfied:
 
 from __future__ import annotations
 
+import math
 import random
 from typing import TYPE_CHECKING
 
@@ -26,7 +27,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
-import math
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
@@ -196,11 +196,16 @@ class WeightDiffusion(nn.Module):
                 print(f"[Encoder] mu:     mean={mean.mean():.3f}, std={mean.std():.3f}, min={mean.min():.3f}, max={mean.max():.3f}")
                 print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
                 print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
-                print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+                print(
+                    f"theta mean={theta_prime_raw.mean():.4f},",
+                    f"std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}",
+                )
                 print("================================================================\n")
         else:
             theta_prime_raw = self.weight_encoder(x)
-            print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+            # Split long debug print into two lines to satisfy line length limits
+            print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}")
+            print(f"theta min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
 
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
@@ -276,12 +281,79 @@ class WeightDiffusion(nn.Module):
 
         if self.probablistic:
             l_prior = self._l_entropy(logvar)
-            elbo = (self.T-1)*l_diff + l_rec + lambda_kl * l_prior
+            elbo = (self.T - 1) * l_diff + l_rec + lambda_kl * l_prior
         else:
             l_prior = torch.zeros_like(l_diff)
-            elbo = (self.T-1)*l_diff + l_rec
+            elbo = (self.T - 1) * l_diff + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+
+    @torch.no_grad()
+    def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
+        """
+        Computes the exact ELBO over the full validation set by looping over
+        all T timesteps per batch. This is computationally expensive; only call
+        at major checkpoints.
+
+        Args:
+            val_loader: DataLoader yielding (x, label) batches where x can be
+                        flattened or spatial image tensors.
+        Returns:
+            mean ELBO scalar (higher is better / less negative)
+        """
+        self.eval()
+        device = self.sqrt_alpha_cumprod.device
+        total_elbo = 0.0
+        n_batches = 0
+
+        for x, _ in val_loader:
+            x = x.to(device)
+            batch_size = x.shape[0]
+
+            # --------- 1. Input Shape Flattening ---------
+            # WeightDiffusion expects 2D vectors (B, data_dim) for its encoder and decoder
+            x_flat = x.reshape(batch_size, -1) if x.dim() > 2 else x
+
+            # --------- 2. Encode Once Per Batch ---------
+            if self.probablistic:
+                mean, logvar = self.weight_encoder(x_flat)
+                theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+                l_prior = self._l_entropy(logvar)  # (B,)
+            else:
+                theta_prime_raw = self.weight_encoder(x_flat)
+                l_prior = torch.zeros(batch_size, device=device)  # (B,)
+
+            # --------- 3. Scale / Normalize Weights ---------
+            theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
+
+            # --------- 4. Compute Non-Diffusion Core Losses ---------
+            # Computed once per batch to avoid redundant evaluations
+            l_rec = self._l_rec(x_flat, theta_prime_raw)  # (B,)
+
+            # --------- 5. Integrate Diffusion Loss Over All T ---------
+            l_diff_sum = torch.zeros(batch_size, device=device)  # (B,)
+
+            for t in range(self.T):
+                # Construct uniform timestep batch configurations
+                t_idx = torch.full((batch_size,), t, dtype=torch.long, device=device)
+                t_norm = torch.full((batch_size,), t / (self.T - 1), device=device)
+
+                # Generate the specific noisy weight vectors for timestep t
+                theta_t, epsilon = self._construct_theta_t(theta_prime.detach(), t_idx)
+
+                # Accumulate the unscaled, step-specific weighted MSE loss
+                l_diff_sum += self._l_diff(theta_t, t_norm, epsilon, t_idx)  # (B,)
+
+            # --------- 6. Aggregate Total ELBO Per Sample ---------
+            # We add them together directly since l_diff_sum is explicitly integrated across all T.
+            # We scale the prior by lambda_kl to match your class's weighting configuration.
+            elbo = l_diff_sum + l_rec + (self.lambda_kl * l_prior)  # (B,)
+
+            total_elbo += elbo.mean().item()
+            n_batches += 1
+
+        self.train()
+        return total_elbo / n_batches
 
     # -------------------------------------------------------------------------
     # Loss term Helpers:
@@ -354,8 +426,8 @@ class WeightDiffusion(nn.Module):
         # Bin MSE by timestep to see where the model fails
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             t_flat = t_norm.flatten()
-            low_t_mask  = t_flat < 0.2   # t in [0, 0.2]
-            high_t_mask = t_flat > 0.8   # t in [0.8, 1.0]
+            low_t_mask = t_flat < 0.2  # t in [0, 0.2]
+            high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
             if low_t_mask.any():
                 print(f"MSE @ low  t (<0.2): {mse[low_t_mask].mean():.4f}")
             if high_t_mask.any():
@@ -409,7 +481,7 @@ class WeightDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        D = logvar[0].numel()  # total number of latent dimensions
+        D = logvar[0].numel()  # noqa: N806
         return 0.5 * (logvar.sum(dim=(-1)) + D * (1 + math.log(2 * math.pi)))
 
     # -------------------------------------------------------------------------
@@ -498,7 +570,6 @@ class WeightDiffusion(nn.Module):
         if collect_snapshots:
             return curr_theta, snapshots
         return curr_theta
-
 
     def _inr_decode(
         self,
