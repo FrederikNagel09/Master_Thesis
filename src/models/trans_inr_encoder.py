@@ -23,8 +23,9 @@ Public interface (compatible with NDMStaticINR's W encoder contract):
 import copy
 import importlib
 import math
-import sys
 import random
+import sys
+
 # ---------------------------------------------------------------------------
 # Re-use helpers from trans_inr_helpers
 # ---------------------------------------------------------------------------
@@ -35,10 +36,9 @@ import torch.nn as nn
 sys.path.append(".")
 
 
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 from src.models.helper_modules import SinusoidalLearnableTimeEmbedding
 from src.models.trans_inr_helpers import SIREN, TransformerEncoder
-
-from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
 # ---------------------------------------------------------------------------
 # Config utilities (copied from trans_inr.py to keep this file self-contained)
@@ -94,6 +94,7 @@ update_strategies = {
 # TransInrEncoder
 # ---------------------------------------------------------------------------
 
+
 class TransInrEncoder(nn.Module):
     """
     TransInr weight encoder — optionally probabilistic.
@@ -143,9 +144,7 @@ class TransInrEncoder(nn.Module):
         for name, shape in self.inr.param_shapes.items():
             self.base_params[name] = nn.Parameter(self.inr.init_wb(shape, name=name))
             g = min(n_groups, shape[1])
-            assert shape[1] % g == 0, (
-                f"n_groups={n_groups} must divide shape[1]={shape[1]} for layer {name}"
-            )
+            assert shape[1] % g == 0, f"n_groups={n_groups} must divide shape[1]={shape[1]} for layer {name}"
             self.wtoken_postfc[name] = nn.Sequential(
                 nn.LayerNorm(dim),
                 nn.Linear(dim, shape[0] - 1),
@@ -156,22 +155,21 @@ class TransInrEncoder(nn.Module):
         self.wtokens = nn.Parameter(torch.randn(n_wtokens, dim))
         self.update_strategy = update_strategies[update_strategy]
 
-        self._weight_dim = sum(
-            shape[0] * shape[1] for shape in self.inr.param_shapes.values()
-        )
+        self._weight_dim = sum(shape[0] * shape[1] for shape in self.inr.param_shapes.values())
         self._param_names: list[str] = list(self.inr.param_shapes.keys())
         self._param_shapes: dict[str, tuple[int, int]] = dict(self.inr.param_shapes)
 
-        # Logvar MLP — only built when probabilistic=True
-        if self.probabilistic:
-            self.logvar_mlp = nn.Sequential(
-                nn.Linear(dim, dim),
-                nn.GELU(),
-                nn.Linear(dim, self._weight_dim),
-            )
-            # Zero weights on final layer, bias=-10 → std≈0.007 at init
-            nn.init.zeros_(self.logvar_mlp[2].weight)
-            nn.init.constant_(self.logvar_mlp[2].bias, -10.0)
+        # 1. Calculate the much smaller logvar dimension
+        self._logvar_dim = sum(shape[0] for shape in self.inr.param_shapes.values())
+
+        # 2. Update the MLP
+        self.logvar_mlp = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.GELU(),
+            nn.Linear(dim, self._logvar_dim),
+        )
+        nn.init.zeros_(self.logvar_mlp[2].weight)
+        nn.init.constant_(self.logvar_mlp[2].bias, -20.0)
 
     @property
     def weight_dim(self) -> int:
@@ -220,9 +218,7 @@ class TransInrEncoder(nn.Module):
         std = torch.exp(0.5 * logvar)
         return mu + std * torch.randn_like(std)
 
-    def forward(
-        self, x: torch.Tensor, **kwargs
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:    x : (B, C, H, W)
         Returns: flat_weights (B, weight_dim)              if not probabilistic
@@ -248,7 +244,7 @@ class TransInrEncoder(nn.Module):
 
         # Deterministic mu path — unchanged from original
         param_dict = {}
-        for name, shape in self.inr.param_shapes.items():
+        for name, shape in self.inr.param_shapes.items():  # noqa: B007
             wb = einops.repeat(self.base_params[name], "n m -> b n m", b=B)
             w = wb[:, :-1, :]
             b = wb[:, -1:, :]
@@ -264,8 +260,26 @@ class TransInrEncoder(nn.Module):
             return mu
 
         # Logvar from pooled transformer output
-        pooled = trans_out.mean(dim=1)          # (B, dim)
-        logvar = self.logvar_mlp(pooled)        # (B, weight_dim)
+        pooled = trans_out.mean(dim=1)  # (B, dim)
+        logvar_pooled = self.logvar_mlp(pooled)
+
+        # Expand it to the full weight_dim
+        parts = []
+        offset = 0
+        for name in self._param_names:
+            s0, s1 = self._param_shapes[name]
+
+            # Extract the variance for this layer: shape (B, s0)
+            layer_logvar = logvar_pooled[:, offset : offset + s0]
+            offset += s0
+
+            # Broadcast across the s1 dimension
+            # (B, s0) -> (B, s0, 1) -> (B, s0, s1) -> (B, s0 * s1)
+            expanded = layer_logvar.unsqueeze(-1).expand(-1, -1, s1).reshape(B, -1)
+            parts.append(expanded)
+
+        # Re-flatten
+        logvar = torch.cat(parts, dim=1)  # Now it's back to (B, weight_dim)
 
         return mu, logvar
 
@@ -462,7 +476,6 @@ class TransInrTemporalEncoder(nn.Module):
         return self._flatten_params(param_dict)
 
 
-
 class TransInrNoisePredictor(nn.Module):
     """ """
 
@@ -527,12 +540,12 @@ class TransInrNoisePredictor(nn.Module):
         # === TIME SIGNAL DIAGNOSTIC ===
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             t_high = torch.ones_like(t)  # t=1.0 (999/999 = 1.0)
-            t_low  = torch.zeros_like(t)
+            t_low = torch.zeros_like(t)
 
             t_sin_high = self.time_embed(t_high)
-            t_sin_low  = self.time_embed(t_low)
+            t_sin_low = self.time_embed(t_low)
             t_mlp_high = self.time_mlp(t_sin_high)
-            t_mlp_low  = self.time_mlp(t_sin_low)
+            t_mlp_low = self.time_mlp(t_sin_low)
 
             print(f"[DIAG] t shape: {t.shape}, values: {t.flatten()[:4]}")
             print(f"[DIAG] sinusoidal diff: {(t_sin_high - t_sin_low).abs().max():.6f}")

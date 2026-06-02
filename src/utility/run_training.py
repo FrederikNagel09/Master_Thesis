@@ -48,8 +48,8 @@ from src.utility.plotting import (
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
-    plot_ztrans_histogram,
     plot_val_elbo_progression,
+    plot_ztrans_histogram,
 )
 from src.utility.training import train
 
@@ -134,7 +134,7 @@ def run_training(
             "metadata/ztrans_histogram_*.npy",
             "weights/weights.pt",
             "metadata/config.json",
-            "val_elbo_progression.png",        
+            "val_elbo_progression.png",
             "metadata/val_elbo_progression_*.json",
         ]:
             for fpath in glob.glob(os.path.join(run_dir, fname)):
@@ -284,9 +284,9 @@ def run_training(
                     data_loader_val=data_loader_val,  # Captured directly from the outer scope
                     epoch=epoch,
                     run_dir=run_dir,
-                    filename=f"val_elbo_progression"
+                    filename="val_elbo_progression",
                 )
-                
+
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "weight_inr_diffusion"):
                 # Just simple reconstruction
                 plot_reconstruction_progression(

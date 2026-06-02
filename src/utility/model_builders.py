@@ -129,7 +129,9 @@ def print_encoder_stats(model, mode="Static"):
     print(f"Total INR Weights: {inr_total:,}")
     print("=" * 60 + "\n")
 
-    
+    return total_learnable
+
+
 def print_noise_predictor_stats(model):
     def count(params):
         return sum(p.numel() for p in params)
@@ -165,6 +167,7 @@ def print_noise_predictor_stats(model):
         print(f"  Total parameters: {total:,}")
 
     print("=" * 60 + "\n")
+    return total
 
 
 def print_mlp_encoder_stats(model):
@@ -972,7 +975,7 @@ def _build_weight_diffusion(args, data_config: dict):
     )
 
     weight_dim = encoder.weight_dim
-    print_encoder_stats(encoder)
+    encoder_params = print_encoder_stats(encoder)
 
     # ── TransInrNoisePredictor config ─────────────────────────────────────────
     # Since we are now Encoder-only, we combine the depths or pick the max.
@@ -991,7 +994,7 @@ def _build_weight_diffusion(args, data_config: dict):
         dropout=getattr(args, "dropout", 0.0),
     )
 
-    print_noise_predictor_stats(network)
+    noise_predictor_params = print_noise_predictor_stats(network)
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
@@ -1009,6 +1012,16 @@ def _build_weight_diffusion(args, data_config: dict):
         img_size=img_size,
         probablistic=args.probablistic,
     )
+
+    # Final print of total model params (encoder + decoder + predictor)
+    total_params = sum(p.numel() for p in model.parameters())
+    print("\n########## Total Parameter Summary: ##############")
+    print("Weight Encoder  : ", f"{encoder_params:,}")
+    print("Noise Predictor : ", f"{noise_predictor_params:,}")
+    print("----------------------------------------------")
+    print(f"TOTAL PARAMETERS  : {total_params:,}")
+    print("####################################################\n")
+
     return model
 
 

@@ -410,6 +410,7 @@ def plot_sample_progression(
             filename=denoising_filename,  # <── Pass the new segment name here!
         )
 
+
 def plot_denoising_trajectory_progression(
     snapshots: dict[int, np.ndarray],
     epoch: int,
@@ -419,14 +420,15 @@ def plot_denoising_trajectory_progression(
     """
     Append a row of 4 weight distribution histograms to the denoising trajectory
     progression figure, saved to <run_dir>/<filename>.png.
-    
-    Now safely handles resets, restarts, and dynamic segmentation by grouping 
+
+    Now safely handles resets, restarts, and dynamic segmentation by grouping
     and sorting snapshots explicitly by epoch.
     """
     import json
     import os
-    import numpy as np
+
     import matplotlib.pyplot as plt
+    import numpy as np
 
     os.makedirs(run_dir, exist_ok=True)
     metadata_dir = os.path.join(run_dir, "metadata")
@@ -434,7 +436,7 @@ def plot_denoising_trajectory_progression(
 
     N_ROWS_TOTAL = 5  # noqa: N806
     t_keys_sorted = sorted(snapshots.keys(), reverse=True)
-    n_cols = len(t_keys_sorted)  
+    n_cols = len(t_keys_sorted)
 
     # New row data to inject
     new_row_data = [snapshots[t] for t in t_keys_sorted]
@@ -450,9 +452,9 @@ def plot_denoising_trajectory_progression(
             loaded_rows = list(np.load(data_path, allow_pickle=True))
             loaded_epochs = meta["epochs"]
             all_t_keys = meta["t_keys"]
-            
+
             # Map epoch -> row data to protect layout budgets from duplicate rows
-            history_map = {ep: row for ep, row in zip(loaded_epochs, loaded_rows)}
+            history_map = {ep: row for ep, row in zip(loaded_epochs, loaded_rows)}  # noqa: B905, C416
         except Exception:
             history_map = {}
             all_t_keys = t_keys_sorted
@@ -477,7 +479,7 @@ def plot_denoising_trajectory_progression(
     padded_epochs = sorted_epochs[:N_ROWS_TOTAL] + [""] * (N_ROWS_TOTAL - len(sorted_epochs))
 
     # ── 3. Build Figure Layout ────────────────────────────────────────────────
-    col_width, row_height = 2.2, 1.6  
+    col_width, row_height = 2.2, 1.6
     label_width = 0.75
     col_gap, row_gap = 0.35, 0.25
     title_pad, header_pad = 0.5, 0.35
@@ -515,9 +517,13 @@ def plot_denoising_trajectory_progression(
                 ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--")
 
                 ax.text(
-                    0.97, 0.93,
-                    f"μ:{mu_val:.2f}\nσ:{std_val:.2f}",
-                    transform=ax.transAxes, ha="right", va="top", fontsize=7,
+                    0.97,
+                    0.93,
+                    f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="top",
+                    fontsize=7,
                     bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
                 )
 
@@ -532,7 +538,10 @@ def plot_denoising_trajectory_progression(
             (label_width * 0.5) / fig_w,
             row_bottom + (row_height * 0.5) / fig_h,
             f"ep {ep}" if ep != "" else "",
-            ha="center", va="center", fontsize=8, color="#333333",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
         )
 
     fig.suptitle("Denoising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
@@ -1886,13 +1895,6 @@ def plot_forward_trajectory_progression(
 # =============================================================================
 # Plotting for FID table (per-model sample quality metrics)
 # =============================================================================
-
-import os
-import json
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-
 def plot_val_elbo_progression(
     model: torch.nn.Module,
     data_loader_val: torch.utils.data.DataLoader,
@@ -1901,96 +1903,79 @@ def plot_val_elbo_progression(
     filename: str = "val_elbo_progression",
 ) -> None:
     """
-    Invokes compute_full_elbo, appends the result to a persistent JSON file, 
+    Invokes compute_full_elbo, appends the result to a persistent JSON file,
     and updates a single continuous progression graph across restarts/resumes.
     """
     os.makedirs(run_dir, exist_ok=True)
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
-    
+
     meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
-    
+
     # ── 1. Extract Validation ELBO ───────────────────────────────────────────
     avg_elbo = model.compute_full_elbo(data_loader_val)
-    
+
     # ── 2. Load and Append History ───────────────────────────────────────────
     if os.path.exists(meta_path):
         try:
-            with open(meta_path, "r") as f:
+            with open(meta_path, "r") as f:  # noqa: UP015
                 meta = json.load(f)
-            all_epochs = meta.get("epochs", []) + [epoch]
-            all_elbos = meta.get("elbo_values", []) + [avg_elbo]
+            all_epochs = meta.get("epochs", []) + [epoch]  # noqa: RUF005
+            all_elbos = meta.get("elbo_values", []) + [avg_elbo]  # noqa: RUF005
         except (json.JSONDecodeError, KeyError):
             all_epochs = [epoch]
             all_elbos = [avg_elbo]
     else:
         all_epochs = [epoch]
         all_elbos = [avg_elbo]
-        
+
     # Remove duplicates and sort by epoch to keep the line moving clean linearly
     # (Crucial for handling crashes/resumes where an epoch might get re-logged)
     history_dict = {}
-    for ep, val in zip(all_epochs, all_elbos):
+    for ep, val in zip(all_epochs, all_elbos):  # noqa: B905
         history_dict[ep] = val  # overwrites old duplicate epoch keys with fresh values
-        
+
     sorted_epochs = sorted(history_dict.keys())
     sorted_elbos = [history_dict[ep] for ep in sorted_epochs]
-        
+
     with open(meta_path, "w") as f:
         json.dump({"epochs": sorted_epochs, "elbo_values": sorted_elbos}, f, indent=4)
-        
+
     # ── 3. Build & Render Progression Graph ───────────────────────────────────
     fig, ax = plt.subplots(figsize=(7, 4.5))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#fcfcfc")
-    
+
     # Plot historical trajectory tracking lines
-    ax.plot(
-        sorted_epochs, 
-        sorted_elbos, 
-        marker="o", 
-        color="#2b5c8f", 
-        linestyle="-", 
-        linewidth=2, 
-        markersize=5,
-        label="Validation ELBO"
-    )
-    
+    ax.plot(sorted_epochs, sorted_elbos, marker="o", color="#2b5c8f", linestyle="-", linewidth=2, markersize=5, label="Validation ELBO")
+
     # Text annotation for the most recent tracking point
     ax.annotate(
-        f"{avg_elbo:.4f}",
-        xy=(epoch, avg_elbo),
-        xytext=(5, 5),
-        textcoords="offset points",
-        fontsize=9,
-        fontweight="bold",
-        color="#1a365d"
+        f"{avg_elbo:.4f}", xy=(epoch, avg_elbo), xytext=(5, 5), textcoords="offset points", fontsize=9, fontweight="bold", color="#1a365d"
     )
-    
+
     # Layout and styling cleanups
     ax.set_title("Validation Full ELBO Progression", fontsize=12, fontweight="bold", pad=12)
     ax.set_xlabel("Epoch", fontsize=10, color="#333333")
     ax.set_ylabel("ELBO (higher is better)", fontsize=10, color="#333333")
     ax.grid(True, linestyle="--", alpha=0.5, color="#cccccc")
-    
+
     if len(sorted_epochs) > 1:
         ax.set_xlim(min(sorted_epochs) - 0.5, max(sorted_epochs) + 0.5)
-        
+
     ax.legend(loc="upper left", frameon=True, facecolor="white", edgecolor="none")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color("#888888")
     ax.spines["bottom"].set_color("#888888")
-    
+
     fig.tight_layout()
-    
+
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    
+
     print(f"  [Eval Checkpoint] Epoch {epoch} Validation ELBO: {avg_elbo:.6f}")
-
-
 
 
 def _build_figure(

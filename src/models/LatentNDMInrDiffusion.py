@@ -202,6 +202,7 @@ class LatentNDMDiffusion(nn.Module):
 
         base = (sigma_t_sq - alpha_t_sq / alpha_s_sq * sigma_s_sq) * sigma_s_sq / sigma_t_sq
         return self.sigma_tilde_factor * base
+
     # -------------------------------------------------------------------------
     # ELBO
     # -------------------------------------------------------------------------
@@ -232,7 +233,7 @@ class LatentNDMDiffusion(nn.Module):
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         ######### latent transformer ##########
-        Fz = self.latent_transformer(z.detach(), t_norm)
+        Fz = self.latent_transformer(z.detach(), t_norm)  # noqa: N806
 
         ######### Apply noise ##########
         z_t, epsilon = self._forward_process(Fz, t_idx)
@@ -243,7 +244,7 @@ class LatentNDMDiffusion(nn.Module):
         l_prior = self._l_prior(mu, logvar)
         l_rec = self._l_rec(x, z_raw)
 
-        total = (self.T-1) * l_diff + lambda_kl * l_prior + l_rec
+        total = (self.T - 1) * l_diff + lambda_kl * l_prior + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -264,14 +265,18 @@ class LatentNDMDiffusion(nn.Module):
                 Fz.std().item(),
             )
             print("z_t shape:", z_t.shape)
-            print("z_t.min():", z_t.min().item(), "\nz_t.max():", z_t.max().item(), "\nz_t.mean():", z_t.mean().item(), "\nz_t.std():", z_t.std().item())
+            # split long line into multiple prints to satisfy line length limits
+            print("z_t.min():", z_t.min().item())
+            print("z_t.max():", z_t.max().item())
+            print("z_t.mean():", z_t.mean().item())
+            print("z_t.std():", z_t.std().item())
             print("epsilon shape:", epsilon.shape)
             print(
                 "epsilon.min():",
                 epsilon.min().item(),
                 "\nepsilon.max():",
                 epsilon.max().item(),
-                "\nepsilon.mean():"
+                "\nepsilon.mean():",
                 epsilon.mean().item(),
                 "\nepsilon.std():",
                 epsilon.std().item(),
@@ -329,7 +334,7 @@ class LatentNDMDiffusion(nn.Module):
         z_t: torch.Tensor,
         t_norm: torch.Tensor,
         t_idx: torch.Tensor,
-        Fz_t: torch.Tensor,
+        Fz_t: torch.Tensor,  # noqa: N803
     ) -> torch.Tensor:
         """
         Noise-prediction MSE loss.
@@ -348,15 +353,15 @@ class LatentNDMDiffusion(nn.Module):
         alpha_t = self.sqrt_alpha_cumprod[t_idx].view(-1, 1, 1, 1)
         sigma_t = self.sigma[t_idx].view(-1, 1, 1, 1)
         z_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-        
+
         s_idx = (t_idx - 1).clamp(min=0)
         s_norm = s_idx.float() / (self.T - 1)
 
-        B = z.shape[0]
+        B = z.shape[0]  # noqa: N806
 
         Fz_hat_t = self.latent_transformer(z_hat, t_norm)  # noqa: N806
         Fz_hat_s = self.latent_transformer(z_hat, s_norm.unsqueeze(1))  # noqa: N806
-        Fz_s     = self.latent_transformer(z, s_norm.unsqueeze(1))      # noqa: N806
+        Fz_s = self.latent_transformer(z, s_norm.unsqueeze(1))  # noqa: N806
 
         alpha_s = self.sqrt_alpha_cumprod[s_idx].view(-1, 1, 1, 1)
         sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).view(-1, 1, 1, 1)
@@ -375,13 +380,12 @@ class LatentNDMDiffusion(nn.Module):
         # Bin MSE by timestep to see where the model fails
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             t_flat = t_norm.flatten()
-            low_t_mask  = t_flat < 0.2   # t in [0, 0.2]
-            high_t_mask = t_flat > 0.8   # t in [0.8, 1.0]
+            low_t_mask = t_flat < 0.2  # t in [0, 0.2]
+            high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
             if low_t_mask.any():
                 print(f"MSE @ low  t (<0.2): {mse[low_t_mask].mean():.4f}")
             if high_t_mask.any():
                 print(f"MSE @ high t (>0.8): {mse[high_t_mask].mean():.4f}")
-
 
         # Debug logs updated to match the spatial reality
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
@@ -389,12 +393,21 @@ class LatentNDMDiffusion(nn.Module):
             print("Fz_t shape:", Fz_t.shape)
             print("Fz_t mean:", Fz_t.mean().item(), "std:", Fz_t.std().item(), "min:", Fz_t.min().item(), "max:", Fz_t.max().item())
             print("Fz_hat_t shape:", Fz_hat_t.shape)
-            print("Fz_hat_t mean:", Fz_hat_t.mean().item(), "std:", Fz_hat_t.std().item(), "min:", Fz_hat_t.min().item(), "max:", Fz_hat_t.max().item())
+            fh_mean = Fz_hat_t.mean().item()
+            fh_std = Fz_hat_t.std().item()
+            fh_min = Fz_hat_t.min().item()
+            fh_max = Fz_hat_t.max().item()
+            print("Fz_hat_t mean:", fh_mean, "std:", fh_std)
+            print("Fz_hat_t min:", fh_min, "max:", fh_max)
             print("___________________________________________________")
             print("Fz_s shape:", Fz_s.shape)
             print("Fz_s mean:", Fz_s.mean().item(), "std:", Fz_s.std().item(), "min:", Fz_s.min().item(), "max:", Fz_s.max().item())
             print("Fz_hat_s shape:", Fz_hat_s.shape)
-            print("Fz_hat_s mean:", Fz_hat_s.mean().item(), "std:", Fz_hat_s.std().item(), "min:", Fz_hat_s.min().item(), "max:", Fz_hat_s.max().item())
+            fhs_mean = Fz_hat_s.mean().item()
+            fhs_std = Fz_hat_s.std().item()
+            fhs_min = Fz_hat_s.min().item()
+            fhs_max = Fz_hat_s.max().item()
+            print(f"Fz_hat_s mean: {fhs_mean}, std: {fhs_std}, min: {fhs_min}, max: {fhs_max}")
             print("___________________________________________________")
             print("z shape:", z.shape)
             print("z mean:", z.mean().item(), "std:", z.std().item(), "min:", z.min().item(), "max:", z.max().item())
@@ -402,10 +415,7 @@ class LatentNDMDiffusion(nn.Module):
             print("z_hat mean:", z_hat.mean().item(), "std:", z_hat.std().item(), "min:", z_hat.min().item(), "max:", z_hat.max().item())
             print("################################################################\n")
 
-
         return scaling * mse
-            
-
 
     def _l_prior(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -539,15 +549,15 @@ class LatentNDMDiffusion(nn.Module):
 
             # 2. Predict noise tokens
             eps_hat = self.noise_predictor(z_t, t_norm)
-            
+
             alpha_t = alpha[t]
             sigma_t = sigma[t]
-            
+
             z_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-            
+
             if t == 0:
                 z_t = z_hat
-                if collect_snapshots and t in T_values: 
+                if collect_snapshots and t in T_values:
                     snapshots[t] = z_t.detach().cpu().numpy().flatten()
                 break
 
@@ -557,7 +567,6 @@ class LatentNDMDiffusion(nn.Module):
             # --- Batch both F_phi calls into one forward pass ---
             Fz_hat_s = self.latent_transformer(z_hat, s_norm)  # noqa: N806
             Fz_hat_t = self.latent_transformer(z_hat, t_norm)  # noqa: N806
-            
 
             alpha_s = alpha[s]
             sigma_s_sq = sigma_sq[s]
@@ -566,7 +575,7 @@ class LatentNDMDiffusion(nn.Module):
             coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t.clamp(min=1e-6)
             mu = alpha_s * Fz_hat_s + coeff * (z_t - alpha_t * Fz_hat_t)
             z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else mu
-            if collect_snapshots and t in T_values: 
+            if collect_snapshots and t in T_values:
                 snapshots[t] = z_t.detach().cpu().numpy().flatten()
 
             # Print statistics every 100 steps for debugging

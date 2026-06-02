@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from typing import TYPE_CHECKING
 
@@ -7,7 +8,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
-import math
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
@@ -216,9 +216,9 @@ class LatentDiffusion(nn.Module):
 
         ######### Encode Image ##########
         mu, logvar = self.latent_encoder(x)
-        if self._probabilistic:
+        if self._probabilistic:  # noqa: SIM108
             z_raw = self.latent_encoder.reparameterize(mu, logvar)
-        else: 
+        else:
             z_raw = mu  # Use mean directly for deterministic latents (ablation)
 
         ######### Normalize Latents ##########
@@ -249,17 +249,14 @@ class LatentDiffusion(nn.Module):
             l_latent_rec = torch.zeros_like(l_diff)
 
         ######### Compute image reconstruction and entropy loss ##########
-        if self._probabilistic:
-            l_entropy = self._l_entropy(logvar)
-        else: 
-            l_entropy = torch.zeros_like(l_diff)
-        
+        l_entropy = self._l_entropy(logvar) if self._probabilistic else torch.zeros_like(l_diff)
+
         l_rec = self._l_rec(x, z_raw)
 
         if self.__do_scaling:
-            total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl*l_entropy + l_rec
+            total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
         else:
-            total = l_diff + l_latent_rec + lambda_kl*l_entropy + l_rec
+            total = l_diff + l_latent_rec + lambda_kl * l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -325,7 +322,6 @@ class LatentDiffusion(nn.Module):
 
         return total.mean(), l_diff.mean(), l_entropy.mean(), l_rec.mean()
 
-
     @torch.no_grad()
     def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
         """
@@ -352,36 +348,32 @@ class LatentDiffusion(nn.Module):
 
             # Encode once per batch
             mu, logvar = self.latent_encoder(x)
-            if self._probabilistic:
-                z_raw = self.latent_encoder.reparameterize(mu, logvar)
-            else:
-                z_raw = mu
+            z_raw = self.latent_encoder.reparameterize(mu, logvar) if self._probabilistic else mu
             z = self._normalize_z(z_raw) if self._normalize else z_raw
 
             # l_rec and l_entropy computed once per batch
-            l_rec = self._l_rec(x, z_raw)                                      # (B,)
+            l_rec = self._l_rec(x, z_raw)  # (B,)
             l_entropy = self._l_entropy(logvar) if self._probabilistic else torch.zeros(B, device=device)  # (B,)
 
             # Sum l_diff over all t
-            l_diff_sum = torch.zeros(B, device=device)                          # (B,)
+            l_diff_sum = torch.zeros(B, device=device)  # (B,)
             for t in range(self.T):
                 t_idx = torch.full((B,), t, dtype=torch.long, device=device)
                 t_norm = torch.full((B, 1), t / (self.T - 1), device=device)
                 z_t, epsilon = self._forward_process(z, t_idx)
 
                 if t == 0 and self._do_latent_recon:
-                    l_diff_sum += self._l_latent_rec(z_t, t_norm, z)           # (B,)
+                    l_diff_sum += self._l_latent_rec(z_t, t_norm, z)  # (B,)
                 else:
-                    l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx)    # (B,)
+                    l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx)  # (B,)
 
             # Full ELBO per sample (negative, so lower is better during training)
-            elbo = l_diff_sum + l_entropy + l_rec                               # (B,)
+            elbo = l_diff_sum + l_entropy + l_rec  # (B,)
             total_elbo += elbo.mean().item()
             n_batches += 1
 
         self.train()
         return total_elbo / n_batches
-
 
     # -------------------------------------------------------------------------
     # Loss terms
@@ -421,8 +413,8 @@ class LatentDiffusion(nn.Module):
         # Bin MSE by timestep to see where the model fails
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             t_flat = t_norm.flatten()
-            low_t_mask  = t_flat < 0.2   # t in [0, 0.2]
-            high_t_mask = t_flat > 0.8   # t in [0.8, 1.0]
+            low_t_mask = t_flat < 0.2  # t in [0, 0.2]
+            high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
             if low_t_mask.any():
                 print(f"MSE @ low  t (<0.2): {unscaled_loss[low_t_mask].mean():.4f}")
             if high_t_mask.any():
@@ -485,7 +477,6 @@ class LatentDiffusion(nn.Module):
 
         return l_diff_loss
 
-    
     def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
         """
         Negative entropy of q(z|x) = N(mu, exp(logvar)), including constants.
@@ -495,9 +486,8 @@ class LatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        D = logvar[0].numel()  # total number of latent dimensions
+        D = logvar[0].numel()  # noqa: N806
         return 0.5 * (logvar.sum(dim=(-3, -2, -1)) + D * (1 + math.log(2 * math.pi)))
-
 
     def _l_rec(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
@@ -533,7 +523,6 @@ class LatentDiffusion(nn.Module):
             print("###############################################\n")
 
         return 0.5 * ((x_flat - x_hat) ** 2).sum(dim=-1)
-
 
     def _l_latent_rec(
         self,
@@ -662,4 +651,3 @@ class LatentDiffusion(nn.Module):
         # TransInr expects (B, C, H, W) and returns (B, C_out, H, W)
         x_hat = self.decoder(z, self.coord_grid)  # (B, C_out, H, W)
         return x_hat.reshape(x_hat.shape[0], -1)  # (B, data_dim)
-

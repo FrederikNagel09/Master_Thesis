@@ -19,6 +19,7 @@ The key contract satisfied:
 
 from __future__ import annotations
 
+import math
 import random
 from typing import TYPE_CHECKING
 
@@ -26,7 +27,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
-import math
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
@@ -196,11 +196,16 @@ class WeightDiffusion(nn.Module):
                 print(f"[Encoder] mu:     mean={mean.mean():.3f}, std={mean.std():.3f}, min={mean.min():.3f}, max={mean.max():.3f}")
                 print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
                 print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
-                print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+                print(
+                    f"theta mean={theta_prime_raw.mean():.4f},",
+                    f"std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}",
+                )
                 print("================================================================\n")
         else:
             theta_prime_raw = self.weight_encoder(x)
-            print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+            # Split long debug print into two lines to satisfy line length limits
+            print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}")
+            print(f"theta min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
 
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
@@ -276,10 +281,10 @@ class WeightDiffusion(nn.Module):
 
         if self.probablistic:
             l_prior = self._l_entropy(logvar)
-            elbo = (self.T-1)*l_diff + l_rec + lambda_kl * l_prior
+            elbo = (self.T - 1) * l_diff + l_rec + lambda_kl * l_prior
         else:
             l_prior = torch.zeros_like(l_diff)
-            elbo = (self.T-1)*l_diff + l_rec
+            elbo = (self.T - 1) * l_diff + l_rec
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -354,8 +359,8 @@ class WeightDiffusion(nn.Module):
         # Bin MSE by timestep to see where the model fails
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             t_flat = t_norm.flatten()
-            low_t_mask  = t_flat < 0.2   # t in [0, 0.2]
-            high_t_mask = t_flat > 0.8   # t in [0.8, 1.0]
+            low_t_mask = t_flat < 0.2  # t in [0, 0.2]
+            high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
             if low_t_mask.any():
                 print(f"MSE @ low  t (<0.2): {mse[low_t_mask].mean():.4f}")
             if high_t_mask.any():
@@ -409,10 +414,7 @@ class WeightDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        D = logvar[0].numel()  # total number of latent dimensions
-        print("DEBUG logvar shape: ", logvar.shape)
-        print(f"DEBUG logvar stats: mean={logvar.mean():.4f}, std={logvar.std():.4f}, min={logvar.min():.4f}, max={logvar.max():.4f}")
-        print(D)
+        D = logvar[0].numel()  # noqa: N806
         return 0.5 * (logvar.sum(dim=(-1)) + D * (1 + math.log(2 * math.pi)))
 
     # -------------------------------------------------------------------------
@@ -501,7 +503,6 @@ class WeightDiffusion(nn.Module):
         if collect_snapshots:
             return curr_theta, snapshots
         return curr_theta
-
 
     def _inr_decode(
         self,

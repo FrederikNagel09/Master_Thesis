@@ -129,13 +129,13 @@ python main.py \
     --run_name Weight-Diffusion-Probabilistic-Test\
     --model weight_inr_diffusion\
     --dataset mnist \
-    --epochs 40 \
+    --epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 1.0 \
+    --subset_frac 0.01 \
     --normalize False\
     --probablistic True \
     --lambda_kl 1e-5 \
@@ -144,7 +144,7 @@ python main.py \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 128 \
     --inr_layers 3 \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 8 \
@@ -160,9 +160,9 @@ python main.py \
     --noise_predictor_n_head 8 \
     --noise_predictor_head_dim 64 \
     --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
+    --noise_predictor_depth 3 \
     --noise_predictor_dropout 0.0 \
-    --noise_predictor_chunk_size 8 \
+    --noise_predictor_chunk_size 128 \
     --noise_predictor_t_embed_dim 256
 
 
