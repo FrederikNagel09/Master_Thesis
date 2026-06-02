@@ -288,6 +288,73 @@ class WeightDiffusion(nn.Module):
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
+    @torch.no_grad()
+    def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
+        """
+        Computes the exact ELBO over the full validation set by looping over
+        all T timesteps per batch. This is computationally expensive; only call
+        at major checkpoints.
+
+        Args:
+            val_loader: DataLoader yielding (x, label) batches where x can be
+                        flattened or spatial image tensors.
+        Returns:
+            mean ELBO scalar (higher is better / less negative)
+        """
+        self.eval()
+        device = self.sqrt_alpha_cumprod.device
+        total_elbo = 0.0
+        n_batches = 0
+
+        for x, _ in val_loader:
+            x = x.to(device)
+            batch_size = x.shape[0]
+
+            # --------- 1. Input Shape Flattening ---------
+            # WeightDiffusion expects 2D vectors (B, data_dim) for its encoder and decoder
+            x_flat = x.reshape(batch_size, -1) if x.dim() > 2 else x
+
+            # --------- 2. Encode Once Per Batch ---------
+            if self.probablistic:
+                mean, logvar = self.weight_encoder(x_flat)
+                theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+                l_prior = self._l_entropy(logvar)  # (B,)
+            else:
+                theta_prime_raw = self.weight_encoder(x_flat)
+                l_prior = torch.zeros(batch_size, device=device)  # (B,)
+
+            # --------- 3. Scale / Normalize Weights ---------
+            theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
+
+            # --------- 4. Compute Non-Diffusion Core Losses ---------
+            # Computed once per batch to avoid redundant evaluations
+            l_rec = self._l_rec(x_flat, theta_prime_raw)  # (B,)
+
+            # --------- 5. Integrate Diffusion Loss Over All T ---------
+            l_diff_sum = torch.zeros(batch_size, device=device)  # (B,)
+
+            for t in range(self.T):
+                # Construct uniform timestep batch configurations
+                t_idx = torch.full((batch_size,), t, dtype=torch.long, device=device)
+                t_norm = torch.full((batch_size,), t / (self.T - 1), device=device)
+
+                # Generate the specific noisy weight vectors for timestep t
+                theta_t, epsilon = self._construct_theta_t(theta_prime.detach(), t_idx)
+
+                # Accumulate the unscaled, step-specific weighted MSE loss
+                l_diff_sum += self._l_diff(theta_t, t_norm, epsilon, t_idx)  # (B,)
+
+            # --------- 6. Aggregate Total ELBO Per Sample ---------
+            # We add them together directly since l_diff_sum is explicitly integrated across all T.
+            # We scale the prior by lambda_kl to match your class's weighting configuration.
+            elbo = l_diff_sum + l_rec + (self.lambda_kl * l_prior)  # (B,)
+
+            total_elbo += elbo.mean().item()
+            n_batches += 1
+
+        self.train()
+        return total_elbo / n_batches
+
     # -------------------------------------------------------------------------
     # Loss term Helpers:
     # -------------------------------------------------------------------------
