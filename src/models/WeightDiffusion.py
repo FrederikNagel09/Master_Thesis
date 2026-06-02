@@ -410,9 +410,6 @@ class WeightDiffusion(nn.Module):
             (B,) per-sample negative entropy
         """
         D = logvar[0].numel()  # total number of latent dimensions
-        print("DEBUG logvar shape: ", logvar.shape)
-        print(f"DEBUG logvar stats: mean={logvar.mean():.4f}, std={logvar.std():.4f}, min={logvar.min():.4f}, max={logvar.max():.4f}")
-        print(D)
         return 0.5 * (logvar.sum(dim=(-1)) + D * (1 + math.log(2 * math.pi)))
 
     # -------------------------------------------------------------------------

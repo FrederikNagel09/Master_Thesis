@@ -281,7 +281,7 @@ def run_training(
                 )
                 plot_val_elbo_progression(
                     model=model,
-                    data_loader_val=data_loader_val,  # Captured directly from the outer scope
+                    data_loader_val=data_loader_val,
                     epoch=epoch,
                     run_dir=run_dir,
                     filename=f"val_elbo_progression"
