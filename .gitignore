@@ -45,6 +45,7 @@ src/outputs/
 
 src_old/
 src/train_results/
+src/train_results2/
 src/trained_models/
 src/logs/
 src/HPC_results/

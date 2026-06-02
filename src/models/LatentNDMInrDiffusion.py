@@ -248,33 +248,33 @@ class LatentNDMDiffusion(nn.Module):
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
             print("data x shape:", x.shape)
-            print("time indices (t_idx):", t_idx.shape, "min/max:", t_idx.min(), t_idx.max())
-            print("normed time (t_norm):", t_norm.shape, "min/max:", t_norm.min(), t_norm.max())
+            print("time indices (t_idx):", t_idx.shape, "min/max:", t_idx.min().item(), t_idx.max().item())
+            print("normed time (t_norm):", t_norm.shape, "min/max:", t_norm.min().item(), t_norm.max().item())
             print("z shape:", z.shape)
-            print("z.min():", z.min(), "\nz.max():", z.max(), "\nz.mean():", z.mean(), "\nz.std():", z.std())
+            print("z.min():", z.min().item(), "\nz.max():", z.max().item(), "\nz.mean():", z.mean().item(), "\nz.std():", z.std().item())
             print("z_trans shape:", Fz.shape)
             print(
                 "z_trans.min():",
-                Fz.min(),
+                Fz.min().item(),
                 "\nz_trans.max():",
-                Fz.max(),
+                Fz.max().item(),
                 "\nz_trans.mean():",
-                Fz.mean(),
+                Fz.mean().item(),
                 "\nz_trans.std():",
-                Fz.std(),
+                Fz.std().item(),
             )
             print("z_t shape:", z_t.shape)
-            print("z_t.min():", z_t.min(), "\nz_t.max():", z_t.max(), "\nz_t.mean():", z_t.mean(), "\nz_t.std():", z_t.std())
+            print("z_t.min():", z_t.min().item(), "\nz_t.max():", z_t.max().item(), "\nz_t.mean():", z_t.mean().item(), "\nz_t.std():", z_t.std().item())
             print("epsilon shape:", epsilon.shape)
             print(
                 "epsilon.min():",
-                epsilon.min(),
+                epsilon.min().item(),
                 "\nepsilon.max():",
-                epsilon.max(),
-                "\nepsilon.mean():",
-                epsilon.mean(),
+                epsilon.max().item(),
+                "\nepsilon.mean():"
+                epsilon.mean().item(),
                 "\nepsilon.std():",
-                epsilon.std(),
+                epsilon.std().item(),
             )
             print("###############################################\n")
 
@@ -387,19 +387,19 @@ class LatentNDMDiffusion(nn.Module):
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Diffusion Loss: #################")
             print("Fz_t shape:", Fz_t.shape)
-            print("Fz_t mean:", Fz_t.mean(), "std:", Fz_t.std(), "min:", Fz_t.min(), "max:", Fz_t.max())
+            print("Fz_t mean:", Fz_t.mean().item(), "std:", Fz_t.std().item(), "min:", Fz_t.min().item(), "max:", Fz_t.max().item())
             print("Fz_hat_t shape:", Fz_hat_t.shape)
-            print("Fz_hat_t mean:", Fz_hat_t.mean(), "std:", Fz_hat_t.std(), "min:", Fz_hat_t.min(), "max:", Fz_hat_t.max())
+            print("Fz_hat_t mean:", Fz_hat_t.mean().item(), "std:", Fz_hat_t.std().item(), "min:", Fz_hat_t.min().item(), "max:", Fz_hat_t.max().item())
             print("___________________________________________________")
             print("Fz_s shape:", Fz_s.shape)
-            print("Fz_s mean:", Fz_s.mean(), "std:", Fz_s.std(), "min:", Fz_s.min(), "max:", Fz_s.max())
+            print("Fz_s mean:", Fz_s.mean().item(), "std:", Fz_s.std().item(), "min:", Fz_s.min().item(), "max:", Fz_s.max().item())
             print("Fz_hat_s shape:", Fz_hat_s.shape)
-            print("Fz_hat_s mean:", Fz_hat_s.mean(), "std:", Fz_hat_s.std(), "min:", Fz_hat_s.min(), "max:", Fz_hat_s.max())
+            print("Fz_hat_s mean:", Fz_hat_s.mean().item(), "std:", Fz_hat_s.std().item(), "min:", Fz_hat_s.min().item(), "max:", Fz_hat_s.max().item())
             print("___________________________________________________")
             print("z shape:", z.shape)
-            print("z mean:", z.mean(), "std:", z.std(), "min:", z.min(), "max:", z.max())
+            print("z mean:", z.mean().item(), "std:", z.std().item(), "min:", z.min().item(), "max:", z.max().item())
             print("z_hat shape:", z_hat.shape)
-            print("z_hat mean:", z_hat.mean(), "std:", z_hat.std(), "min:", z_hat.min(), "max:", z_hat.max())
+            print("z_hat mean:", z_hat.mean().item(), "std:", z_hat.std().item(), "min:", z_hat.min().item(), "max:", z_hat.max().item())
             print("################################################################\n")
 
 

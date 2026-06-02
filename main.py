@@ -126,10 +126,10 @@ python main.py \
 
 ######################### Weight Diffusion Training ####################################
 CUDA_VISIBLE_DEVICES=0 python main.py \
-    --run_name weight-diffusion-probablistic-v5\
+    --run_name weight-diffusion-probablistic-v2-sumKLPrior\
     --model weight_inr_diffusion\
     --dataset mnist \
-    --epochs 20 \
+    --epochs 30 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -138,7 +138,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --subset_frac 1.0 \
     --normalize True\
     --probablistic True \
-    --lambda_kl 5e-3 \
+    --lambda_kl 1e-5 \
     --peak_lr 1e-4 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -216,10 +216,10 @@ python main.py \
 
 ######### Latent NDM Diffusion Training ############
 python main.py \
-    --run_name latent_ndm_diffusion-v1  \
+    --run_name latent_ndm_diffusion-short  \
     --model latent_ndm_inr_diffusion \
     --dataset mnist \
-    --epochs 10 \
+    --epochs 60 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -243,7 +243,7 @@ python main.py \
     --pred_d_ff 1024 \
     --pred_t_embed_dim 128 \
     --latent_transformer_hidden_dim 64 \
-    --latent_transformer_n_blocks 4 \
+    --latent_transformer_n_blocks 5 \
     --latent_transformer_t_embed_dim 256 \
     --dec_trans_dim 128 \
     --dec_trans_n_head 8 \

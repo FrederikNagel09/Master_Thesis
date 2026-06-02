@@ -173,8 +173,8 @@ def train(
         for param in model.denoiser.parameters():
             param.requires_grad = False
 
-    kl_free_epochs = int(0.2 * epochs)       # flat zero for first 20%
-    kl_warmup_epochs = int(0.6 * epochs)     # then ramp over next 60%
+    kl_free_epochs = int(0.15 * epochs)       # flat zero for first 15%
+    kl_warmup_epochs = int(0.4 * epochs)     # then ramp over next 40%
     lambda_kl_max = model.lambda_kl
 
     def get_kl_weight(epoch: int) -> float:
