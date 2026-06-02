@@ -288,7 +288,6 @@ def run_training(
                 )
 
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "weight_inr_diffusion"):
-                # Just simple reconstruction
                 plot_reconstruction_progression(
                     model,
                     batch,
@@ -299,39 +298,13 @@ def run_training(
                     filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
                     model_name=args.model,
                 )
-                """
-                # noises image to t=n noise and then does "sampling" to get back to reconstruction
-                plot_reconstruction_diffusion_progression(
-                    model,
-                    batch,
-                    epoch,
-                    run_dir,
-                    device,
-                    data_config,
-                    filename=f"reconstruction_diffusion_progression_ep{start_epoch + 1}-{end_epoch}",
-                )
-                
-                # plots the weight_vector from weightencoder as a line with weightvector dim as x axis and weight value as y axis
-                plot_weight_profile_progression(
+                plot_val_elbo_progression(
                     model=model,
-                    batch=batch,
+                    data_loader_val=data_loader_val,
                     epoch=epoch,
                     run_dir=run_dir,
-                    device=device,
-                    data_config=data_config,
-                    filename=f"weight_profile_progression_ep{start_epoch + 1}-{end_epoch}",
+                    filename="val_elbo_progression",
                 )
-                # does three weight vector distributions:
-                plot_weight_distribution_progression(
-                    model=model,
-                    batch=batch,
-                    epoch=epoch,
-                    run_dir=run_dir,
-                    device=device,
-                    data_config=data_config,
-                    filename=f"weight_distribution_progression_ep{start_epoch + 1}-{end_epoch}",
-                )
-                """
                 plot_forward_trajectory_progression(
                     model=model,
                     batch=batch,
