@@ -173,15 +173,8 @@ def train(
         for param in model.denoiser.parameters():
             param.requires_grad = False
 
-    kl_free_epochs = int(0.15 * epochs)       # flat zero for first 15%
-    kl_warmup_epochs = int(0.4 * epochs)     # then ramp over next 40%
-    lambda_kl_max = model.lambda_kl
-
-    def get_kl_weight(epoch: int) -> float:
-        if epoch < kl_free_epochs:
-            return 0.0
-        ramp_progress = (epoch - kl_free_epochs) / kl_warmup_epochs
-        return lambda_kl_max * min(ramp_progress, 1.0)
+    
+    lambda_kl = model.lambda_kl if hasattr(model, "lambda_kl") else 1.0
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
@@ -196,12 +189,6 @@ def train(
                 for param in model.denoiser.parameters():
                     param.requires_grad = True
                 print("##################################################################\n")
-        
-        if epoch < kl_free_epochs:
-            lambda_kl = 0.0
-        else:
-            ramp_progress = (epoch - kl_free_epochs) / kl_warmup_epochs
-            lambda_kl = lambda_kl_max * min(1.0, ramp_progress)
 
         if GLOBAL_DEBUG_BOOL:
             print(f"\n############## EPOCH: {epoch} ##############\n")

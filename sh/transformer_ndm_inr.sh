@@ -1,14 +1,14 @@
 #!/bin/bash
-#BSUB -J Weight-Diffusion-Deterministic         # Job name
+#BSUB -J Latent-Diffusion-Prob-testing-WithEntropy-Positive         # Job name
 #BSUB -q gpuv100                           # Queue to submit the job to
-#BSUB -W 1200                             # Wall time limit (6 hours)
+#BSUB -W 400                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 8 cores
 #BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Weight-Diffusion-Deterministic.out                        # Standard output redirection
-#BSUB -e src/outputs/Weight-Diffusion-Deterministic.err                        # Standard error redirection
-##BSUB -N                                   # send email when job finishes
+#BSUB -o src/outputs/Latent-Diffusion-Prob-testing-WithEntropy-Positive.out                        # Standard output redirection
+#BSUB -e src/outputs/Latent-Diffusion-Prob-testing-WithEntropy-Positive.err                        # Standard error redirection
+#BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
 # Activate virtual environment
@@ -16,10 +16,10 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name Weight-Diffusion-Deterministic\
-    --model weight_inr_diffusion\
+    --run_name Latent-Diffusion-Prob-testing-WithEntropy-Positive \
+    --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 450 \
+    --epochs 200 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -27,30 +27,30 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --log_every_n_steps 50 \
     --subset_frac 1.0 \
     --normalize False\
-    --probablistic False \
-    --lambda_kl 1e-4 \
-    --peak_lr 1e-4 \
+    --do_scaling True \
+    --do_latent_recon False \
+    --probablistic True \
+    --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
-    --sigma_tilde 1.0 \
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --encoder_trans_dim 128 \
-    --encoder_trans_n_head 8 \
-    --encoder_trans_head_dim 64 \
-    --encoder_trans_ff_dim 1024 \
-    --encoder_trans_enc_depth 4 \
-    --encoder_trans_dec_depth 4 \
-    --encoder_trans_patch_size 4 \
-    --encoder_trans_n_groups 32 \
-    --encoder_trans_update_strategy scale \
-    --predictor_variant transformer \
-    --noise_predictor_dim 128 \
-    --noise_predictor_n_head 8 \
-    --noise_predictor_head_dim 64 \
-    --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
-    --noise_predictor_dropout 0.0 \
-    --noise_predictor_chunk_size 8 \
-    --noise_predictor_t_embed_dim 256
+    --latent_dim 32 \
+    --latent_size 8 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 12\
+    --pred_d_model 128 \
+    --pred_n_heads 8 \
+    --pred_n_layers 4 \
+    --pred_d_ff 1024 \
+    --pred_t_embed_dim 256 \
+    --dec_trans_dim 128 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 64 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 4 \
+    --dec_trans_dec_depth 4 \
+    --dec_trans_n_groups 32 \
+    --dec_trans_update_strategy scale \
+    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Latent-Diffusion-Prob-testing-WithEntropy-Positive/weights/weights.pt

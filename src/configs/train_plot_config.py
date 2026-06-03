@@ -13,6 +13,6 @@ _COLORS = {
 _LABELS = {
     "total": "Total Loss",
     "diff": "Diffusion Loss",
-    "prior": "KL / Prior Loss",
+    "prior": "Entropy Term",
     "rec": "Reconstruction Loss",
 }

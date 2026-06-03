@@ -175,10 +175,10 @@ python main.py \
     
 ######### Latent Diffusion Training ############
 python main.py \
-    --run_name Latent-Diffusion-Deterministic-test \
+    --run_name Latent-Diffusion-Deter-withentropy-positive \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 40 \
+    --epochs 100 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -189,19 +189,19 @@ python main.py \
     --do_scaling True \
     --do_latent_recon False \
     --probablistic False \
-    --lambda_kl 1e-5 \
+    --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 3 \
     --latent_dim 32 \
-    --latent_size 4 \
+    --latent_size 8 \
     --latent_patch_size 2 \
     --latent_enc_hidden_dim 12\
     --pred_d_model 128 \
     --pred_n_heads 8 \
-    --pred_n_layers 3 \
+    --pred_n_layers 4 \
     --pred_d_ff 1024 \
     --pred_t_embed_dim 256 \
     --dec_trans_dim 128 \
@@ -211,7 +211,9 @@ python main.py \
     --dec_trans_enc_depth 4 \
     --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
-    --dec_trans_update_strategy scale
+    --dec_trans_update_strategy scale \
+    --resume src/train_results/Latent-Diffusion-Deter-withentropy-positive/weights/weights.pt
+  
     
 
 

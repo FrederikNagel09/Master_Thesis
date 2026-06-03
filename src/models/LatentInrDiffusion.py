@@ -218,8 +218,22 @@ class LatentDiffusion(nn.Module):
         mu, logvar = self.latent_encoder(x)
         if self._probabilistic:  # noqa: SIM108
             z_raw = self.latent_encoder.reparameterize(mu, logvar)
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                std = torch.exp(0.5 * logvar)
+                print(f"==================== Probablistic Components {self.i}: ====================")
+                print(f"[Encoder] mu:     mean={mu.mean():.3f}, std={mu.std():.3f}, min={mu.min():.3f}, max={mu.max():.3f}")
+                print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
+                print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
+                print(
+                    f"theta mean={z_raw.mean():.4f},"
+                    f"std={z_raw.std():.4f}, min={z_raw.min():.4f}, max={z_raw.max():.4f}",
+                )
+                print("================================================================\n")
         else:
             z_raw = mu  # Use mean directly for deterministic latents (ablation)
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                print(f"theta mean={z_raw.mean():.4f}, std={z_raw.std():.4f}")
+                print(f"theta min={z_raw.min():.4f}, max={z_raw.max():.4f}")
 
         ######### Normalize Latents ##########
         z = self._normalize_z(z_raw) if self._normalize else z_raw
@@ -486,8 +500,8 @@ class LatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        D = logvar[0].numel()  # noqa: N806
-        return 0.5 * (logvar.sum(dim=(-3, -2, -1)) + D * (1 + math.log(2 * math.pi)))
+        D = logvar[0].numel()
+        return 0.5 * (logvar.mean(dim=(-3, -2, -1)) + (1 + math.log(2 * math.pi)))
 
     def _l_rec(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """

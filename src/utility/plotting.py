@@ -882,7 +882,10 @@ def plot_reconstruction_progression(
                 channels = x.shape[1] // (model.img_size * model.img_size)
                 x = x.view(x.shape[0], channels, model.img_size, model.img_size)
             mu, logvar = model.latent_encoder(x)
-            z = model.latent_encoder.reparameterize(mu, logvar)
+            if model._probabilistic:
+                z = model.latent_encoder.reparameterize(mu, logvar)
+            else:
+                z = mu  # deterministic case uses mean directly
             x_recon = model._decode_latent(z)
     elif model_name == "weight_inr_diffusion":
         with torch.no_grad():
@@ -1726,7 +1729,11 @@ def plot_forward_trajectory_progression(
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)
         # encode latents
         mu, logvar = model.latent_encoder(x)
-        z = model.latent_encoder.reparameterize(mu, logvar)
+        if model._probabilistic:
+            z = model.latent_encoder.reparameterize(mu, logvar)
+        else:
+            z = mu
+
         if normalize:
             z = model._normalize_z(z)
 
