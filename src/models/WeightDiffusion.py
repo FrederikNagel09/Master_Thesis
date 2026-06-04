@@ -33,35 +33,37 @@ from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 if TYPE_CHECKING:
     import numpy as np
 
+
 class WeightScaler(nn.Module):
     def __init__(self, dim, momentum=0.1):
         super().__init__()
         self.dim = dim
         self.momentum = momentum
-        # NOT a trainable parameter, persists with model
-        self.register_buffer("running_std", torch.ones(1, dim))
+        # Track a single global scalar instead of a per-dimension vector
+        self.register_buffer("running_std", torch.ones(1))
 
     def forward(self, x: torch.Tensor, reverse: bool = False, training: bool = True) -> torch.Tensor:
         """
-        Scales weight vectors so std ≈ 1, preserving mean structure.
+        Scales weight vectors globally so total std ≈ 1, preserving the relative
+        magnitude and internal structural proportions of the weights.
 
         Args:
             x:        (batch_size, dim) weight vectors
-            reverse:  False = scale up (forward), True = scale back down (inverse)
-            training: If True, updates running std via EMA
+            reverse:  False = normalize (divide), True = denormalize (multiply)
+            training: If True, updates running_std via EMA before scaling
         Returns:
             (batch_size, dim) scaled or unscaled weight vectors
         """
         if not reverse:
             if training:
-                batch_std = x.std(dim=0, keepdim=True) + 1e-6
-                # EMA update of running std
+                # Calculate standard deviation over ALL elements in the batch simultaneously
+                batch_std = x.std().clamp(min=1e-5)
                 with torch.no_grad():
                     self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
-                return x / batch_std
-            else:
-                return x / self.running_std
+            # Broadcasts smoothly: (batch_size, dim) / (1,)
+            return x / self.running_std
         else:
+            # Broadcasts smoothly: (batch_size, dim) * (1,)
             return x * self.running_std
 
 
@@ -115,6 +117,11 @@ class WeightDiffusion(nn.Module):
 
         if self.normalize:
             self.scaler = WeightScaler(WeightEncoder.weight_dim)
+            print(
+                f"running_std: mean={self.scaler.running_std.mean():.6f}, std={self.scaler.running_std.std():.6f}, ",
+                f"min={self.scaler.running_std.min():.6f}, max={self.scaler.running_std.max():.6f}",
+            )
+
         self.lambda_kl = lambda_kl
 
         # --- Noise schedule ---
@@ -200,6 +207,7 @@ class WeightDiffusion(nn.Module):
             theta_prime_raw = self.weight_encoder(x)
             # Split long debug print into two lines to satisfy line length limits
             if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                print(f"==================== Deterministic Components {self.i}: ====================")
                 print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}")
                 print(f"theta min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
 
@@ -207,6 +215,12 @@ class WeightDiffusion(nn.Module):
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
+            print(
+                f"running_std: mean={self.scaler.running_std.mean():.6f},",
+                f"std={self.scaler.running_std.std():.6f},",
+                f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
+            )
+
             print(
                 f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
                 f"std={theta_prime_raw.std():.4f}, "
@@ -263,7 +277,9 @@ class WeightDiffusion(nn.Module):
                 print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
         self.i += 1
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_t, epsilon = self._construct_theta_t(theta_prime.detach(), t_idx)
+        theta_prime = theta_prime.detach()
+
+        theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Construct Theta_t ====================")
@@ -272,7 +288,8 @@ class WeightDiffusion(nn.Module):
             print("================================================================\n")
 
         # Given theta_t, and theta_prime we compute the three loss terms:
-        l_diff = self._l_diff(theta_t, t_norm, epsilon, t_idx)
+        l_diff = self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx)
+
         l_rec = self._l_rec(x, theta_prime_raw)
 
         if self.probablistic:
@@ -396,34 +413,33 @@ class WeightDiffusion(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, epsilon, t_idx) -> torch.Tensor:
+    def _l_diff(self, theta_t, t_norm, epsilon, x0, t_idx) -> torch.Tensor:
         """
-        x0-prediction loss weighted by SNR(t) to prevent posterior mean collapse.
+        V-prediction diffusion loss: network predicts v = sqrt(a_bar)*eps - sqrt(1-a_bar)*x0.
         Args:
-            theta_t:     (B, weight_dim) noisy weights at timestep t
-            t_norm:      (B,) timestep normalised to [0, 1]
-            epsilon:     (B, weight_dim) noise sample
+            theta_t:  (B, weight_dim) noisy weights at timestep t
+            t_norm:   (B,) timestep normalised to [0, 1]
+            epsilon:  (B, weight_dim) noise sample used to corrupt x0
+            x0:       (B, weight_dim) clean weights
+            t_idx:    (B,) integer timestep indices into the schedule buffers
         Returns:
-            (B,) per-sample weighted MSE loss
+            (B,) per-sample MSE loss between predicted and target v
         """
-        epsilon_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
+        v_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
 
-        alpha_t = self.alpha[t_idx]
-        alpha_bar_t = self.alpha_cumprod[t_idx]
-        beta_t = self.beta[t_idx]
+        sqrt_ab = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)  # (B, 1)
+        sqrt_1mab = self.sigma[t_idx].unsqueeze(1)  # (B, 1)
 
-        scaling = beta_t / (2 * alpha_t * (1.0 - alpha_bar_t))
+        # Ground-truth v target
+        v_target = sqrt_ab * epsilon - sqrt_1mab * x0  # (B, weight_dim)
 
-        mse = F.mse_loss(epsilon_hat, epsilon, reduction="none")
-
-        unscaled_mse = mse.sum(dim=-1)
-        weighted_mse = scaling * unscaled_mse
+        mse = F.mse_loss(v_hat, v_target, reduction="none")  # (B, weight_dim)
 
         # Bin MSE by timestep to see where the model fails
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             t_flat = t_norm.flatten()
-            low_t_mask = t_flat < 0.2  # t in [0, 0.2]
-            high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
+            low_t_mask = t_flat < 0.2
+            high_t_mask = t_flat > 0.8
             if low_t_mask.any():
                 print(f"MSE @ low  t (<0.2): {mse[low_t_mask].mean():.4f}")
             if high_t_mask.any():
@@ -431,27 +447,27 @@ class WeightDiffusion(nn.Module):
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Diffusion Loss: #################")
-            print("epsilon shape:", epsilon.shape)
+            print("v_target shape:", v_target.shape)
             print(
-                "epsilon.min():",
-                epsilon.min(),
-                "\nepsilon.max():",
-                epsilon.max(),
-                "\nepsilon.mean():",
-                epsilon.mean(),
-                "\nepsilon.std():",
-                epsilon.std(),
+                "v_target.min():",
+                v_target.min(),
+                "\nv_target.max():",
+                v_target.max(),
+                "\nv_target.mean():",
+                v_target.mean(),
+                "\nv_target.std():",
+                v_target.std(),
             )
-            print("eps_hat shape:", epsilon_hat.shape)
+            print("v_hat shape:", v_hat.shape)
             print(
-                "eps_hat.min():",
-                epsilon_hat.min(),
-                "\neps_hat.max():",
-                epsilon_hat.max(),
-                "\neps_hat.mean():",
-                epsilon_hat.mean(),
-                "\neps_hat.std():",
-                epsilon_hat.std(),
+                "v_hat.min():",
+                v_hat.min(),
+                "\nv_hat.max():",
+                v_hat.max(),
+                "\nv_hat.mean():",
+                v_hat.mean(),
+                "\nv_hat.std():",
+                v_hat.std(),
             )
             print("MSE shape:", mse.shape)
             print(
@@ -466,7 +482,7 @@ class WeightDiffusion(nn.Module):
             )
             print("###############################################\n")
 
-        return weighted_mse
+        return mse.mean(dim=-1)  # (B,)
 
     def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -477,7 +493,7 @@ class WeightDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        D = logvar[0].numel()  # noqa: N806
+        D = logvar[0].numel()  # noqa: F841, N806
         return 0.5 * (logvar.mean(dim=-1) + (1 + math.log(2 * math.pi)))
 
     # -------------------------------------------------------------------------
@@ -494,10 +510,10 @@ class WeightDiffusion(nn.Module):
         collect_snapshots: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[int, np.ndarray]]:
         """
-        Sample weight vectors via reverse diffusion (Algorithm 2 formulation).
+        Sample weight vectors via reverse diffusion with v-prediction.
         Args:
-            n_samples:          Number of samples to generate.
-            collect_snapshots:  If True, also return weight distributions at T_VALUES.
+            n_samples:         Number of weight samples to generate.
+            collect_snapshots: If True, also return weight distributions at T_VALUES.
         Returns:
             curr_theta: (n_samples, weight_dim) sampled weights.
             snapshots:  {t_value: flat np.ndarray} — only returned if collect_snapshots=True.
@@ -513,49 +529,53 @@ class WeightDiffusion(nn.Module):
             fixed_theta = torch.randn(1, weight_dim, device=device)
             t_high = torch.full((1, 1), 999 / (self.T - 1), device=device)
             t_low = torch.full((1, 1), 0 / (self.T - 1), device=device)
-            eps_high = self.denoiser(fixed_theta, t_high)
-            eps_low = self.denoiser(fixed_theta, t_low)
+            v_high = self.denoiser(fixed_theta, t_high)
+            v_low = self.denoiser(fixed_theta, t_low)
             print("===== TIME SENSITIVITY CHECK =====")
-            print(f"eps_hat @ t=999: mean={eps_high.mean():.4f}, std={eps_high.std():.4f}")
-            print(f"eps_hat @ t=0  : mean={eps_low.mean():.4f},  std={eps_low.std():.4f}")
-            print(f"max abs diff   : {(eps_high - eps_low).abs().max():.4f}")
+            print(f"v_hat @ t=999: mean={v_high.mean():.4f}, std={v_high.std():.4f}")
+            print(f"v_hat @ t=0  : mean={v_low.mean():.4f},  std={v_low.std():.4f}")
+            print(f"max abs diff : {(v_high - v_low).abs().max():.4f}")
             print("==================================")
 
         for t in tqdm(range(self.T - 1, -1, -1), desc="Sampling", total=self.T):
             t_norm = torch.full((n_samples,), t / (self.T - 1), device=device).unsqueeze(-1)
 
-            # 2. Predict noise tokens
-            eps_hat = self.denoiser(curr_theta, t_norm)
+            v_hat = self.denoiser(curr_theta, t_norm)  # (n_samples, weight_dim)
+
+            sqrt_ab = self.sqrt_alpha_cumprod[t]  # scalar
+            sqrt_1mab = self.sigma[t]  # scalar
+
+            # Recover x0 and eps from v, then compute DDPM posterior mean
+            x0_hat = sqrt_ab * curr_theta - sqrt_1mab * v_hat  # (n_samples, weight_dim)
+            eps_hat = sqrt_1mab * curr_theta + sqrt_ab * v_hat  # (n_samples, weight_dim)
 
             alpha_t = self.alpha[t]
             alpha_bar_t = self.alpha_cumprod[t]
             beta_t = self.beta[t]
 
-            # Standard DDPM formulation for the posterior mean
+            # Standard DDPM posterior mean, now using x0_hat recovered from v
             coeff1 = 1.0 / torch.sqrt(alpha_t)
             coeff2 = (1.0 - alpha_t) / torch.sqrt(1.0 - alpha_bar_t)
-
             mean = coeff1 * (curr_theta - coeff2 * eps_hat)
 
-            if t > 0:
-                sigma = torch.sqrt(beta_t)
-                curr_theta = mean + sigma * torch.randn_like(curr_theta)
-            else:
-                curr_theta = mean
+            curr_theta = mean + torch.sqrt(beta_t) * torch.randn_like(curr_theta) if t > 0 else mean
 
             if collect_snapshots and t in T_values:
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
-            # Print statistics every 100 steps for debugging
             if (t % 100 == 0 and GLOBAL_DEBUG_BOOL) or (t == 0 and GLOBAL_DEBUG_BOOL):
                 print("################## Sampling: ##############################")
                 print(f"Sampling step {t}/{self.T}:")
                 print(
-                    f"predicted noise (eps_hat) stats: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}",
-                    f"min={eps_hat.min():.4f}, max={eps_hat.max():.4f}",
+                    f"v_hat stats      : mean={v_hat.mean():.4f},      std={v_hat.std():.4f}",
+                    f"min={v_hat.min():.4f}, max={v_hat.max():.4f}",
                 )
                 print(
-                    f"curr_theta stats: mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}",
+                    f"x0_hat stats     : mean={x0_hat.mean():.4f},     std={x0_hat.std():.4f}",
+                    f"min={x0_hat.min():.4f}, max={x0_hat.max():.4f}",
+                )
+                print(
+                    f"curr_theta stats : mean={curr_theta.mean():.4f}, std={curr_theta.std():.4f}",
                     f"min={curr_theta.min():.4f}, max={curr_theta.max():.4f}",
                 )
                 print("###########################################################\n")

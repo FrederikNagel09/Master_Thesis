@@ -47,12 +47,12 @@ python main.py \
     --model weight_inr_diffusion\
     --dataset mnist \
     --epochs 5 \
-    --batch_size 64 \
+    --batch_size 16 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 50 \
-    --subset_frac 0.1 \
+    --log_every_n_steps 5 \
+    --subset_frac 0.2 \
     --normalize True\
     --probablistic False \
     --peak_lr 1e-4 \
