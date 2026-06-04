@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J Latent-Diffusion-Prob-testing-WithEntropy-Positive         # Job name
+#BSUB -J Latent-Diffusion-Deterministic        # Job name
 #BSUB -q gpuv100                           # Queue to submit the job to
-#BSUB -W 400                             # Wall time limit (6 hours)
+#BSUB -W 800                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 8 cores
 #BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Latent-Diffusion-Prob-testing-WithEntropy-Positive.out                        # Standard output redirection
-#BSUB -e src/outputs/Latent-Diffusion-Prob-testing-WithEntropy-Positive.err                        # Standard error redirection
+#BSUB -o src/outputs/Latent-Diffusion-Deterministic.out                        # Standard output redirection
+#BSUB -e src/outputs/Latent-Diffusion-Deterministic.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,10 +16,10 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name Latent-Diffusion-Prob-testing-WithEntropy-Positive \
+    --run_name Latent-Diffusion-Deterministic\
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 200 \
+    --epochs 300 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -29,7 +29,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --normalize False\
     --do_scaling True \
     --do_latent_recon False \
-    --probablistic True \
+    --probablistic False \
     --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -53,4 +53,4 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale \
-    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Latent-Diffusion-Prob-testing-WithEntropy-Positive/weights/weights.pt
+    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Latent-Diffusion-Deterministic/weights/weights.pt

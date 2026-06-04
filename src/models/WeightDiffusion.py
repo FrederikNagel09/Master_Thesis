@@ -33,41 +33,36 @@ from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 if TYPE_CHECKING:
     import numpy as np
 
-
 class WeightScaler(nn.Module):
     def __init__(self, dim, momentum=0.1):
         super().__init__()
         self.dim = dim
         self.momentum = momentum
-
-        # register_buffer ensures these stay with the model but are NOT trainable parameters
-        self.register_buffer("running_mean", torch.zeros(1, dim))
+        # NOT a trainable parameter, persists with model
         self.register_buffer("running_std", torch.ones(1, dim))
 
-    def forward(self, x, reverse=False, training=True):
+    def forward(self, x: torch.Tensor, reverse: bool = False, training: bool = True) -> torch.Tensor:
         """
-        x: (batch_size, dim)
-        reverse: False for encoding (to N(0,1)), True for decoding (back to INR scale)
-        training: If True, updates the running stats.
+        Scales weight vectors so std ≈ 1, preserving mean structure.
+
+        Args:
+            x:        (batch_size, dim) weight vectors
+            reverse:  False = scale up (forward), True = scale back down (inverse)
+            training: If True, updates running std via EMA
+        Returns:
+            (batch_size, dim) scaled or unscaled weight vectors
         """
         if not reverse:
             if training:
-                # Calculate current batch stats
-                # Using keepdim=True to ensure broadcasting works smoothly
-                batch_mean = x.mean(dim=0, keepdim=True)
                 batch_std = x.std(dim=0, keepdim=True) + 1e-6
-
-                # Update running statistics (Exponential Moving Average)
+                # EMA update of running std
                 with torch.no_grad():
-                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * batch_mean
                     self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
-                return (x - batch_mean) / batch_std
+                return x / batch_std
             else:
-                # Use remembered stats for standardization during inference/validation
-                return (x - self.running_mean) / self.running_std
-
+                return x / self.running_std
         else:
-            return (x * self.running_std) + self.running_mean
+            return x * self.running_std
 
 
 class WeightDiffusion(nn.Module):
@@ -169,7 +164,7 @@ class WeightDiffusion(nn.Module):
     # -------------------------------------------------------------------------
     # Negative ELBO Computation:
     # -------------------------------------------------------------------------
-    def negative_elbo(self, x: torch.Tensor, lambda_kl: float = 5e-3) -> torch.Tensor:
+    def negative_elbo(self, x: torch.Tensor, lambda_kl: float = 1.0) -> torch.Tensor:
         """
         Estimates the negative ELBO:
             L = E[ l_diff ] + prior_mask * l_prior + l_rec
@@ -204,8 +199,9 @@ class WeightDiffusion(nn.Module):
         else:
             theta_prime_raw = self.weight_encoder(x)
             # Split long debug print into two lines to satisfy line length limits
-            print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}")
-            print(f"theta min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}")
+                print(f"theta min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
 
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
@@ -482,7 +478,7 @@ class WeightDiffusion(nn.Module):
             (B,) per-sample negative entropy
         """
         D = logvar[0].numel()  # noqa: N806
-        return 0.5 * (logvar.sum(dim=(-1)) + D * (1 + math.log(2 * math.pi)))
+        return 0.5 * (logvar.mean(dim=-1) + (1 + math.log(2 * math.pi)))
 
     # -------------------------------------------------------------------------
     # Sampling Helpers:

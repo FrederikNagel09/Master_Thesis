@@ -1011,6 +1011,7 @@ def _build_weight_diffusion(args, data_config: dict):
         data_dim=data_dim,
         img_size=img_size,
         probablistic=args.probablistic,
+        lambda_kl=args.lambda_kl if hasattr(args, "lambda_kl") else 1.0,
     )
 
     # Final print of total model params (encoder + decoder + predictor)
