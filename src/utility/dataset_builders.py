@@ -15,13 +15,14 @@ Supported dataset names (args.dataset):
     "celeba"    - 64x64 RGB
 """
 
-from torch.utils.data import Dataset, Subset
-from torchvision import datasets, transforms
 import torch
-from torch.utils.data import random_split
+from torch.utils.data import Dataset, Subset, random_split
+from torchvision import datasets, transforms
+
 # =============================================================================
 # Public API
 # =============================================================================
+
 
 def build_dataset(
     dataset_name: str,
@@ -91,6 +92,8 @@ def build_dataset(
     )
 
     return train_dataset, val_dataset, data_config
+
+
 # =============================================================================
 # Per-dataset builders
 # =============================================================================

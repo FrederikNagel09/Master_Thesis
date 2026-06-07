@@ -11,10 +11,42 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.append(".")
+import warnings
+
 from src.models.trans_inr import TransInr, make_coord_grid
 from src.utility.dataset_builders import build_dataset
 
+warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
+
 """
+python src/scripts/VAE_Baseline_Training.py \
+    --run_name vae-test-cifar10 \
+    --dataset cifar10 \
+    --epochs 5 \
+    --batch_size 64 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --subset_frac 0.2 \
+    --lambda_kl_max 0.01 \
+    --kl_warmup_frac 0.4 \
+    --latent_dim 8 \
+    --latent_size 4 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 2 \
+    --dec_trans_dim 8 \
+    --dec_trans_n_head 2 \
+    --dec_trans_head_dim 8 \
+    --dec_trans_ff_dim 32 \
+    --dec_trans_enc_depth 1 \
+    --dec_trans_dec_depth 1 \
+    --dec_trans_n_groups 1 \
+    --dec_trans_update_strategy scale \
+    --inr_hidden_dim 16 \
+    --inr_layers 3 
+    
+
+Resume:
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae-test \
     --dataset mnist \
@@ -40,6 +72,7 @@ python src/scripts/VAE_Baseline_Training.py \
     --dec_trans_update_strategy scale \
     --inr_hidden_dim 128 \
     --inr_layers 3
+    --resume src/results/vae-test_checkpoint.pt
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -70,8 +103,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--subset_frac", type=float, default=0.2)
 
     # KL
-    p.add_argument("--lambda_kl_max", type=float, default=0.1, help="Maximum KL weight after warm-up")
-    p.add_argument("--kl_warmup_frac", type=float, default=0.4, help="Fraction of total epochs over which KL ramps from 0 to lambda_kl_max")
+    p.add_argument("--lambda_kl_max", type=float, default=0.1)
+    p.add_argument("--kl_warmup_frac", type=float, default=0.4)
 
     # Encoder
     p.add_argument("--latent_dim", type=int, default=32)
@@ -92,6 +125,9 @@ def parse_args() -> argparse.Namespace:
     # INR
     p.add_argument("--inr_hidden_dim", type=int, default=128)
     p.add_argument("--inr_layers", type=int, default=3)
+
+    # Resume
+    p.add_argument("--resume", type=str, default=None, help="Path to checkpoint .pt file to resume from")
 
     return p.parse_args()
 
@@ -197,7 +233,7 @@ class VAEWrapper(nn.Module):
         self.img_size = img_size
         self.device = device
 
-        coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
+        coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
         self.register_buffer("coord_grid", coord_grid)
 
     def _decode_latent(self, z: torch.Tensor) -> torch.Tensor:
@@ -214,6 +250,72 @@ class VAEWrapper(nn.Module):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# CHECKPOINT SAVE / LOAD
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def save_checkpoint(
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    epoch_reached: int,
+    history: dict[str, list[float]],
+    args: argparse.Namespace,
+    results_dir: str,
+) -> None:
+    """
+    Saves a full training checkpoint (weights, optimizer, epoch, history).
+
+    Args:
+        model:          trained VAEWrapper
+        optimizer:      optimizer at current state
+        epoch_reached:  last fully completed global epoch index
+        history:        per-step loss history dict with keys "elbo", "recon", "kl"
+        args:           parsed CLI args
+        results_dir:    directory to save into
+    Returns:
+        None
+    """
+    path = os.path.join(results_dir, f"{args.run_name}_checkpoint.pt")
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch_reached": epoch_reached,
+            "history": history,
+            # Save arch config so we can sanity-check on resume
+            "args": vars(args),
+        },
+        path,
+    )
+
+
+def load_checkpoint(
+    path: str,
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+) -> tuple[int, dict[str, list[float]]]:
+    """
+    Loads a checkpoint into model and optimizer in-place.
+
+    Args:
+        path:      path to checkpoint .pt file
+        model:     VAEWrapper instance (architecture must match checkpoint)
+        optimizer: optimizer instance
+        device:    device to map tensors onto
+    Returns:
+        (epoch_reached, history) — last completed global epoch and loss history
+    """
+    ckpt = torch.load(path, map_location=device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    epoch_reached = ckpt["epoch_reached"]
+    history = ckpt["history"]
+    print(f"Resumed from checkpoint: {path} (epoch {epoch_reached})")
+    return epoch_reached, history
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # PLOTTING
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -221,26 +323,27 @@ class VAEWrapper(nn.Module):
 def save_training_graph(
     history: dict[str, list[float]],
     steps_per_epoch: int,
-    epochs: int,
+    total_epochs_so_far: int,
     save_path: str,
 ) -> None:
     """
-    Saves a 3-panel training graph (total ELBO, recon loss, KL loss) with
-    per-step lines and epoch-level x-axis ticks.
+    Saves a 3-panel training graph (total ELBO, recon loss, KL loss).
+    X-axis is in global epochs across the full training history.
 
     Args:
-        history:          dict with keys "elbo", "recon", "kl", each a list of per-step values
-        steps_per_epoch:  number of optimizer steps per epoch
-        epochs:           total number of epochs trained
-        save_path:        full file path to save the .png
+        history:              dict with keys "elbo", "recon", "kl", per-step values
+        steps_per_epoch:      optimizer steps per epoch
+        total_epochs_so_far:  total global epochs completed (across all runs)
+        save_path:            full file path to save the .png
+    Returns:
+        None
     """
     total_steps = len(history["elbo"])
 
-    # Sample ~10 evenly spaced ticks regardless of epoch count
     max_ticks = 10
-    step = max(1, epochs // max_ticks)
-    tick_positions = [i * steps_per_epoch for i in range(0, epochs + 1, step)]
-    tick_labels = [str(i) for i in range(0, epochs + 1, step)]
+    step = max(1, total_epochs_so_far // max_ticks)
+    tick_positions = [i * steps_per_epoch for i in range(0, total_epochs_so_far + 1, step)]
+    tick_labels = [str(i) for i in range(0, total_epochs_so_far + 1, step)]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     panels = [
@@ -262,30 +365,29 @@ def save_training_graph(
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     plt.close(fig)
-    print(f"Training graph saved to {save_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MODEL SAVING
+# MODEL SAVING (weights-only export, separate from checkpoint)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def save_model(model: nn.Module, args: argparse.Namespace, results_dir: str) -> None:
     """
-    Saves model weights (state_dict) and config (JSON) to results_dir.
+    Saves final model weights (state_dict) and config (JSON) to results_dir.
 
     Args:
         model:       trained VAEWrapper
         args:        parsed CLI args used to build the model
         results_dir: directory to save into
+    Returns:
+        None
     """
     weights_path = os.path.join(results_dir, f"{args.run_name}_weights.pt")
     config_path = os.path.join(results_dir, f"{args.run_name}_config.json")
 
-    # Weights
     torch.save(model.state_dict(), weights_path)
 
-    # Config — everything needed to reconstruct the model architecture
     config = {
         "run_name": args.run_name,
         "dataset": args.dataset,
@@ -325,7 +427,7 @@ def main() -> None:
     print(f"--- Initialization Process Started: {args.run_name} ---")
 
     # 1. Dataset
-    dataset, data_config = build_dataset(
+    dataset, _, data_config = build_dataset(
         dataset_name=args.dataset,
         data_root="data/",
         subset_frac=args.subset_frac,
@@ -385,24 +487,42 @@ def main() -> None:
     model = VAEWrapper(encoder, decoder, img_size, device).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # KL warm-up: ramp over first kl_warmup_frac of total epochs
-    kl_warmup_epochs = max(1, int(args.kl_warmup_frac * args.epochs))
+    # 3. Resume or fresh start
+    if args.resume:
+        epoch_offset, history = load_checkpoint(args.resume, model, optimizer, device)
+    else:
+        epoch_offset = 0
+        history = {"elbo": [], "recon": [], "kl": []}
 
-    print(f"Training on {device} | {args.epochs} epochs | KL warm-up over {kl_warmup_epochs} epochs")
+    # Total epochs to run in this session; global epoch counter starts after offset
+    # kl_warmup_epochs is relative to the *total* training budget across all runs,
+    # so we use the original kl_warmup_frac applied to the *new* total
+    total_epochs_planned = epoch_offset + args.epochs
+    kl_warmup_epochs = max(1, int(args.kl_warmup_frac * total_epochs_planned))
 
-    # Per-step loss history for the training graph
-    history = {"elbo": [], "recon": [], "kl": []}
+    args.results_dir = os.path.join(args.results_dir, args.run_name)
+    os.makedirs(args.results_dir, exist_ok=True)
 
-    # 3. Training Loop
+    graph_path = os.path.join(args.results_dir, f"{args.run_name}_training_curves.png")
+    os.makedirs(args.results_dir, exist_ok=True)
+
+    print(
+        f"Training on {device} | {args.epochs} new epochs "
+        f"(global {epoch_offset + 1} → {total_epochs_planned}) | "
+        f"KL warm-up over first {kl_warmup_epochs} global epochs"
+    )
+
+    # 4. Training Loop
     for epoch in range(1, args.epochs + 1):
+        global_epoch = epoch_offset + epoch  # epoch index as if training never stopped
         model.train()
 
-        # KL annealing weight — linearly ramps from 0 → lambda_kl_max
-        lambda_kl = args.lambda_kl_max * min(1.0, epoch / kl_warmup_epochs)
+        # KL weight continues on the global schedule
+        lambda_kl = args.lambda_kl_max * min(1.0, global_epoch / kl_warmup_epochs)
 
         running_mse = 0.0
         running_kl = 0.0
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{args.epochs}", unit="batch")
+        progress_bar = tqdm(dataloader, desc=f"Epoch {global_epoch}/{total_epochs_planned}", unit="batch")
 
         for batch in progress_bar:
             x = batch[0].to(device)
@@ -425,7 +545,6 @@ def main() -> None:
                 nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
 
-            # Record per-step values
             history["elbo"].append(total_loss.item())
             history["recon"].append(loss_recon.item())
             history["kl"].append(loss_kl.item())
@@ -444,18 +563,11 @@ def main() -> None:
         epoch_kl = running_kl / len(dataloader)
         print(f"      ↳ [Summary] Avg MSE: {epoch_mse:.5f} | Avg KL: {epoch_kl:.3f} | λ_kl: {lambda_kl:.4f}")
 
-    # 4. Save artefacts
-    os.makedirs(args.results_dir, exist_ok=True)
+        # Save checkpoint + graph after every epoch
+        save_checkpoint(model, optimizer, global_epoch, history, args, args.results_dir)
+        save_training_graph(history, len(dataloader), global_epoch, graph_path)
 
-    # Training graph
-    save_training_graph(
-        history=history,
-        steps_per_epoch=len(dataloader),
-        epochs=args.epochs,
-        save_path=os.path.join(args.results_dir, f"{args.run_name}_training_curves.png"),
-    )
-
-    # Model weights + config
+    # 5. Save final artefacts
     save_model(model, args, args.results_dir)
 
     # Sample grid
