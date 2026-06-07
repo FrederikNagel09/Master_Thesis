@@ -905,13 +905,11 @@ def _build_ndm_temporal_transinr(args, data_config: dict):
     return model
 
 
-## Approach 1:
 def _build_weight_diffusion(args, data_config: dict):
     """
     Build WeightDiffusion:
         TransInrEncoder as W(x) + NDM diffusion in weight space.
     """
-
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
@@ -939,7 +937,6 @@ def _build_weight_diffusion(args, data_config: dict):
             "head_dim": encoder_head_dim,
         },
     }
-
     inr_cfg = {
         "target": "src.models.trans_inr_helpers.SIREN",
         "params": {
@@ -950,7 +947,6 @@ def _build_weight_diffusion(args, data_config: dict):
             "out_bias": 0.5,
         },
     }
-
     transformer_cfg = {
         "target": "src.models.trans_inr_helpers.Transformer",
         "params": {
@@ -962,7 +958,6 @@ def _build_weight_diffusion(args, data_config: dict):
             "ff_dim": encoder_ff_dim,
         },
     }
-
     encoder = TransInrEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
@@ -973,31 +968,52 @@ def _build_weight_diffusion(args, data_config: dict):
         img_size=img_size,
         probablistic=args.probablistic,
     )
-
     weight_dim = encoder.weight_dim
     encoder_params = print_encoder_stats(encoder)
 
-    # ── TransInrNoisePredictor config ─────────────────────────────────────────
-    # Since we are now Encoder-only, we combine the depths or pick the max.
-    # Let's combine them to maintain the total layer count.
+    # ── Noise Predictor ───────────────────────────────────────────────────────
+    noise_predictor_type = getattr(args, "noise_predictor_type", "transinr").lower()
     noise_predictor_depth = getattr(args, "noise_predictor_depth", 4)
+    noise_predictor_dim = getattr(args, "noise_predictor_dim", 256)
+    noise_predictor_n_head = getattr(args, "noise_predictor_n_head", 8)
+    dropout = getattr(args, "dropout", 0.0)
 
-    network = TransInrNoisePredictor(
-        weight_dim=weight_dim,
-        dim=getattr(args, "noise_predictor_dim", 256),
-        depth=noise_predictor_depth,
-        n_head=getattr(args, "noise_predictor_n_head", 8),
-        head_dim=getattr(args, "noise_predictor_head_dim", 32),
-        ff_dim=getattr(args, "noise_predictor_ff_dim", 1024),
-        chunk_size=getattr(args, "noise_predictor_chunk_size", 64),
-        t_embed_dim=getattr(args, "noise_predictor_t_embed", 128),
-        dropout=getattr(args, "dropout", 0.0),
-    )
+    if noise_predictor_type == "transinr":
+        network = TransInrNoisePredictor(
+            weight_dim=weight_dim,
+            dim=noise_predictor_dim,
+            depth=noise_predictor_depth,
+            n_head=noise_predictor_n_head,
+            head_dim=getattr(args, "noise_predictor_head_dim", 32),
+            ff_dim=getattr(args, "noise_predictor_ff_dim", 1024),
+            chunk_size=getattr(args, "noise_predictor_chunk_size", 64),
+            t_embed_dim=getattr(args, "noise_predictor_t_embed", 128),
+            dropout=dropout,
+        )
+    elif noise_predictor_type == "paramdit":
+        # encoder._param_shapes stores (in_dim+1, out_dim); ParamDiT expects (out_dim, in_dim+1)
+        from src.models.param_dit import ParamDiT
+
+        param_shapes = {name: (shape[1], shape[0]) for name, shape in encoder._param_shapes.items()}
+        network = ParamDiT(
+            param_shapes=param_shapes,
+            hidden_dim=noise_predictor_dim,
+            depth=noise_predictor_depth,
+            num_heads=noise_predictor_n_head,
+            mlp_ratio=getattr(args, "noise_predictor_mlp_ratio", 4.0),
+            dropout=dropout,
+            time_dim=getattr(args, "noise_predictor_t_embed", 128),
+            tokenizer=getattr(args, "paramdit_tokenizer", "column"),
+            tokens_per_tensor=getattr(args, "paramdit_tokens_per_tensor", 1),
+            chunk_size=getattr(args, "paramdit_chunk_size", None),
+        )
+    else:
+        raise ValueError(f"Unknown noise_predictor_type '{noise_predictor_type}'. " "Expected one of: transinr, paramdit.")
 
     noise_predictor_params = print_noise_predictor_stats(network)
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
-    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
+    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
 
     # ── Assemble ──────────────────────────────────────────────────────────────
     model = WeightDiffusion(
@@ -1014,15 +1030,14 @@ def _build_weight_diffusion(args, data_config: dict):
         lambda_kl=args.lambda_kl if hasattr(args, "lambda_kl") else 1.0,
     )
 
-    # Final print of total model params (encoder + decoder + predictor)
     total_params = sum(p.numel() for p in model.parameters())
     print("\n########## Total Parameter Summary: ##############")
+    print(f"Noise Predictor Type : {noise_predictor_type.upper()}")
     print("Weight Encoder  : ", f"{encoder_params:,}")
     print("Noise Predictor : ", f"{noise_predictor_params:,}")
     print("----------------------------------------------")
     print(f"TOTAL PARAMETERS  : {total_params:,}")
     print("####################################################\n")
-
     return model
 
 
