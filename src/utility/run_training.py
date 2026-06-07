@@ -48,9 +48,9 @@ from src.utility.plotting import (
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
-    plot_val_elbo_progression,
+    plot_val_elbo_progression,  # noqa: F401
+    plot_weight_profile_progression,  # noqa: F401
     plot_ztrans_histogram,
-    plot_weight_profile_progression,
 )
 from src.utility.training import train
 
@@ -157,7 +157,7 @@ def run_training(
         drop_last=True,
         num_workers=getattr(args, "num_workers", 0),
     )
-    data_loader_val = torch.utils.data.DataLoader(
+    data_loader_val = torch.utils.data.DataLoader(  # noqa: F841
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,

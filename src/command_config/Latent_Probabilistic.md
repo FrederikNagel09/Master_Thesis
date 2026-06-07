@@ -45,14 +45,14 @@ python main.py \
 python main.py \
     --run_name Latent-Diffusion-Probabilistic-TESTING \
     --model latent_inr_diffusion \
-    --dataset mnist \
+    --dataset cifar10 \
     --epochs 5 \
     --batch_size 64 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.1 \
+    --subset_frac 0.02 \
     --normalize False\
     --do_scaling True \
     --do_latent_recon False \
@@ -78,5 +78,5 @@ python main.py \
     --dec_trans_ff_dim 128 \
     --dec_trans_enc_depth 1 \
     --dec_trans_dec_depth 1 \
-    --dec_trans_n_groups 2 \
+    --dec_trans_n_groups 1 \
     --dec_trans_update_strategy scale
