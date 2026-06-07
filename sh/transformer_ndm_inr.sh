@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J Weight-Diffusion-Probabilistic-v2       # Job name
-#BSUB -q gpuv100                          # Queue to submit the job to
-#BSUB -W 1000                             # Wall time limit (6 hours)
+#BSUB -J Latent-Diffusion-Probabilistic-cifar10       # Job name
+#BSUB -q gpua100                          # Queue to submit the job to
+#BSUB -W 1500                             # Wall time limit (6 hours)
 #BSUB -n 8                                 # Request 8 cores
 #BSUB -R "rusage[mem=2GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Weight-Diffusion-Probabilistic-v2.out                        # Standard output redirection
-#BSUB -e src/outputs/Weight-Diffusion-Probabilistic-v2.err                        # Standard error redirection
+#BSUB -o src/outputs/Latent-Diffusion-Probabilistic-cifar10.out                        # Standard output redirection
+#BSUB -e src/outputs/Latent-Diffusion-Probabilistic-cifar10.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,42 +16,41 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name Weight-Diffusion-Probabilistic-v2\
-    --model weight_inr_diffusion\
-    --dataset mnist \
-    --epochs 500 \
+    --run_name Latent-Diffusion-Probabilistic-cifar10 \
+    --model latent_inr_diffusion \
+    --dataset cifar10 \
+    --epochs 780 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 100 \
     --subset_frac 1.0 \
-    --normalize True\
+    --normalize False\
+    --do_scaling True \
+    --do_latent_recon False \
     --probablistic True \
-    --peak_lr 1e-4 \
     --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --sigma_tilde 1.0 \
-    --inr_hidden_dim 42 \
-    --inr_layers 3 \
-    --encoder_trans_dim 128 \
-    --encoder_trans_n_head 8 \
-    --encoder_trans_head_dim 64 \
-    --encoder_trans_ff_dim 1024 \
-    --encoder_trans_enc_depth 3 \
-    --encoder_trans_dec_depth 3 \
-    --encoder_trans_patch_size 4 \
-    --encoder_trans_n_groups 42 \
-    --encoder_trans_update_strategy scale \
-    --predictor_variant transformer \
-    --noise_predictor_dim 128 \
-    --noise_predictor_n_head 8 \
-    --noise_predictor_head_dim 128 \
-    --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 4 \
-    --noise_predictor_dropout 0.1 \
-    --noise_predictor_chunk_size 12 \
-    --noise_predictor_t_embed_dim 256 \
-    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Weight-Diffusion-Probabilistic-v2/weights/weights.pt
+    --beta_T 5e-2 \
+    --inr_hidden_dim 256 \
+    --inr_layers 5 \
+    --latent_dim 64 \
+    --latent_size 12 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 16\
+    --pred_d_model 256 \
+    --pred_n_heads 8 \
+    --pred_n_layers 6 \
+    --pred_d_ff 1024 \
+    --pred_t_embed_dim 256 \
+    --dec_trans_dim 256 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 128 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 4 \
+    --dec_trans_dec_depth 4 \
+    --dec_trans_n_groups 1 \
+    --dec_trans_update_strategy scale \
+    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Latent-Diffusion-Probabilistic-cifar10/weights/weights.pt

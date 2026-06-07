@@ -22,28 +22,28 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae-test-cifar10 \
     --dataset cifar10 \
-    --epochs 5 \
-    --batch_size 64 \
+    --epochs 50 \
+    --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --subset_frac 0.2 \
-    --lambda_kl_max 0.01 \
+    --subset_frac 1.0 \
+    --lambda_kl_max 0.1 \
     --kl_warmup_frac 0.4 \
-    --latent_dim 8 \
-    --latent_size 4 \
+    --latent_dim 64 \
+    --latent_size 12 \
     --latent_patch_size 2 \
-    --latent_enc_hidden_dim 2 \
-    --dec_trans_dim 8 \
-    --dec_trans_n_head 2 \
-    --dec_trans_head_dim 8 \
-    --dec_trans_ff_dim 32 \
-    --dec_trans_enc_depth 1 \
-    --dec_trans_dec_depth 1 \
+    --latent_enc_hidden_dim 16\
+    --dec_trans_dim 256 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 128 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 4 \
+    --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 1 \
     --dec_trans_update_strategy scale \
-    --inr_hidden_dim 16 \
-    --inr_layers 3 
+    --inr_hidden_dim 256 \
+    --inr_layers 5 
     
 
 Resume:
@@ -325,24 +325,23 @@ def save_training_graph(
     steps_per_epoch: int,
     total_epochs_so_far: int,
     save_path: str,
+    plot_every_n: int = 100,
 ) -> None:
     """
     Saves a 3-panel training graph (total ELBO, recon loss, KL loss).
     X-axis is in global epochs across the full training history.
-
     Args:
         history:              dict with keys "elbo", "recon", "kl", per-step values
         steps_per_epoch:      optimizer steps per epoch
         total_epochs_so_far:  total global epochs completed (across all runs)
         save_path:            full file path to save the .png
+        plot_every_n:         plot every nth step to reduce noise and save time
     Returns:
         None
     """
-    total_steps = len(history["elbo"])
-
     max_ticks = 10
     step = max(1, total_epochs_so_far // max_ticks)
-    tick_positions = [i * steps_per_epoch for i in range(0, total_epochs_so_far + 1, step)]
+    tick_positions = [i * steps_per_epoch // plot_every_n for i in range(0, total_epochs_so_far + 1, step)]
     tick_labels = [str(i) for i in range(0, total_epochs_so_far + 1, step)]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
@@ -353,7 +352,8 @@ def save_training_graph(
     ]
 
     for ax, (key, title, color) in zip(axes, panels):  # noqa: B905
-        ax.plot(range(total_steps), history[key], color=color, linewidth=0.8, alpha=0.85)
+        downsampled = history[key][::plot_every_n]
+        ax.plot(range(len(downsampled)), downsampled, color=color, linewidth=0.8, alpha=0.85)
         ax.set_title(title)
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Loss")
