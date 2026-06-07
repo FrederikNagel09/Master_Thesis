@@ -136,6 +136,13 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_predictor_depth", type=int, default=4)
     p.add_argument("--noise_predictor_dropout", type=float, default=0.1)
     p.add_argument("--noise_predictor_chunk_size", type=int, default=128)
+
+    # ── ParamDiT noise predictor args ─────────────────────────────────────────
+    p.add_argument("--noise_predictor_type", type=str, default="transinr", choices=["transinr", "paramdit"])
+    p.add_argument("--paramdit_tokenizer", type=str, default="column", choices=["column", "hyperdiff"])
+    p.add_argument("--paramdit_mlp_ratio", type=float, default=4.0)
+    p.add_argument("--paramdit_tokens_per_tensor", type=int, default=1)
+    p.add_argument("--paramdit_chunk_size", type=int, default=None)
     # ── NDM Latent Diffusion ──────────────────────────────────────────────────────
     p.add_argument("--latent_size", type=int, default=14)
     p.add_argument("--latent_patch_size", type=int, default=2)
