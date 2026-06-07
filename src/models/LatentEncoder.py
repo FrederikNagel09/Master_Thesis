@@ -190,7 +190,7 @@ class ResNetLatentEncoder(nn.Module):
             mu = nn.functional.interpolate(mu, size=self.latent_size, mode="bilinear", align_corners=False)
             logvar = nn.functional.interpolate(logvar, size=self.latent_size, mode="bilinear", align_corners=False)
 
-        logvar = logvar.clamp(min=-12.0, max=4.0)
+        logvar = logvar.clamp(min=-12, max=4.0)
         
         return mu, logvar
 

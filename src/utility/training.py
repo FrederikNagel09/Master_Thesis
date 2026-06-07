@@ -60,6 +60,7 @@ def train(
     data_config: dict | None = None,
     deactivate_progress_bar=False,
     freeze_encoder: float | None = None,
+    two_stage: bool = False,
 ) -> nn.Module:
     """
     Train *model* for *epochs* epochs and return the trained model.
@@ -167,28 +168,24 @@ def train(
         gr, gc = torch.meshgrid(lin, lin, indexing="ij")
         _coords = torch.stack([gr.flatten(), gc.flatten()], dim=-1)  # (img_size^2, 2)
 
-    # ── Freeze Noise Predictor if specified ──────────────────────────────────────────
-    if freeze_encoder is not None:
-        print("[Training] Two-stage mode: freezing noise predictor for first phase.")
-        for param in model.denoiser.parameters():
-            param.requires_grad = False
-
+    # two-stage training control variables (for applicable models)
+    stage2_triggered = False
+    plateau_window = 30      # 30 * 100 steps = 3000 steps
+    plateau_threshold = 0.6 # tune after dry run
     
+    if two_stage:
+        print("[Training] Two-stage mode: freezing denoiser for stage 1.")
+        if model_type == "weight_inr_diffusion":
+            for p in model.denoiser.parameters():
+                p.requires_grad = False
+        elif model_type == "latent_inr_diffusion":
+            for p in model.noise_predictor.parameters():
+                p.requires_grad = False
+
     lambda_kl = model.lambda_kl if hasattr(model, "lambda_kl") else 1.0
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
-        # ── Freeze encoder after threshold ───────────────────────────────────
-        if freeze_encoder is not None:
-            elapsed = epoch - start_epoch
-            if elapsed == int(freeze_encoder * epochs):
-                print(f"############### EPOCH: {epoch} - FREEZING ENCODER ###############")
-                print(f"[Epoch {epoch}] Freezing weight encoder and scaler. Unfreezing noise predictor.")
-                for param in model.weight_encoder.parameters():
-                    param.requires_grad = False
-                for param in model.denoiser.parameters():
-                    param.requires_grad = True
-                print("##################################################################\n")
 
         if GLOBAL_DEBUG_BOOL:
             print(f"\n############## EPOCH: {epoch} ##############\n")
@@ -265,6 +262,33 @@ def train(
                 history["lr"].append(current_lr)
                 running = dict.fromkeys(running, 0.0)
                 running_count = 0
+
+                # Two-stage: check for rec loss plateau → switch to stage 2
+                if two_stage and not stage2_triggered and len(history["rec"]) >= plateau_window:
+                    window = history["rec"][-plateau_window:]
+                    if (max(window) - min(window)) < plateau_threshold:
+                        stage2_triggered = True
+                        print(f"[Step {global_step}] Rec plateaued — switching to stage 2.")
+                        if model_type == "weight_inr_diffusion":
+                            for p in model.weight_encoder.parameters(): p.requires_grad = False
+                            for p in model.denoiser.parameters(): p.requires_grad = True
+                        elif model_type == "latent_inr_diffusion":
+                            for p in model.latent_encoder.parameters(): p.requires_grad = False
+                            for p in model.decoder.parameters(): p.requires_grad = False
+                            for p in model.noise_predictor.parameters(): p.requires_grad = True
+                        remaining_steps = total_steps - global_step
+                        optimizer = torch.optim.Adam(
+                            model.denoiser.parameters(), lr=lr, weight_decay=weight_decay
+                        )
+                        if use_scheduler:
+                            scheduler = _build_scheduler(
+                                optimizer,
+                                warmup_steps=0.1 * remaining_steps,
+                                total_steps=remaining_steps,
+                                peak_lr=_peak_lr,
+                            )
+
+
 
             # ── Sampling checkpoints ─────────────────────────────────────────
             if sample_fn is not None and global_step in _sample_steps:

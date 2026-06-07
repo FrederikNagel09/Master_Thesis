@@ -1,13 +1,13 @@
 python main.py \
-    --run_name Latent-Diffusion-Deterministic \
+    --run_name Latent-Diffusion-Deterministic-v5 \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 100 \
+    --epochs 10 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 50 \
+    --log_every_n_steps 100 \
     --subset_frac 1.0 \
     --normalize False\
     --do_scaling True \
@@ -16,13 +16,13 @@ python main.py \
     --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
-    --beta_T 2e-2 \
+    --beta_T 5e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 3 \
     --latent_dim 32 \
     --latent_size 8 \
     --latent_patch_size 2 \
-    --latent_enc_hidden_dim 12\
+    --latent_enc_hidden_dim 15\
     --pred_d_model 128 \
     --pred_n_heads 8 \
     --pred_n_layers 4 \

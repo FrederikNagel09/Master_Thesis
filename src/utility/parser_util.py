@@ -23,6 +23,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--dataset", type=str, default="mnist", help="'mnist' | 'cifar10' | 'celeba'")
     p.add_argument("--device", type=str, default="cuda")
+    p.add_argument("--two_stage", type=lambda x: x.lower() == "true", default=False)
 
     # ── Data ──────────────────────────────────────────────────────────────────
     p.add_argument("--data_root", type=str, default="data/")

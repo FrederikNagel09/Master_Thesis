@@ -33,38 +33,50 @@ from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 if TYPE_CHECKING:
     import numpy as np
 
-
 class WeightScaler(nn.Module):
-    def __init__(self, dim, momentum=0.1):
+    def __init__(self, layer_sizes: list[int], momentum: float = 0.1):
+        """
+        EMA-based per-layer normalizer for flattened INR weight vectors.
+        Args:
+            layer_sizes: list of flattened sizes for each INR layer, e.g. [126, 1806, 43]
+            momentum:    EMA update rate
+        Returns: None
+        """
         super().__init__()
-        self.dim = dim
+        self.layer_sizes = layer_sizes
         self.momentum = momentum
-        # Track a single global scalar instead of a per-dimension vector
-        self.register_buffer("running_std", torch.ones(1))
+        n = len(layer_sizes)
+        self.register_buffer("running_mean", torch.zeros(n))
+        self.register_buffer("running_std",  torch.ones(n))
 
     def forward(self, x: torch.Tensor, reverse: bool = False, training: bool = True) -> torch.Tensor:
         """
-        Scales weight vectors globally so total std ≈ 1, preserving the relative
-        magnitude and internal structural proportions of the weights.
-
+        Normalize or denormalize a flattened INR weight vector per layer.
         Args:
-            x:        (batch_size, dim) weight vectors
-            reverse:  False = normalize (divide), True = denormalize (multiply)
-            training: If True, updates running_std via EMA before scaling
+            x:        (B, sum(layer_sizes)) flattened weight vectors
+            reverse:  False = normalize, True = denormalize
+            training: if True, updates EMA stats
         Returns:
-            (batch_size, dim) scaled or unscaled weight vectors
+            x_scaled: (B, sum(layer_sizes))
         """
-        if not reverse:
-            if training:
-                # Calculate standard deviation over ALL elements in the batch simultaneously
-                batch_std = x.std().clamp(min=1e-5)
-                with torch.no_grad():
-                    self.running_std = (1 - self.momentum) * self.running_std + self.momentum * batch_std
-            # Broadcasts smoothly: (batch_size, dim) / (1,)
-            return x / self.running_std
-        else:
-            # Broadcasts smoothly: (batch_size, dim) * (1,)
-            return x * self.running_std
+        chunks = x.split(self.layer_sizes, dim=1)  # list of (B, layer_size)
+        out = []
+
+        for i, chunk in enumerate(chunks):
+            if not reverse:
+                if training:
+                    mean = chunk.mean()
+                    std  = chunk.std().clamp(min=1e-5)
+                    with torch.no_grad():
+                        self.running_mean[i] = (1 - self.momentum) * self.running_mean[i] + self.momentum * mean
+                        self.running_std[i]  = (1 - self.momentum) * self.running_std[i]  + self.momentum * std
+                    out.append((chunk - mean) / std)
+                else:
+                    out.append((chunk - self.running_mean[i]) / self.running_std[i])
+            else:
+                out.append(chunk * self.running_std[i] + self.running_mean[i])
+
+        return torch.cat(out, dim=1)
 
 
 class WeightDiffusion(nn.Module):
@@ -116,11 +128,7 @@ class WeightDiffusion(nn.Module):
         self.probablistic = probablistic
 
         if self.normalize:
-            self.scaler = WeightScaler(WeightEncoder.weight_dim)
-            print(
-                f"running_std: mean={self.scaler.running_std.mean():.6f}, std={self.scaler.running_std.std():.6f}, ",
-                f"min={self.scaler.running_std.min():.6f}, max={self.scaler.running_std.max():.6f}",
-            )
+            self.scaler = WeightScaler(layer_sizes=[126, 1806, 43])
 
         self.lambda_kl = lambda_kl
 
@@ -277,7 +285,7 @@ class WeightDiffusion(nn.Module):
                 print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
         self.i += 1
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_prime = theta_prime.detach()
+        theta_prime = theta_prime
 
         theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
 
@@ -294,7 +302,7 @@ class WeightDiffusion(nn.Module):
 
         if self.probablistic:
             l_prior = self._l_entropy(logvar)
-            elbo = (self.T - 1) * l_diff + l_rec + lambda_kl * l_prior
+            elbo = (self.T - 1)*l_diff + l_rec + lambda_kl * l_prior
         else:
             l_prior = torch.zeros_like(l_diff)
             elbo = (self.T - 1) * l_diff + l_rec
@@ -493,8 +501,11 @@ class WeightDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        D = logvar[0].numel()  # noqa: F841, N806
-        return 0.5 * (logvar.mean(dim=-1) + (1 + math.log(2 * math.pi)))
+        # Use .mean(dim=-1) to average across all latent dimensions cleanly.
+        # Invert the sign to negative so that minimizing this term maximizes true entropy.
+        neg_entropy_per_dim = -0.5 * (logvar.mean(dim=-1) + (1.0 + math.log(2.0 * math.pi)))
+        
+        return neg_entropy_per_dim  # Returns shape (B,)
 
     # -------------------------------------------------------------------------
     # Sampling Helpers:

@@ -50,6 +50,7 @@ from src.utility.plotting import (
     plot_training,
     plot_val_elbo_progression,
     plot_ztrans_histogram,
+    plot_weight_profile_progression,
 )
 from src.utility.training import train
 
@@ -360,6 +361,7 @@ def run_training(
         data_config=data_config,
         deactivate_progress_bar=args.deactivate_progress_bar,
         freeze_encoder=args.freeze_encoder if hasattr(args, "freeze_encoder") else None,
+        two_stage=args.two_stage if hasattr(args, "two_stage") else False,
     )
 
     print("\n  Training complete...")

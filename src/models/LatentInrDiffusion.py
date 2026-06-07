@@ -243,7 +243,7 @@ class LatentDiffusion(nn.Module):
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         ######### Apply noise ##########
-        z_t, epsilon = self._forward_process(z.detach(), t_idx)
+        z_t, epsilon = self._forward_process(z, t_idx)
 
         ######### Compute diffusion loss terms ##########
         if self._do_latent_recon:
@@ -268,7 +268,7 @@ class LatentDiffusion(nn.Module):
         l_rec = self._l_rec(x, z_raw)
 
         if self.__do_scaling:
-            total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
+            total = (l_diff + l_latent_rec) + lambda_kl *l_entropy + l_rec
         else:
             total = l_diff + l_latent_rec + lambda_kl * l_entropy + l_rec
 
@@ -500,8 +500,9 @@ class LatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        D = logvar[0].numel()
-        return 0.5 * (logvar.mean(dim=(-3, -2, -1)) + (1 + math.log(2 * math.pi)))
+        neg_entropy_per_dim = -0.5 * (logvar.mean(dim=(-3, -2, -1)) + (1.0 + math.log(2.0 * math.pi)))
+
+        return neg_entropy_per_dim
 
     def _l_rec(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """

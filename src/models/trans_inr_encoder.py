@@ -169,7 +169,7 @@ class TransInrEncoder(nn.Module):
             nn.Linear(dim, self._logvar_dim),
         )
         nn.init.zeros_(self.logvar_mlp[2].weight)
-        nn.init.constant_(self.logvar_mlp[2].bias, -10.0)
+        nn.init.constant_(self.logvar_mlp[2].bias, -12.0)
 
     @property
     def weight_dim(self) -> int:

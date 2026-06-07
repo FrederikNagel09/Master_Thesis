@@ -1446,13 +1446,14 @@ def plot_weight_profile_progression(
         elif hasattr(model, "W") and hasattr(model.W, "inflate"):
             weights = model.weight_encoder(x.view(1, channels, img_size, img_size))
         else:
-            weights = model.weight_encoder(x)
-        weights_raw_np = weights.detach().cpu().numpy().flatten()
+            mean, logvar = model.weight_encoder(x)
+            weights_raw_np = model.weight_encoder._reparameterize(mean, logvar)
+        weights_raw_np = weights_raw_np
         if model.normalize:
-            weights_norm = model.scaler(weights, reverse=False, training=False)
+            weights_norm = model.scaler(weights_raw_np, reverse=False, training=False)
             weights_np = weights_norm.detach().cpu().numpy().flatten()
         else:
-            weights_np = weights_raw_np
+            weights_np = weights_raw_np.detach().cpu().numpy().flatten()
     model.train()
 
     # ── 2. Persist ────────────────────────────────────────────────────────────
@@ -1695,6 +1696,8 @@ def plot_forward_trajectory_progression(
     forward noising trajectory progression figure, saved to <run_dir>/<filename>.png.
     Always renders 5 rows x 5 columns — empty rows shown as blank until filled.
     T-values match the reverse process: {T-1, 3T//4, T//2, T//4, 0}.
+    Histograms are pre-computed and stored as bin counts/edges in JSON,
+    avoiding large .npy files.
     Args:
         model:       Model with weight_encoder, sqrt_alpha_cumprod, sigma buffers.
         batch:       (images, labels) tuple.
@@ -1703,6 +1706,8 @@ def plot_forward_trajectory_progression(
         device:      Device string.
         data_config: Dict with 'channels' and 'img_size' keys.
         filename:    Base filename for outputs.
+        model_name:  Model variant name string.
+        normalize:   Whether to apply scaler normalization.
     Returns: None
     """
     import json
@@ -1711,10 +1716,10 @@ def plot_forward_trajectory_progression(
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
 
+    N_BINS = 80
     N_ROWS_TOTAL = 5  # noqa: N806
     channels, img_size = data_config["channels"], data_config["img_size"]
 
-    # T-values match the reverse process snapshot points
     T_values_sorted = sorted(  # noqa: N806
         [model.T - 1, 3 * model.T // 4, model.T // 2, model.T // 4, 0],
         reverse=True,
@@ -1723,53 +1728,41 @@ def plot_forward_trajectory_progression(
     # ── 1. Encode batch to weights ────────────────────────────────────────────
     x = batch[0].to(device)
     model.eval()
+
     if model_name in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
         if x.dim() == 2:
             channels = x.shape[1] // (model.img_size * model.img_size)
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)
-        # encode latents
         mu, logvar = model.latent_encoder(x)
-        if model._probabilistic:
-            z = model.latent_encoder.reparameterize(mu, logvar)
-        else:
-            z = mu
-
+        z = model.latent_encoder.reparameterize(mu, logvar) if model._probabilistic else mu
         if normalize:
             z = model._normalize_z(z)
-
-        new_row_data = []
+        raw_arrays = []
         for t in T_values_sorted:
             if t == 0:
-                # t=0 is the raw weight vector, no noise added
                 theta_t = z
             else:
-                alpha_t = model.sqrt_alpha_cumprod[t]
-                sigma_t = model.sigma[t]
                 epsilon = torch.randn_like(z)
-                theta_t = alpha_t * z + sigma_t * epsilon
-            new_row_data.append(theta_t.detach().cpu().numpy().flatten())
+                theta_t = model.sqrt_alpha_cumprod[t] * z + model.sigma[t] * epsilon
+            raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
+
     elif model_name == "weight_inr_diffusion":
-        # encode latents
         if model.probablistic:
             mean, logvar = model.weight_encoder(x)
             theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
         else:
             theta_prime_raw = model.weight_encoder(x)
-
         if normalize:
             theta_prime_raw = model.scaler(theta_prime_raw, reverse=False)
-
-        new_row_data = []
+        raw_arrays = []
         for t in T_values_sorted:
             if t == 0:
-                # t=0 is the raw weight vector, no noise added
                 theta_t = theta_prime_raw
             else:
-                alpha_t = model.sqrt_alpha_cumprod[t]
-                sigma_t = model.sigma[t]
                 epsilon = torch.randn_like(theta_prime_raw)
-                theta_t = alpha_t * theta_prime_raw + sigma_t * epsilon
-            new_row_data.append(theta_t.detach().cpu().numpy().flatten())
+                theta_t = model.sqrt_alpha_cumprod[t] * theta_prime_raw + model.sigma[t] * epsilon
+            raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
+
     else:
         with torch.no_grad():
             if hasattr(model, "F_phi"):
@@ -1780,46 +1773,54 @@ def plot_forward_trajectory_progression(
                 weights = model.weight_encoder(x_spatial)
             else:
                 weights = model.weight_encoder(x)
-
             if model.normalize:
                 print("\n####################################")
                 print("##########Applying Scaler Normalization##########")
                 print("####################################")
                 weights = model.scaler(weights, reverse=False, training=False)
                 print("weights stats after scaler:", weights.mean(), weights.std())
-
-            # ── 2. Apply forward noising at each t-value ──────────────────────────
-            new_row_data = []
+            raw_arrays = []
             for t in T_values_sorted:
                 if t == 0:
-                    # t=0 is the raw weight vector, no noise added
                     theta_t = weights
                 else:
-                    alpha_t = model.sqrt_alpha_cumprod[t]
-                    sigma_t = model.sigma[t]
                     epsilon = torch.randn_like(weights)
-                    theta_t = alpha_t * weights + sigma_t * epsilon
-                new_row_data.append(theta_t.detach().cpu().numpy().flatten())
+                    theta_t = model.sqrt_alpha_cumprod[t] * weights + model.sigma[t] * epsilon
+                raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
 
     model.train()
 
-    # ── 3. Persist data ───────────────────────────────────────────────────────
-    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
-    data_path = os.path.join(metadata_dir, f"{filename}_data.npy")
+    # ── 2. Pre-compute histograms — store counts/edges instead of raw arrays ──
+    new_row_data = []
+    for flat_arr in raw_arrays:
+        counts, edges = np.histogram(flat_arr, bins=N_BINS, density=True)
+        new_row_data.append({
+            "counts": counts.tolist(),
+            "edges": edges.tolist(),
+            "mu": float(np.mean(flat_arr)),
+            "std": float(np.std(flat_arr)),
+        })
 
-    if os.path.exists(meta_path) and os.path.exists(data_path):
+    # ── 3. Persist data (single JSON, no .npy) ───────────────────────────────
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+
+    if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
-        all_rows = list(np.load(data_path, allow_pickle=True))
-        all_rows.append(new_row_data)
-        all_epochs = meta["epochs"] + [epoch]
+        meta["rows"].append(new_row_data)
+        meta["epochs"].append(epoch)
     else:
-        all_rows = [new_row_data]
-        all_epochs = [epoch]
+        meta = {
+            "epochs": [epoch],
+            "t_keys": T_values_sorted,
+            "rows": [new_row_data],
+        }
 
-    np.save(data_path, np.array(all_rows, dtype=object))
     with open(meta_path, "w") as f:
-        json.dump({"epochs": all_epochs, "t_keys": T_values_sorted}, f)
+        json.dump(meta, f)
+
+    all_rows = meta["rows"]
+    all_epochs = meta["epochs"]
 
     # ── 4. Pad to N_ROWS_TOTAL ────────────────────────────────────────────────
     padded_rows = all_rows + [None] * (N_ROWS_TOTAL - len(all_rows))
@@ -1837,7 +1838,6 @@ def plot_forward_trajectory_progression(
 
     fig_w = label_width + n_cols * col_width + (n_cols - 1) * col_gap
     fig_h = title_pad + header_pad + N_ROWS_TOTAL * row_height + (N_ROWS_TOTAL - 1) * row_gap
-
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
@@ -1846,34 +1846,42 @@ def plot_forward_trajectory_progression(
         cx = (label_width + c * (col_width + col_gap) + col_width * 0.5) / fig_w
         cy = 1.0 - (title_pad / fig_h) - (header_pad * 0.6 / fig_h)
         label = f"t = {t_val}" if t_val > 0 else "t = 0 (raw)"
-        fig.text(cx, cy, label, ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
+        fig.text(cx, cy, label, ha="center", va="center", fontsize=8,
+                 color="#555555", fontweight="bold")
 
     for r, (row_data, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
-        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (row_height / fig_h) - r * (row_gap / fig_h)
-
+        row_bottom = (
+            1.0
+            - (title_pad / fig_h)
+            - (header_pad / fig_h)
+            - (r + 1) * (row_height / fig_h)
+            - r * (row_gap / fig_h)
+        )
         for c in range(n_cols):
             left = (label_width + c * (col_width + col_gap)) / fig_w
             ax = fig.add_axes([left, row_bottom, col_width / fig_w, row_height / fig_h])
 
             if row_data is not None:
-                w = row_data[c]
-                mu_val, std_val = np.mean(w), np.std(w)
-                ax.hist(w, bins=80, color="#E2844A", alpha=0.75, density=True)
+                hist = row_data[c]
+                counts = np.array(hist["counts"])
+                edges = np.array(hist["edges"])
+                mu_val, std_val = hist["mu"], hist["std"]
 
-                # Reference N(0,1) on all columns except t=0 (raw weights)
+                # Reconstruct bar plot from pre-computed histogram
+                ax.bar(edges[:-1], counts, width=np.diff(edges), align="edge",
+                       color="#E2844A", alpha=0.75)
+
                 if T_values_sorted[c] > 0:
-                    xs = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 300)
+                    xs = np.linspace(edges[0], edges[-1], 300)
                     gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
-                    ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--", label="N(0,1)")
+                    ax.plot(xs, gaussian, color="#333333", linewidth=1.0,
+                            linestyle="--", label="N(0,1)")
 
                 ax.text(
-                    0.97,
-                    0.93,
+                    0.97, 0.93,
                     f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
                     transform=ax.transAxes,
-                    ha="right",
-                    va="top",
-                    fontsize=7,
+                    ha="right", va="top", fontsize=7,
                     bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
                 )
 
@@ -1886,18 +1894,14 @@ def plot_forward_trajectory_progression(
             (label_width * 0.5) / fig_w,
             row_bottom + (row_height * 0.5) / fig_h,
             f"ep {ep}",
-            ha="center",
-            va="center",
-            fontsize=8,
-            color="#333333",
+            ha="center", va="center", fontsize=8, color="#333333",
         )
 
-    fig.suptitle("Forward Noising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
-
+    fig.suptitle("Forward Noising Trajectory — Weight Distributions",
+                 fontsize=11, fontweight="bold", y=0.99)
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-
 
 # =============================================================================
 # Plotting for FID table (per-model sample quality metrics)
