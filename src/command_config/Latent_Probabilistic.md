@@ -8,7 +8,7 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 100 \
-    --subset_frac 1.0 \
+    --subset_frac 0.1 \
     --normalize False\
     --do_scaling True \
     --do_latent_recon False \
@@ -45,14 +45,14 @@ python main.py \
 python main.py \
     --run_name Latent-Diffusion-Probabilistic-TESTING \
     --model latent_inr_diffusion \
-    --dataset cifar10 \
+    --dataset mnist \
     --epochs 5 \
     --batch_size 64 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 50 \
-    --subset_frac 0.02 \
+    --subset_frac 0.01 \
     --normalize False\
     --do_scaling True \
     --do_latent_recon False \

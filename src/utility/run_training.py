@@ -42,6 +42,7 @@ from src.utility.general import (
 )
 from src.utility.model_builders import build_model
 from src.utility.plotting import (
+    plot_final_samples,
     plot_forward_trajectory_progression,
     plot_fphi_progression,
     plot_reconstruction_diffusion_progression,  # noqa: F401
@@ -366,7 +367,7 @@ def run_training(
 
     print("\n  Training complete...")
     print("  Generating final sample grid …")
-    # plot_final_samples(model, args.model, end_epoch, run_dir, device, data_config)
+    plot_final_samples(model, args.model, end_epoch, run_dir, device, data_config)
     print("Final sample grid saved to training directory.")
 
     # ── 5. Save ───────────────────────────────────────────────────────────────

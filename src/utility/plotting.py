@@ -250,35 +250,93 @@ def plot_final_samples(
     device: str,
     data_config: dict,
     n_samples: int = 64,
+    n_fid_samples: int = 128,
 ) -> None:
     """
-    Sample an 8x8 grid from the model and save to
-    <run_dir>/final_samples_ep{epoch}.png.
+    Sample an 8x8 grid from the model, compute MNIST + Inception FID scores,
+    and save to <run_dir>/final_samples_ep{epoch}.png.
 
-    Parameters
-    ----------
-    model       : Trained model, already on device.
-    model_type  : One of "ndm", "inr_vae", "ndm_inr", "ndm_temporal_transinr".
-    epoch       : Current epoch number, used in the filename.
-    run_dir     : Run results directory (src/train_results/{run_name}).
-    device      : Device string.
-    data_config : Dict with "channels", "img_size", "data_dim".
-    n_samples   : Total samples; displayed as sqrt x sqrt grid.
+    Args:
+        model:          Trained model, already on device.
+        model_type:     One of "ndm", "inr_vae", "ndm_inr", "ndm_temporal_transinr", etc.
+        epoch:          Current epoch number, used in the filename.
+        run_dir:        Run results directory (src/train_results/{run_name}).
+        device:         Device string.
+        data_config:    Dict with "channels", "img_size", "data_dim", "dataset".
+        n_samples:      Total grid samples; displayed as sqrt x sqrt grid.
+        n_fid_samples:  Number of samples used for FID computation.
+    Returns:
+        None
     """
+    import torch
+
+    from src.utility.classifier_utils import (
+        _get_inception,
+        _inception_features,
+        _load_classifier,
+        _load_or_compute_real_features,
+        _mnist_features,
+    )
+    from src.utility.metrics_util import _fid
+
     os.makedirs(run_dir, exist_ok=True)
 
-    n_side = int(np.sqrt(n_samples))
+    dataset = data_config.get("dataset", "mnist").lower()
     channels = data_config["channels"]
-    samples = _model_to_grid(model, model_type, n_side * n_side, device, data_config)
+    img_size = data_config["img_size"]  # noqa: F841
+    is_mnist = dataset == "mnist"
 
-    fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5))
-    fig.suptitle(f"Final samples — epoch {epoch}", fontsize=11)
+    # ── Grid samples (for display) ────────────────────────────────────────────
+    n_side = int(np.sqrt(n_samples))
+    grid, _ = _model_to_grid(model, model_type, n_side * n_side, device, data_config)
+
+    # ── FID samples ───────────────────────────────────────────────────────────
+    print(f"  Computing FID ({n_fid_samples} samples) …")
+    fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config)
+
+    # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1] for feature extractors
+    if channels == 1:
+        # grid is (N, H, W) → (N, 1, H, W)
+        fid_tensor = torch.from_numpy(fid_grid).unsqueeze(1).float()
+    else:
+        # grid is (N, H, W, C) → (N, C, H, W)
+        fid_tensor = torch.from_numpy(fid_grid).permute(0, 3, 1, 2).float()
+
+    inception = _get_inception(device)
+
+    if is_mnist:
+        classifier = _load_classifier(device)
+        real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(classifier, inception, device)
+        gen_mnist_feats, _ = _mnist_features(fid_tensor, classifier, device)
+        mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
+    else:
+        # CIFAR-10: skip MNIST FID, only compute Inception FID
+        # Real inception features must be computed separately for CIFAR-10;
+        # reuse _inception_features on a CIFAR-10 real batch if needed.
+        # For now load cached or raise a clear error.
+        raise NotImplementedError(
+            "CIFAR-10 real Inception features cache not yet wired into plot_final_samples. "
+            "Add a CIFAR-10 equivalent of _load_or_compute_real_features."
+        )
+
+    gen_inception_feats = _inception_features(fid_tensor, inception, device)
+    inception_fid = _fid(real_inception_feats, gen_inception_feats)
+
+    # ── Build figure ──────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5 + 0.6))
+
+    # Main title + FID subtitle via suptitle + text
+    fig.suptitle(f"Final samples — epoch {epoch}", fontsize=12, y=1.01)
+
+    fid_str = f"MNIST FID: {mnist_fid:.2f}    Inception FID: {inception_fid:.2f}" if is_mnist else f"Inception FID: {inception_fid:.2f}"
+
+    fig.text(0.5, 0.995, fid_str, ha="center", va="top", fontsize=9, color="#444444")
 
     for i, ax in enumerate(axes.flatten()):
         if channels == 1:
-            ax.imshow(samples[i], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.imshow(grid[i], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
         else:
-            ax.imshow(samples[i], vmin=0, vmax=1, interpolation="nearest")
+            ax.imshow(grid[i], vmin=0, vmax=1, interpolation="nearest")
         ax.axis("off")
 
     plt.subplots_adjust(hspace=0.02, wspace=0.02)
@@ -882,7 +940,7 @@ def plot_reconstruction_progression(
                 channels = x.shape[1] // (model.img_size * model.img_size)
                 x = x.view(x.shape[0], channels, model.img_size, model.img_size)
             mu, logvar = model.latent_encoder(x)
-            if model._probabilistic:
+            if model._probabilistic:  # noqa: SIM108
                 z = model.latent_encoder.reparameterize(mu, logvar)
             else:
                 z = mu  # deterministic case uses mean directly
@@ -1444,7 +1502,7 @@ def plot_weight_profile_progression(
         if hasattr(model, "F_phi"):
             weights = model.F_phi(x, torch.zeros(1, 1, device=device))
         elif hasattr(model, "W") and hasattr(model.W, "inflate"):
-            weights = model.weight_encoder(x.view(1, channels, img_size, img_size))
+            weights = model.weight_encoder(x.view(1, channels, img_size, img_size))  # noqa: F841
         else:
             mean, logvar = model.weight_encoder(x)
             weights_raw_np = model.weight_encoder._reparameterize(mean, logvar)
@@ -1716,7 +1774,7 @@ def plot_forward_trajectory_progression(
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
 
-    N_BINS = 80
+    N_BINS = 80  # noqa: N806
     N_ROWS_TOTAL = 5  # noqa: N806
     channels, img_size = data_config["channels"], data_config["img_size"]
 
@@ -1794,12 +1852,14 @@ def plot_forward_trajectory_progression(
     new_row_data = []
     for flat_arr in raw_arrays:
         counts, edges = np.histogram(flat_arr, bins=N_BINS, density=True)
-        new_row_data.append({
-            "counts": counts.tolist(),
-            "edges": edges.tolist(),
-            "mu": float(np.mean(flat_arr)),
-            "std": float(np.std(flat_arr)),
-        })
+        new_row_data.append(
+            {
+                "counts": counts.tolist(),
+                "edges": edges.tolist(),
+                "mu": float(np.mean(flat_arr)),
+                "std": float(np.std(flat_arr)),
+            }
+        )
 
     # ── 3. Persist data (single JSON, no .npy) ───────────────────────────────
     meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
@@ -1846,17 +1906,10 @@ def plot_forward_trajectory_progression(
         cx = (label_width + c * (col_width + col_gap) + col_width * 0.5) / fig_w
         cy = 1.0 - (title_pad / fig_h) - (header_pad * 0.6 / fig_h)
         label = f"t = {t_val}" if t_val > 0 else "t = 0 (raw)"
-        fig.text(cx, cy, label, ha="center", va="center", fontsize=8,
-                 color="#555555", fontweight="bold")
+        fig.text(cx, cy, label, ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
 
     for r, (row_data, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
-        row_bottom = (
-            1.0
-            - (title_pad / fig_h)
-            - (header_pad / fig_h)
-            - (r + 1) * (row_height / fig_h)
-            - r * (row_gap / fig_h)
-        )
+        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (row_height / fig_h) - r * (row_gap / fig_h)
         for c in range(n_cols):
             left = (label_width + c * (col_width + col_gap)) / fig_w
             ax = fig.add_axes([left, row_bottom, col_width / fig_w, row_height / fig_h])
@@ -1868,20 +1921,21 @@ def plot_forward_trajectory_progression(
                 mu_val, std_val = hist["mu"], hist["std"]
 
                 # Reconstruct bar plot from pre-computed histogram
-                ax.bar(edges[:-1], counts, width=np.diff(edges), align="edge",
-                       color="#E2844A", alpha=0.75)
+                ax.bar(edges[:-1], counts, width=np.diff(edges), align="edge", color="#E2844A", alpha=0.75)
 
                 if T_values_sorted[c] > 0:
                     xs = np.linspace(edges[0], edges[-1], 300)
                     gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
-                    ax.plot(xs, gaussian, color="#333333", linewidth=1.0,
-                            linestyle="--", label="N(0,1)")
+                    ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--", label="N(0,1)")
 
                 ax.text(
-                    0.97, 0.93,
+                    0.97,
+                    0.93,
                     f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
                     transform=ax.transAxes,
-                    ha="right", va="top", fontsize=7,
+                    ha="right",
+                    va="top",
+                    fontsize=7,
                     bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
                 )
 
@@ -1894,14 +1948,17 @@ def plot_forward_trajectory_progression(
             (label_width * 0.5) / fig_w,
             row_bottom + (row_height * 0.5) / fig_h,
             f"ep {ep}",
-            ha="center", va="center", fontsize=8, color="#333333",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#333333",
         )
 
-    fig.suptitle("Forward Noising Trajectory — Weight Distributions",
-                 fontsize=11, fontweight="bold", y=0.99)
+    fig.suptitle("Forward Noising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
+
 
 # =============================================================================
 # Plotting for FID table (per-model sample quality metrics)
