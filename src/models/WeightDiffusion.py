@@ -128,7 +128,7 @@ class WeightDiffusion(nn.Module):
         self.probablistic = probablistic
 
         if self.normalize:
-            self.scaler = WeightScaler(layer_sizes=[126, 1806, 43])
+            self.scaler = WeightScaler(layer_sizes=[75, 650, 650, 26])
 
         self.lambda_kl = lambda_kl
 
@@ -285,7 +285,7 @@ class WeightDiffusion(nn.Module):
                 print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
         self.i += 1
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_prime = theta_prime
+        theta_prime = theta_prime.detach()  
 
         theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
 
@@ -503,7 +503,7 @@ class WeightDiffusion(nn.Module):
         """
         # Use .mean(dim=-1) to average across all latent dimensions cleanly.
         # Invert the sign to negative so that minimizing this term maximizes true entropy.
-        neg_entropy_per_dim = -0.5 * (logvar.mean(dim=-1) + (1.0 + math.log(2.0 * math.pi)))
+        neg_entropy_per_dim = 0.5 * (logvar.mean(dim=-1) + (1.0 + math.log(2.0 * math.pi)))
         
         return neg_entropy_per_dim  # Returns shape (B,)
 

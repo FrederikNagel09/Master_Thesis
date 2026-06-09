@@ -169,7 +169,7 @@ class TransInrEncoder(nn.Module):
             nn.Linear(dim, self._logvar_dim),
         )
         nn.init.zeros_(self.logvar_mlp[2].weight)
-        nn.init.constant_(self.logvar_mlp[2].bias, -12.0)
+        nn.init.constant_(self.logvar_mlp[2].bias, -4.0)
 
     @property
     def weight_dim(self) -> int:
@@ -281,7 +281,7 @@ class TransInrEncoder(nn.Module):
         # Re-flatten
         logvar = torch.cat(parts, dim=1)  # Now it's back to (B, weight_dim)
 
-        logvar = logvar.clamp(-12.0, 4.0)
+        logvar = logvar.clamp(-4.0, 4.0)
 
         return mu, logvar
 

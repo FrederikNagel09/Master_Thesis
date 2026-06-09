@@ -243,7 +243,7 @@ class LatentDiffusion(nn.Module):
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         ######### Apply noise ##########
-        z_t, epsilon = self._forward_process(z, t_idx)
+        z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
         ######### Compute diffusion loss terms ##########
         if self._do_latent_recon:

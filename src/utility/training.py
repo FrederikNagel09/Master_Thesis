@@ -272,14 +272,18 @@ def train(
                         if model_type == "weight_inr_diffusion":
                             for p in model.weight_encoder.parameters(): p.requires_grad = False
                             for p in model.denoiser.parameters(): p.requires_grad = True
+                            remaining_steps = total_steps - global_step
+                            optimizer = torch.optim.Adam(
+                                model.denoiser.parameters(), lr=lr, weight_decay=weight_decay
+                            )
                         elif model_type == "latent_inr_diffusion":
                             for p in model.latent_encoder.parameters(): p.requires_grad = False
                             for p in model.decoder.parameters(): p.requires_grad = False
                             for p in model.noise_predictor.parameters(): p.requires_grad = True
-                        remaining_steps = total_steps - global_step
-                        optimizer = torch.optim.Adam(
-                            model.denoiser.parameters(), lr=lr, weight_decay=weight_decay
-                        )
+                            remaining_steps = total_steps - global_step
+                            optimizer = torch.optim.Adam(
+                                model.noise_predictor.parameters(), lr=lr, weight_decay=weight_decay
+                            )
                         if use_scheduler:
                             scheduler = _build_scheduler(
                                 optimizer,
