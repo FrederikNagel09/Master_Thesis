@@ -1019,7 +1019,7 @@ def _build_weight_diffusion(args, data_config: dict):
         # encoder._param_shapes stores (in_dim+1, out_dim); ParamDiT expects (out_dim, in_dim+1)
         from src.models.param_dit import ParamDiT
 
-        param_shapes = {name: (shape[1], shape[0]) for name, shape in encoder._param_shapes.items()}
+        param_shapes = {name: (shape[1], shape[0]) for name, shape in encoder.modulation_shapes.items()}
         network = ParamDiT(
             param_shapes=param_shapes,
             hidden_dim=noise_predictor_dim,

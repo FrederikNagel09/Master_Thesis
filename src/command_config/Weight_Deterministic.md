@@ -41,9 +41,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Weight-Diffusion-Deterministic-New-modulation/weights/weights.pt
 
 
-############### Testing ###################
-
-
+############### Testing TransinrNoisePredictor ###################
 CUDA_VISIBLE_DEVICES=1 python main.py \
     --run_name Weight-Diffusion-Deterministic_Test \
     --model weight_inr_diffusion\
@@ -84,3 +82,46 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --noise_predictor_dropout 0.0 \
     --noise_predictor_chunk_size 128 \
     --noise_predictor_t_embed_dim 32
+
+############### Testing ParamDIT noise predictor ###################
+
+CUDA_VISIBLE_DEVICES=1 python main.py \
+    --run_name Weight-Diffusion-Deterministic_Test \
+    --model weight_inr_diffusion\
+    --dataset mnist \
+    --epochs 5 \
+    --batch_size 128 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 2 \
+    --subset_frac 0.02 \
+    --normalize True\
+    --probablistic False \
+    --stop_gradient_flow True \
+    --peak_lr 1e-4 \
+    --lambda_kl 1.0 \
+    --T 100 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --sigma_tilde 1.0 \
+    --inr_hidden_dim 42 \
+    --inr_layers 3 \
+    --encoder_trans_dim 32 \
+    --encoder_trans_n_head 2 \
+    --encoder_trans_head_dim 8 \
+    --encoder_trans_ff_dim 128 \
+    --encoder_trans_enc_depth 2 \
+    --encoder_trans_dec_depth 2 \
+    --encoder_trans_patch_size 4 \
+    --encoder_trans_n_groups 64 \
+    --encoder_trans_update_strategy scale \
+    --predictor_variant transformer \
+    --noise_predictor_type paramdit \
+    --noise_predictor_dim 16 \
+    --noise_predictor_n_head 2 \
+    --noise_predictor_depth 1 \
+    --noise_predictor_dropout 0.1 \
+    --noise_predictor_t_embed_dim 16 \
+    --paramdit_tokenizer column \
+    --paramdit_mlp_ratio 2.0
