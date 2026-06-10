@@ -250,7 +250,7 @@ def plot_final_samples(
     device: str,
     data_config: dict,
     n_samples: int = 64,
-    n_fid_samples: int = 128,
+    n_fid_samples: int = 2048,
 ) -> None:
     """
     Sample an 8x8 grid from the model, compute MNIST + Inception FID scores,

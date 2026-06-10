@@ -268,9 +268,9 @@ class LatentDiffusion(nn.Module):
         l_rec = self._l_rec(x, z_raw)
 
         if self.__do_scaling:
-            total = (l_diff + l_latent_rec) + lambda_kl *l_entropy + l_rec
+            total = (self.T-1)*(l_diff + l_latent_rec) + lambda_kl *l_entropy + l_rec
         else:
-            total = l_diff + l_latent_rec + lambda_kl * l_entropy + l_rec
+            total = (self.T-1)*l_diff + l_latent_rec + lambda_kl * l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -500,7 +500,7 @@ class LatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        neg_entropy_per_dim = -0.5 * (logvar.mean(dim=(-3, -2, -1)) + (1.0 + math.log(2.0 * math.pi)))
+        neg_entropy_per_dim = 0.5 * (logvar.mean(dim=(-3, -2, -1)) + (1.0 + math.log(2.0 * math.pi)))
 
         return neg_entropy_per_dim
 
