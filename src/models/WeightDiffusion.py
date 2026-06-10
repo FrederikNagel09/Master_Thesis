@@ -319,7 +319,7 @@ class WeightDiffusion(nn.Module):
             l_prior = torch.zeros_like(l_diff)
             elbo = (self.T - 1) * l_diff + l_rec
 
-        return elbo.mean(), torch.log(l_diff.mean()), l_prior.mean(), l_rec.mean()
+        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     @torch.no_grad()
     def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
@@ -502,7 +502,7 @@ class WeightDiffusion(nn.Module):
             )
             print("###############################################\n")
 
-        return mse.sum(dim=-1)  # (B,)
+        return mse.mean(dim=-1)  # (B,)
 
     def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -516,7 +516,7 @@ class WeightDiffusion(nn.Module):
         # Use .mean(dim=-1) to average across all latent dimensions cleanly.
         # Invert the sign to negative so that minimizing this term maximizes true entropy.
         entropy_per_dim = 0.5 * (1.0 + torch.log(torch.as_tensor(2.0 * math.pi, device=logvar.device)) + logvar)
-        return entropy_per_dim.sum(dim=-1)  # (B,) — sum over latent dims, return positive entropy
+        return entropy_per_dim.mean(dim=-1)  # (B,) — sum over latent dims, return positive entropy
 
     # -------------------------------------------------------------------------
     # Sampling Helpers:

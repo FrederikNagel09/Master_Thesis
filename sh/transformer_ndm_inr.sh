@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J Weight-Diffusion-Deterministic-New-modulation      # Job name
+#BSUB -J Weight-Diffusion-Probabilistic-NoNormalize      # Job name
 #BSUB -q gpuv100                          # Queue to submit the job to
 #BSUB -W 800                             # Wall time limit (6 hours)
 #BSUB -n 8                                 # Request 8 cores
 #BSUB -R "rusage[mem=2GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Weight-Diffusion-Deterministic-New-modulation.out                        # Standard output redirection
-#BSUB -e src/outputs/Weight-Diffusion-Deterministic-New-modulation.err                        # Standard error redirection
+#BSUB -o src/outputs/Weight-Diffusion-Probabilistic-NoNormalize.out                        # Standard output redirection
+#BSUB -e src/outputs/Weight-Diffusion-Probabilistic-NoNormalize.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,18 +16,19 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name Weight-Diffusion-Deterministic-New-modulation\
-    --model weight_inr_diffusion \
+    --run_name Weight-Diffusion-Probabilistic-NoNormalize \
+    --model weight_inr_diffusion\
     --dataset mnist \
     --epochs 400 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 100 \
+    --log_every_n_steps 2 \
     --subset_frac 1.0 \
-    --normalize True \
-    --probablistic False \
+    --normalize False\
+    --stop_gradient_flow True \
+    --probablistic True \
     --peak_lr 1e-4 \
     --lambda_kl 1.0 \
     --T 1000 \
@@ -46,11 +47,11 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --encoder_trans_n_groups 32 \
     --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
+    --noise_predictor_type paramdit \
     --noise_predictor_dim 128 \
-    --noise_predictor_n_head 8 \
-    --noise_predictor_head_dim 64 \
-    --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
-    --noise_predictor_dropout 0.0 \
-    --noise_predictor_chunk_size 40 \
-    --noise_predictor_t_embed_dim 256
+    --noise_predictor_n_head 16 \
+    --noise_predictor_depth 8 \
+    --noise_predictor_dropout 0.1 \
+    --noise_predictor_t_embed_dim 256 \
+    --paramdit_tokenizer column \
+    --paramdit_mlp_ratio 4.0

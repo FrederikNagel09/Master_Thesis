@@ -227,7 +227,7 @@ class TransInrEncoder(nn.Module):
         # Pull pooled features if mapping via MLP
         if self.probabilistic:
             pooled = trans_out.mean(dim=1)
-            flat_logvars = self.logvar_mlp(pooled).clamp(-10.0, 4.0)
+            flat_logvars = self.logvar_mlp(pooled).clamp(-12.0, 4.0)
             logvars = self.unflatten_modulations(flat_logvars)
 
         for name in self._param_names:

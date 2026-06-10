@@ -53,13 +53,12 @@ def _style_ax(ax: plt.Axes) -> None:
     ax.yaxis.grid(True, color="#eeeeee", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
 
-
 def _plot_loss_panel(
     ax: plt.Axes,
     steps: list[float],
     values: list[float],
     key: str,
-) -> None:
+    ) -> None:
     """Plot raw (faint) + smoothed (bold) loss curve onto ax."""
     color = _COLORS[key]
     ax.set_title(_LABELS[key], fontsize=12, fontweight="medium", pad=8)
@@ -70,8 +69,15 @@ def _plot_loss_panel(
 
     if len(steps) >= 10:
         smoothed, kernel = _smooth(values, n_points=20)
-        ax.plot(steps[kernel - 1 :], smoothed, color=color, linewidth=2.2, alpha=0.9)
+        ax.plot(steps[kernel - 1:], smoothed, color=color, linewidth=2.2, alpha=0.9)
 
+    # If spike is >100x the min, clip y-axis using median-based upper bound
+    vmax, vmin = max(values), min(v for v in values if v > 0)
+    if vmax > 100 * vmin:
+        median = float(np.median(values))
+        ymax = median * 3.0
+        ymin = max(0.0, float(np.min(values)) * 0.95)
+        ax.set_ylim(ymin, ymax)
 
 def _add_lr_twin(ax: plt.Axes, steps: list[float], lr_values: list[float]) -> None:
     """Overlay the LR schedule on a twin y-axis of the given axes."""
