@@ -49,7 +49,7 @@ from src.utility.plotting import (
     plot_reconstruction_progression,
     plot_sample_progression,
     plot_training,
-    plot_val_elbo_progression,  # noqa: F401
+    plot_val_elbo_progression,
     plot_weight_profile_progression,  # noqa: F401
     plot_ztrans_histogram,
 )
@@ -158,7 +158,7 @@ def run_training(
         drop_last=True,
         num_workers=getattr(args, "num_workers", 0),
     )
-    data_loader_val = torch.utils.data.DataLoader(  # noqa: F841
+    data_loader_val = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
@@ -281,7 +281,7 @@ def run_training(
                     model_name=args.model,
                     normalize=args.normalize,
                 )
-                """
+
                 plot_val_elbo_progression(
                     model=model,
                     data_loader_val=data_loader_val,
@@ -289,7 +289,6 @@ def run_training(
                     run_dir=run_dir,
                     filename="val_elbo_progression",
                 )
-                """
 
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "weight_inr_diffusion"):
                 plot_reconstruction_progression(
@@ -302,7 +301,7 @@ def run_training(
                     filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
                     model_name=args.model,
                 )
-                """
+
                 plot_val_elbo_progression(
                     model=model,
                     data_loader_val=data_loader_val,
@@ -310,7 +309,7 @@ def run_training(
                     run_dir=run_dir,
                     filename="val_elbo_progression",
                 )
-                """
+
                 plot_forward_trajectory_progression(
                     model=model,
                     batch=batch,
