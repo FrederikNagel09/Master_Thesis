@@ -33,50 +33,57 @@ from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 if TYPE_CHECKING:
     import numpy as np
 
-class WeightScaler(nn.Module):
-    def __init__(self, layer_sizes: list[int], momentum: float = 0.1):
+
+class ParamNormalizer(nn.Module):
+    def __init__(self, dim: int, momentum: float = 0.01, eps: float = 1e-6):
         """
-        EMA-based per-layer normalizer for flattened INR weight vectors.
-        Args:
-            layer_sizes: list of flattened sizes for each INR layer, e.g. [126, 1806, 43]
-            momentum:    EMA update rate
-        Returns: None
+        Streamlined per-dimension EMA normalizer.
+        Functionally identical to the reference code running in 'per_dim' mode.
         """
         super().__init__()
-        self.layer_sizes = layer_sizes
+        self.dim = dim
         self.momentum = momentum
-        n = len(layer_sizes)
-        self.register_buffer("running_mean", torch.zeros(n))
-        self.register_buffer("running_std",  torch.ones(n))
+        self.eps = eps
+
+        # Running statistics tracks every coordinate independently
+        self.register_buffer("running_mean", torch.zeros(dim))
+        self.register_buffer("running_std", torch.ones(dim))
+
+        # Reference trick: Fast-forward initialization on the first batch
+        self.register_buffer("initialized", torch.tensor(False))
 
     def forward(self, x: torch.Tensor, reverse: bool = False, training: bool = True) -> torch.Tensor:
         """
-        Normalize or denormalize a flattened INR weight vector per layer.
         Args:
-            x:        (B, sum(layer_sizes)) flattened weight vectors
-            reverse:  False = normalize, True = denormalize
-            training: if True, updates EMA stats
-        Returns:
-            x_scaled: (B, sum(layer_sizes))
+            x:        Flat parameter/modulation tensor of shape (B, dim)
+            reverse:  False = Normalize, True = Denormalize
+            training: If True, updates running tracking buffers
         """
-        chunks = x.split(self.layer_sizes, dim=1)  # list of (B, layer_size)
-        out = []
+        if not reverse:
+            # --- FORWARD: NORMALIZE ---
+            if training:
+                # Detach params just like the reference does in self.update(params.detach())
+                detached_x = x.detach()
+                batch_mean = detached_x.mean(dim=0)
+                batch_std = detached_x.std(dim=0, unbiased=False).clamp(min=self.eps)
 
-        for i, chunk in enumerate(chunks):
-            if not reverse:
-                if training:
-                    mean = chunk.mean()
-                    std  = chunk.std().clamp(min=1e-5)
-                    with torch.no_grad():
-                        self.running_mean[i] = (1 - self.momentum) * self.running_mean[i] + self.momentum * mean
-                        self.running_std[i]  = (1 - self.momentum) * self.running_std[i]  + self.momentum * std
-                    out.append((chunk - mean) / std)
-                else:
-                    out.append((chunk - self.running_mean[i]) / self.running_std[i])
-            else:
-                out.append(chunk * self.running_std[i] + self.running_mean[i])
+                with torch.no_grad():
+                    if not bool(self.initialized):
+                        # First batch snapshot: Hard copy stats to avoid slow burn-in
+                        self.running_mean.copy_(batch_mean)
+                        self.running_std.copy_(batch_std)
+                        self.initialized.fill_(True)
+                    else:
+                        # Subsequent batches: Smoothly interpolate
+                        self.running_mean.lerp_(batch_mean, self.momentum)
+                        self.running_std.lerp_(batch_std, self.momentum)
 
-        return torch.cat(out, dim=1)
+            # Always normalize using the running buffers
+            return (x - self.running_mean) / self.running_std.clamp(min=self.eps)
+
+        else:
+            # --- REVERSE: DENORMALIZE ---
+            return x * self.running_std.clamp(min=self.eps) + self.running_mean
 
 
 class WeightDiffusion(nn.Module):
@@ -128,7 +135,7 @@ class WeightDiffusion(nn.Module):
         self.probablistic = probablistic
 
         if self.normalize:
-            self.scaler = WeightScaler(layer_sizes=[75, 650, 650, 26])
+            self.scaler = ParamNormalizer(WeightEncoder.modulation_dim, momentum=0.01, eps=1e-6)
 
         self.lambda_kl = lambda_kl
 
@@ -164,10 +171,12 @@ class WeightDiffusion(nn.Module):
         """
         if collect_snapshots:
             theta, snapshots = self.sample_weight(n_samples, collect_snapshots=True)
+            theta = self.weight_encoder.decode_modulations(theta)
             images = self.decode_weights(theta, coords)
             return images, snapshots
 
         theta = self.sample_weight(n_samples)
+        theta = self.weight_encoder.decode_modulations(theta)
         return self.decode_weights(theta, coords)
 
     def loss(self, x: torch.Tensor, lambda_kl: float = 5e-3) -> torch.Tensor:
@@ -285,7 +294,7 @@ class WeightDiffusion(nn.Module):
                 print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
         self.i += 1
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_prime = theta_prime.detach()  
+        theta_prime = theta_prime.detach()
 
         theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
 
@@ -298,11 +307,12 @@ class WeightDiffusion(nn.Module):
         # Given theta_t, and theta_prime we compute the three loss terms:
         l_diff = self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx)
 
-        l_rec = self._l_rec(x, theta_prime_raw)
+        theta = self.weight_encoder.decode_modulations(theta_prime_raw)
+        l_rec = self._l_rec(x, theta)
 
         if self.probablistic:
             l_prior = self._l_entropy(logvar)
-            elbo = (self.T - 1)*l_diff + l_rec + lambda_kl * l_prior
+            elbo = (self.T - 1) * l_diff + l_rec + lambda_kl * l_prior
         else:
             l_prior = torch.zeros_like(l_diff)
             elbo = (self.T - 1) * l_diff + l_rec
@@ -504,7 +514,7 @@ class WeightDiffusion(nn.Module):
         # Use .mean(dim=-1) to average across all latent dimensions cleanly.
         # Invert the sign to negative so that minimizing this term maximizes true entropy.
         neg_entropy_per_dim = 0.5 * (logvar.mean(dim=-1) + (1.0 + math.log(2.0 * math.pi)))
-        
+
         return neg_entropy_per_dim  # Returns shape (B,)
 
     # -------------------------------------------------------------------------
@@ -529,7 +539,7 @@ class WeightDiffusion(nn.Module):
             curr_theta: (n_samples, weight_dim) sampled weights.
             snapshots:  {t_value: flat np.ndarray} — only returned if collect_snapshots=True.
         """
-        weight_dim = self.weight_encoder.weight_dim
+        weight_dim = self.weight_encoder.modulation_dim
         device = self.sqrt_alpha_cumprod.device
         T_values = {self.T - 1, 3 * self.T // 4, self.T // 2, self.T // 4, 0}  # noqa: N806
         snapshots: dict[int, np.ndarray] = {}

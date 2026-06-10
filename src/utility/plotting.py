@@ -227,10 +227,12 @@ def _model_to_grid(
         elif model_type == "ndm_transinr" or model_type in ("weight_inr_diffusion", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True)
+                theta = model.weight_encoder.decode_modulations(raw_samples)
             else:
                 raw_samples = model.sample_weight(n_samples)
+                theta = model.weight_encoder.decode_modulations(raw_samples)
             # Use only first n_samples for the image grid
-            samples = model._inr_decode(raw_samples[:n_samples])
+            samples = model._inr_decode(theta[:n_samples])
             samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
 
         else:
@@ -952,7 +954,8 @@ def plot_reconstruction_progression(
                 theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
             else:
                 theta_prime_raw = model.weight_encoder(x)
-        x_recon = model._inr_decode(theta_prime_raw)
+        theta = model.weight_encoder.decode_modulations(theta_prime_raw)
+        x_recon = model._inr_decode(theta)
     else:
         with torch.no_grad():
             if hasattr(model, "F_phi"):
