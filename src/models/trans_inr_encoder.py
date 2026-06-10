@@ -25,6 +25,7 @@ import importlib
 import math
 import random
 import sys
+from collections import OrderedDict
 
 # ---------------------------------------------------------------------------
 # Re-use helpers from trans_inr_helpers
@@ -97,21 +98,10 @@ update_strategies = {
 
 class TransInrEncoder(nn.Module):
     """
-    TransInr weight encoder — optionally probabilistic.
+    TransInr weight encoder — updated for Late Modulation.
 
-    Deterministic: forward returns flat mu (B, weight_dim).
-    Probabilistic: forward returns (z, mu, logvar), each (B, weight_dim).
-                   logvar is produced by a small MLP over pooled transformer
-                   output, initialized so std ≈ 0.007 at the start of training.
-
-    Args
-    ----
-    tokenizer        : config dict for ImageTokenizer
-    inr              : config dict for SIREN
-    n_groups         : number of wtoken groups per INR parameter
-    transformer      : config dict for Transformer (enc+dec)
-    update_strategy  : one of {"normalize", "scale", "identity"}
-    probabilistic    : if True, adds logvar MLP and returns (z, mu, logvar)
+    Stage 1 (Autoencoder): forward() returns the final flat INR parameters.
+    Stage 2 (Diffusion Target): encode_modulations() extracts the compact latent space.
     """
 
     def __init__(
@@ -123,80 +113,175 @@ class TransInrEncoder(nn.Module):
         update_strategy: str = "normalize",
         in_channels: int = 1,
         img_size: int = 28,
-        probablistic: bool = False,
+        probabilistic: bool = False,
     ):
         super().__init__()
 
         dim = transformer["params"]["dim"]
         self.in_channels = in_channels
         self.img_size = img_size
-        self.probabilistic = probablistic
+        self.probabilistic = probabilistic
 
+        # Instantiate sub-modules
         self.tokenizer = instantiate_from_config(tokenizer, extra_args={"dim": dim})
-        self.inr: SIREN = instantiate_from_config(inr)
+        self.inr = instantiate_from_config(inr)
         self.transformer = instantiate_from_config(transformer)
+        self.update_strategy = update_strategies[update_strategy]
 
+        # Structure parameter definitions
+        self._param_names = list(self.inr.param_shapes.keys())
+        self._param_shapes = dict(self.inr.param_shapes)
+        self._weight_dim = sum(shape[0] * shape[1] for shape in self.inr.param_shapes.values())
+
+        # Build base parameters and calculate compact modulation shapes
         self.base_params = nn.ParameterDict()
         self.wtoken_postfc = nn.ModuleDict()
-        self.wtoken_rng: dict[str, tuple[int, int]] = {}
+        self.wtoken_rng = {}
+        self.modulation_shapes = OrderedDict()
 
         n_wtokens = 0
         for name, shape in self.inr.param_shapes.items():
+            # Base weights setup
             self.base_params[name] = nn.Parameter(self.inr.init_wb(shape, name=name))
+
+            # Groups setup
             g = min(n_groups, shape[1])
             assert shape[1] % g == 0, f"n_groups={n_groups} must divide shape[1]={shape[1]} for layer {name}"
+
+            weight_rows = shape[0] - 1
             self.wtoken_postfc[name] = nn.Sequential(
                 nn.LayerNorm(dim),
-                nn.Linear(dim, shape[0] - 1),
+                nn.Linear(dim, weight_rows),
             )
             self.wtoken_rng[name] = (n_wtokens, n_wtokens + g)
             n_wtokens += g
 
+            # Store modulation shapes: (Rows modulated, Columns/Groups)
+            self.modulation_shapes[name] = (weight_rows, g)
+
         self.wtokens = nn.Parameter(torch.randn(n_wtokens, dim))
-        self.update_strategy = update_strategies[update_strategy]
+        self._modulation_dim = sum(r * g for r, g in self.modulation_shapes.values())
 
-        self._weight_dim = sum(shape[0] * shape[1] for shape in self.inr.param_shapes.values())
-        self._param_names: list[str] = list(self.inr.param_shapes.keys())
-        self._param_shapes: dict[str, tuple[int, int]] = dict(self.inr.param_shapes)
-
-        # 1. Calculate the much smaller logvar dimension
-        self._logvar_dim = sum(shape[0] for shape in self.inr.param_shapes.values())
-
-        # 2. Update the MLP
-        self.logvar_mlp = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.GELU(),
-            nn.Linear(dim, self._logvar_dim),
-        )
-        nn.init.zeros_(self.logvar_mlp[2].weight)
-        nn.init.constant_(self.logvar_mlp[2].bias, -4.0)
+        # Cleaner Probabilistic MLP targeting modulation space directly
+        if self.probabilistic:
+            self.logvar_mlp = nn.Sequential(
+                nn.Linear(dim, dim),
+                nn.GELU(),
+                nn.Linear(dim, self._modulation_dim),
+            )
+            nn.init.zeros_(self.logvar_mlp[2].weight)
+            nn.init.constant_(self.logvar_mlp[2].bias, -4.0)
 
     @property
     def weight_dim(self) -> int:
-        """Flat weight vector dimension."""
         return self._weight_dim
 
-    def _flatten_params(self, param_dict: dict[str, torch.Tensor]) -> torch.Tensor:
-        """
-        Flatten ordered param dict into a single vector per batch item.
+    @property
+    def modulation_dim(self) -> int:
+        return self._modulation_dim
 
-        Args:  param_dict : {name: (B, shape[0], shape[1])}
-        Returns: flat : (B, weight_dim)
-        """
-        parts = []
+    # --- 1. TOKENIZATION & TRANSFORMER CORE ---
+    def _run_transformer(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        """Processes image through tokenizer and transformer."""
+        if x.dim() == 2:
+            x = x.view(x.shape[0], self.in_channels, self.img_size, self.img_size)
+
+        dtokens = self.tokenizer(x, **kwargs)
+        B = dtokens.shape[0]  # noqa: N806
+        wtokens = einops.repeat(self.wtokens, "n d -> b n d", b=B)
+
+        cls_name = self.transformer.__class__.__name__
+        if cls_name == "Transformer":
+            return self.transformer(src=dtokens, tgt=wtokens)
+        elif cls_name == "TransformerEncoder":
+            combined = torch.cat([dtokens, wtokens], dim=1)
+            full_out = self.transformer(combined)
+            return full_out[:, -self.wtokens.shape[0] :, :]
+        else:
+            raise ValueError(f"Unsupported transformer class: {cls_name}")
+
+    # --- 2. MODULATION FLATTENING / UNFLATTENING ---
+    def flatten_modulations(self, mod_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Flattens dict of layer modulations into a single vector (B, modulation_dim)."""
+        parts = [mod_dict[name].reshape(mod_dict[name].shape[0], -1) for name in self._param_names]
+        return torch.cat(parts, dim=1)
+
+    def unflatten_modulations(self, flat_mods: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Inflates flat modulation vector back to a dictionary of layer shapes."""
+        B = flat_mods.shape[0]  # noqa: N806
+        mod_dict = {}
+        offset = 0
+        for name, shape in self.modulation_shapes.items():
+            rows, g = shape
+            numel = rows * g
+            mod_dict[name] = flat_mods[:, offset : offset + numel].reshape(B, rows, g)
+            offset += numel
+        return mod_dict
+
+    # --- 3. ENCODING PIPELINE (LATE MODULATION) ---
+    def _compute_modulation_dicts(self, trans_out: torch.Tensor) -> tuple[dict, dict | None]:
+        """Extracts dictionaries of modulations (and optional logvars) from transformer tokens."""
+        modulations = {}
+        logvars = {} if self.probabilistic else None
+
+        # Pull pooled features if mapping via MLP
+        if self.probabilistic:
+            pooled = trans_out.mean(dim=1)
+            flat_logvars = self.logvar_mlp(pooled).clamp(-10.0, 4.0)
+            logvars = self.unflatten_modulations(flat_logvars)
+
         for name in self._param_names:
-            wb = param_dict[name]
-            B = wb.shape[0]  # noqa: N806
-            parts.append(wb.reshape(B, -1))
+            l, r = self.wtoken_rng[name]  # noqa: E741
+            layer_tokens = trans_out[:, l:r, :]
+
+            # (B, g, rows) -> transpose to standard (B, rows, g)
+            x_mod = self.wtoken_postfc[name](layer_tokens).transpose(-1, -2)
+            modulations[name] = x_mod
+
+        return modulations, logvars
+
+    def encode_modulations(self, x: torch.Tensor, **kwargs) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Main encoder entrypoint. Returns compact modulation latents for Diffusion/VAE."""
+        trans_out = self._run_transformer(x, **kwargs)
+        mods, logvars = self._compute_modulation_dicts(trans_out)
+
+        flat_mu = self.flatten_modulations(mods)
+        if not self.probabilistic:
+            return flat_mu
+
+        flat_logvar = self.flatten_modulations(logvars)
+        return flat_mu, flat_logvar
+
+    # --- 4. DECODING PIPELINE ---
+    def decode_modulations(self, flat_mods: torch.Tensor, return_dict: bool = False) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Decodes flat modulation vector by applying them to base weights."""
+        B = flat_mods.shape[0]  # noqa: N806
+        mod_dict = self.unflatten_modulations(flat_mods)
+        param_dict = {}
+
+        for name in self._param_names:
+            # Replicate base weights across the current batch
+            wb = einops.repeat(self.base_params[name], "n m -> b n m", b=B)
+            w = wb[:, :-1, :]
+            b = wb[:, -1:, :]
+
+            # Apply update strategy using our unflattened modulations
+            x_mod = mod_dict[name]
+            w = self.update_strategy(w, x_mod)
+
+            # Recombine weights + biases
+            param_dict[name] = torch.cat([w, b], dim=1)
+
+        if return_dict:
+            return param_dict
+        return self._flatten_params(param_dict)
+
+    # --- 5. UTILITY PARAMETER FLATTENING ---
+    def _flatten_params(self, param_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+        parts = [param_dict[name].reshape(param_dict[name].shape[0], -1) for name in self._param_names]
         return torch.cat(parts, dim=1)
 
     def inflate(self, flat_weights: torch.Tensor) -> dict[str, torch.Tensor]:
-        """
-        Inflate flat weight vector back into a param dict.
-
-        Args:    flat_weights : (B, weight_dim)
-        Returns: param_dict   : {name: (B, shape[0], shape[1])}
-        """
         B = flat_weights.shape[0]  # noqa: N806
         param_dict = {}
         offset = 0
@@ -208,82 +293,20 @@ class TransInrEncoder(nn.Module):
         return param_dict
 
     def _reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """
-        Reparameterization trick: z = mu + std * eps.
-
-        Args:    mu, logvar : (B, weight_dim)
-        Returns: z          : (B, weight_dim)
-        """
-        logvar = logvar.clamp(-10.0, 2.0)
         std = torch.exp(0.5 * logvar)
         return mu + std * torch.randn_like(std)
 
+    # --- 6. STANDARD FORWARD RULE (STAGE 1 AUTOENCODER) ---
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Args:    x : (B, C, H, W)
-        Returns: flat_weights (B, weight_dim)              if not probabilistic
-                 (z, mu, logvar) each (B, weight_dim)      if probabilistic
-        """
-        if x.dim() == 2:
-            x = x.view(x.shape[0], self.in_channels, self.img_size, self.img_size)
-
-        dtokens = self.tokenizer(x, **kwargs)
-        B = dtokens.shape[0]  # noqa: N806
-
-        wtokens = einops.repeat(self.wtokens, "n d -> b n d", b=B)
-
-        cls_name = self.transformer.__class__.__name__
-        if cls_name == "Transformer":
-            trans_out = self.transformer(src=dtokens, tgt=wtokens)
-        elif cls_name == "TransformerEncoder":
-            combined = torch.cat([dtokens, wtokens], dim=1)
-            full_out = self.transformer(combined)
-            trans_out = full_out[:, -self.wtokens.shape[0] :, :]
-        else:
-            raise ValueError(f"Unsupported transformer class: {cls_name}")
-
-        # Deterministic mu path — unchanged from original
-        param_dict = {}
-        for name, shape in self.inr.param_shapes.items():  # noqa: B007
-            wb = einops.repeat(self.base_params[name], "n m -> b n m", b=B)
-            w = wb[:, :-1, :]
-            b = wb[:, -1:, :]
-            l, r = self.wtoken_rng[name]  # noqa: E741
-            x_mod = self.wtoken_postfc[name](trans_out[:, l:r, :])
-            x_mod = x_mod.transpose(-1, -2)
-            w = self.update_strategy(w, x_mod)
-            param_dict[name] = torch.cat([w, b], dim=1)
-
-        mu = self._flatten_params(param_dict)
-
+        """Acts as an end-to-end autoencoder mapping Image -> Modulations -> Raw Weights."""
         if not self.probabilistic:
-            return mu
+            flat_mu_mods = self.encode_modulations(x, **kwargs)
+            return flat_mu_mods
 
-        # Logvar from pooled transformer output
-        pooled = trans_out.mean(dim=1)  # (B, dim)
-        logvar_pooled = self.logvar_mlp(pooled)
+        # VAE Path
+        flat_mu, flat_logvar = self.encode_modulations(x, **kwargs)
 
-        # Expand it to the full weight_dim
-        parts = []
-        offset = 0
-        for name in self._param_names:
-            s0, s1 = self._param_shapes[name]
-
-            # Extract the variance for this layer: shape (B, s0)
-            layer_logvar = logvar_pooled[:, offset : offset + s0]
-            offset += s0
-
-            # Broadcast across the s1 dimension
-            # (B, s0) -> (B, s0, 1) -> (B, s0, s1) -> (B, s0 * s1)
-            expanded = layer_logvar.unsqueeze(-1).expand(-1, -1, s1).reshape(B, -1)
-            parts.append(expanded)
-
-        # Re-flatten
-        logvar = torch.cat(parts, dim=1)  # Now it's back to (B, weight_dim)
-
-        logvar = logvar.clamp(-4.0, 4.0)
-
-        return mu, logvar
+        return flat_mu, flat_logvar
 
 
 class TransInrTemporalEncoder(nn.Module):
