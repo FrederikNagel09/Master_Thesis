@@ -1053,6 +1053,7 @@ def _build_weight_diffusion(args, data_config: dict):
         img_size=img_size,
         probablistic=args.probablistic,
         lambda_kl=args.lambda_kl if hasattr(args, "lambda_kl") else 1.0,
+        stop_gradient_flow=args.stop_gradient_flow,
     )
 
     total_params = sum(p.numel() for p in model.parameters())

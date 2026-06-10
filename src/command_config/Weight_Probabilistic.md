@@ -11,6 +11,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --subset_frac 1.0 \
     --normalize True \
     --probablistic True \
+    --stop_gradient_flow True \
     --peak_lr 1e-4 \
     --lambda_kl 1.0 \
     --T 1000 \
@@ -56,6 +57,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --subset_frac 0.5 \
     --normalize False\
     --probablistic True \
+    --stop_gradient_flow True \
     --peak_lr 1e-4 \
     --lambda_kl 1.0 \
     --T 1000 \
@@ -97,6 +99,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --subset_frac 1.0 \
     --normalize True \
     --probablistic True \
+    --stop_gradient_flow True \
     --peak_lr 1e-4 \
     --lambda_kl 1.0 \
     --T 1000 \

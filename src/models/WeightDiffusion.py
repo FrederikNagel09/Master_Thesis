@@ -117,6 +117,7 @@ class WeightDiffusion(nn.Module):
         normalize: bool = True,
         lambda_kl: float = 5e-3,
         probablistic: bool = False,
+        stop_gradient_flow: bool = True,
     ):
         super().__init__()
         # Initialize model components and noise schedule buffers
@@ -133,6 +134,7 @@ class WeightDiffusion(nn.Module):
 
         self.normalize = normalize
         self.probablistic = probablistic
+        self.stop_gradient_flow = stop_gradient_flow
 
         if self.normalize:
             self.scaler = ParamNormalizer(WeightEncoder.modulation_dim, momentum=0.01, eps=1e-6)
@@ -202,7 +204,7 @@ class WeightDiffusion(nn.Module):
         batch_size = x.shape[0]
 
         # Sample random time step  t ~ Uniform{1, ..., T} - range [1, T]
-        t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
+        t_idx = torch.randint(1, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
 
         if self.probablistic:
@@ -294,7 +296,7 @@ class WeightDiffusion(nn.Module):
                 print(f"Debug range of scaled theta_prime: min={theta_prime.min().item():.4f}, max={theta_prime.max().item():.4f}")
         self.i += 1
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
-        theta_prime = theta_prime.detach()
+        theta_prime = theta_prime.detach() if self.stop_gradient_flow else theta_prime
 
         theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
 
@@ -312,7 +314,7 @@ class WeightDiffusion(nn.Module):
 
         if self.probablistic:
             l_prior = self._l_entropy(logvar)
-            elbo = (self.T - 1) * l_diff + l_rec + lambda_kl * l_prior
+            elbo = (self.T - 1) * l_diff + l_rec - lambda_kl * l_prior  # minus, not plus
         else:
             l_prior = torch.zeros_like(l_diff)
             elbo = (self.T - 1) * l_diff + l_rec
@@ -443,15 +445,14 @@ class WeightDiffusion(nn.Module):
         Returns:
             (B,) per-sample MSE loss between predicted and target v
         """
-        v_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))  # (B, weight_dim)
+        v_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))
 
-        sqrt_ab = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)  # (B, 1)
-        sqrt_1mab = self.sigma[t_idx].unsqueeze(1)  # (B, 1)
+        sqrt_ab = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
+        sqrt_1mab = self.sigma[t_idx].unsqueeze(1)
 
-        # Ground-truth v target
-        v_target = sqrt_ab * epsilon - sqrt_1mab * x0  # (B, weight_dim)
+        v_target = sqrt_ab * epsilon - sqrt_1mab * x0
 
-        mse = F.mse_loss(v_hat, v_target, reduction="none")  # (B, weight_dim)
+        mse = F.mse_loss(v_hat, v_target, reduction="none")
 
         # Bin MSE by timestep to see where the model fails
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
@@ -500,7 +501,7 @@ class WeightDiffusion(nn.Module):
             )
             print("###############################################\n")
 
-        return mse.mean(dim=-1)  # (B,)
+        return mse.sum(dim=-1)  # (B,)
 
     def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -513,9 +514,8 @@ class WeightDiffusion(nn.Module):
         """
         # Use .mean(dim=-1) to average across all latent dimensions cleanly.
         # Invert the sign to negative so that minimizing this term maximizes true entropy.
-        neg_entropy_per_dim = 0.5 * (logvar.mean(dim=-1) + (1.0 + math.log(2.0 * math.pi)))
-
-        return neg_entropy_per_dim  # Returns shape (B,)
+        entropy_per_dim = 0.5 * (1.0 + torch.log(torch.as_tensor(2.0 * math.pi, device=logvar.device)) + logvar)
+        return entropy_per_dim.sum(dim=-1)  # (B,) — sum over latent dims, return positive entropy
 
     # -------------------------------------------------------------------------
     # Sampling Helpers:
