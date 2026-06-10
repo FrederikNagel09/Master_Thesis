@@ -317,7 +317,7 @@ class WeightDiffusion(nn.Module):
             l_prior = torch.zeros_like(l_diff)
             elbo = (self.T - 1) * l_diff + l_rec
 
-        return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+        return elbo.mean(), torch.log(l_diff.mean()), l_prior.mean(), l_rec.mean()
 
     @torch.no_grad()
     def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
