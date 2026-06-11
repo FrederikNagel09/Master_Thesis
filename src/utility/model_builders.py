@@ -15,6 +15,7 @@ import argparse
 
 import torch
 import torch.nn as nn
+from models.WeightNdmDiffusion import WeightNDMDiffusion
 
 from src.models.LatentEncoder import ResNetLatentEncoder
 from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor
@@ -69,6 +70,8 @@ def build_model(args, data_config: dict) -> nn.Module:
         model = _build_ndm_temporal_transinr(args, data_config)
     elif name == "weight_inr_diffusion":
         model = _build_weight_diffusion(args, data_config)
+    elif name == "weight_inr_ndm_diffusion":
+        model = _build_weight_ndm_diffusion(args, data_config)
     elif name == "ndm_static_mlpinr":
         model = _build_ndm_static_mlpinr(args, data_config)
     elif name == "latent_inr_diffusion":
@@ -308,7 +311,7 @@ def _build_transinr_vae(args: argparse.Namespace, data_config: dict) -> nn.Modul
 
 
 def _build_ndm(args, data_config: dict) -> nn.Module:
-    from src.models.NDM import MLPTransformation, NeuralDiffusionModel, UnetNDM, UNetTransformation, WrappedUNetModel
+    from src.models.NDM import NeuralDiffusionModel, UnetNDM, UNetTransformation, WrappedUNetModel
     from src.models.ndm_unet_module import UNetModel  # adjust import path as needed
 
     data_dim = data_config["data_dim"]
@@ -340,13 +343,6 @@ def _build_ndm(args, data_config: dict) -> nn.Module:
     if use_attention_unet:
         f_phi = _make_attention_unet(identity_constraint=True)
         print("    F_phi : Attention UNet (wrapped)")
-    elif args.f_phi_type == "mlp":
-        f_phi = MLPTransformation(
-            data_dim=data_dim,
-            hidden_dims=args.f_phi_hidden,
-            t_embed_dim=args.f_phi_t_embed,
-        )
-        print(f"    F_phi : MLP  hidden={args.f_phi_hidden}  t_embed={args.f_phi_t_embed}")
     elif args.f_phi_type == "unet":
         f_phi = UNetTransformation(
             data_dim=data_dim,
@@ -1063,6 +1059,169 @@ def _build_weight_diffusion(args, data_config: dict):
     print("Noise Predictor : ", f"{noise_predictor_params:,}")
     print("----------------------------------------------")
     print(f"TOTAL PARAMETERS  : {total_params:,}")
+    print("####################################################\n")
+    return model
+
+
+def _build_weight_ndm_diffusion(args, data_config: dict):
+    """
+    Build WeightNDMDiffusion:
+        TransInrEncoder as W(x) + NDM-style F_phi transformation + diffusion in weight space.
+
+    Extends _build_weight_diffusion by initializing a WeightTransformation (F_phi)
+    using a shallower ParamDiT with the same column tokenizer as the noise predictor.
+    """
+    from src.models.param_dit import ParamDiT
+    from src.models.WeightTransform import WeightTransformation
+
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+    data_dim = data_config["data_dim"]
+
+    # ── TransInrEncoder config ────────────────────────────────────────────────
+    encoder_dim = getattr(args, "encoder_trans_dim", 256)
+    encoder_n_head = getattr(args, "encoder_trans_n_head", 8)
+    encoder_head_dim = getattr(args, "encoder_trans_head_dim", 32)
+    encoder_ff_dim = getattr(args, "encoder_trans_ff_dim", 512)
+    encoder_enc_depth = getattr(args, "encoder_trans_enc_depth", 4)
+    encoder_dec_depth = getattr(args, "encoder_trans_dec_depth", 4)
+    encoder_patch_size = getattr(args, "encoder_trans_patch_size", 4)
+    encoder_n_groups = getattr(args, "encoder_trans_n_groups", 8)
+    encoder_update_strat = getattr(args, "encoder_trans_update_strategy", "scale")
+    inr_hidden = getattr(args, "inr_hidden_dim", 256)
+    inr_layers = getattr(args, "inr_layers", 5)
+
+    tokenizer_cfg = {
+        "target": "src.models.trans_inr_helpers.ImageTokenizer",
+        "params": {
+            "in_channels": channels,
+            "image_size": img_size,
+            "patch_size": encoder_patch_size,
+            "n_head": encoder_n_head,
+            "head_dim": encoder_head_dim,
+        },
+    }
+    inr_cfg = {
+        "target": "src.models.trans_inr_helpers.SIREN",
+        "params": {
+            "depth": inr_layers,
+            "in_dim": 2,
+            "out_dim": channels,
+            "hidden_dim": inr_hidden,
+            "out_bias": 0.5,
+        },
+    }
+    transformer_cfg = {
+        "target": "src.models.trans_inr_helpers.Transformer",
+        "params": {
+            "dim": encoder_dim,
+            "encoder_depth": encoder_enc_depth,
+            "decoder_depth": encoder_dec_depth,
+            "n_head": encoder_n_head,
+            "head_dim": encoder_head_dim,
+            "ff_dim": encoder_ff_dim,
+        },
+    }
+    encoder = TransInrEncoder(
+        tokenizer=tokenizer_cfg,
+        inr=inr_cfg,
+        n_groups=encoder_n_groups,
+        transformer=transformer_cfg,
+        update_strategy=encoder_update_strat,
+        in_channels=channels,
+        img_size=img_size,
+        probabilistic=args.probablistic,
+    )
+    weight_dim = encoder.modulation_dim
+    encoder_params = print_encoder_stats(encoder)
+
+    # param_shapes for ParamDiT-based models: (out_dim, in_dim+1)
+    param_shapes = {name: (shape[1], shape[0]) for name, shape in encoder.modulation_shapes.items()}
+
+    # ── Noise Predictor ───────────────────────────────────────────────────────
+    noise_predictor_type = getattr(args, "noise_predictor_type", "transinr").lower()
+    noise_predictor_depth = getattr(args, "noise_predictor_depth", 4)
+    noise_predictor_dim = getattr(args, "noise_predictor_dim", 256)
+    noise_predictor_n_head = getattr(args, "noise_predictor_n_head", 8)
+    dropout = getattr(args, "dropout", 0.0)
+
+    if noise_predictor_type == "transinr":
+        network = TransInrNoisePredictor(
+            weight_dim=weight_dim,
+            dim=noise_predictor_dim,
+            depth=noise_predictor_depth,
+            n_head=noise_predictor_n_head,
+            head_dim=getattr(args, "noise_predictor_head_dim", 32),
+            ff_dim=getattr(args, "noise_predictor_ff_dim", 1024),
+            chunk_size=getattr(args, "noise_predictor_chunk_size", 64),
+            t_embed_dim=getattr(args, "noise_predictor_t_embed", 128),
+            dropout=dropout,
+        )
+    elif noise_predictor_type == "paramdit":
+        network = ParamDiT(
+            param_shapes=param_shapes,
+            hidden_dim=noise_predictor_dim,
+            depth=noise_predictor_depth,
+            num_heads=noise_predictor_n_head,
+            mlp_ratio=getattr(args, "noise_predictor_mlp_ratio", 4.0),
+            dropout=dropout,
+            time_dim=getattr(args, "noise_predictor_t_embed", 128),
+            tokenizer="column",
+            tokens_per_tensor=getattr(args, "paramdit_tokens_per_tensor", 1),
+            chunk_size=getattr(args, "paramdit_chunk_size", None),
+        )
+    else:
+        raise ValueError(f"Unknown noise_predictor_type '{noise_predictor_type}'. Expected one of: transinr, paramdit.")
+
+    noise_predictor_params = print_noise_predictor_stats(network)
+
+    # ── F_phi (WeightTransformation) ─────────────────────────────────────────
+    f_phi_hidden_dim = getattr(args, "f_phi_hidden_dim", noise_predictor_dim // 2)
+    f_phi_depth = getattr(args, "f_phi_depth", 2)
+    f_phi_num_heads = getattr(args, "f_phi_num_heads", noise_predictor_n_head)
+    f_phi_t_embed = getattr(args, "f_phi_t_embed", getattr(args, "noise_predictor_t_embed", 128))
+
+    f_phi = WeightTransformation(
+        param_shapes=param_shapes,
+        hidden_dim=f_phi_hidden_dim,
+        depth=f_phi_depth,
+        num_heads=f_phi_num_heads,
+        mlp_ratio=getattr(args, "noise_predictor_mlp_ratio", 4.0),
+        dropout=dropout,
+        time_dim=f_phi_t_embed,
+        tokenizer="column",
+    )
+    f_phi_params = sum(p.numel() for p in f_phi.parameters())
+
+    # ── Coordinate grid ───────────────────────────────────────────────────────
+    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
+
+    # ── Assemble ──────────────────────────────────────────────────────────────
+
+    model = WeightNDMDiffusion(
+        NoisePredictor=network,
+        WeightEncoder=encoder,
+        F_phi=f_phi,
+        coord_grid=coord_grid,
+        beta_1=args.beta_1,
+        beta_T=args.beta_T,
+        T=args.T,
+        sigma_tilde_factor=args.sigma_tilde,
+        data_dim=data_dim,
+        img_size=img_size,
+        probablistic=args.probablistic,
+        lambda_kl=args.lambda_kl if hasattr(args, "lambda_kl") else 1.0,
+        stop_gradient_flow=args.stop_gradient_flow,
+    )
+
+    total_params = sum(p.numel() for p in model.parameters())
+    print("\n########## Total Parameter Summary: ##############")
+    print(f"Noise Predictor Type : {noise_predictor_type.upper()}")
+    print(f"Weight Encoder       : {encoder_params:,}")
+    print(f"Noise Predictor      : {noise_predictor_params:,}")
+    print(f"F_phi (WeightTransf) : {f_phi_params:,}")
+    print("----------------------------------------------")
+    print(f"TOTAL PARAMETERS     : {total_params:,}")
     print("####################################################\n")
     return model
 

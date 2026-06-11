@@ -14,46 +14,6 @@ from src.models.ndm_unet_module import UNetModel
 # =============================================================================
 
 
-class MLPTransformation(nn.Module):
-    """
-    MLP-based transformation network F_phi(x, t) for MNIST.
-
-    Takes a flattened image x (784-dim) and scalar time t, and outputs a
-    transformed image of the same shape.
-
-    Architecture: concatenate [x, t] -> MLP -> output (same dim as x)
-    """
-
-    def __init__(self, data_dim: int = 784, hidden_dims: list = None, t_embed_dim: int = 32):  # noqa: RUF013
-        super().__init__()
-        if hidden_dims is None:
-            hidden_dims = [512, 512, 512]
-
-        # Small MLP to embed scalar time t into a richer representation
-        self.time_embed = SinusoidalLearnableTimeEmbedding(t_embed_dim)
-
-        layers = []
-        in_dim = data_dim + t_embed_dim
-        for h_dim in hidden_dims:
-            layers += [nn.Linear(in_dim, h_dim), nn.SiLU()]
-            in_dim = h_dim
-        layers.append(nn.Linear(in_dim, data_dim))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """
-        Parameters:
-            x: (batch, 784)  - flattened MNIST image
-            t: (batch, 1)    - normalized time in [0, 1]
-        Returns:
-            (batch, 784) - transformed image, same shape as input
-        """
-        t_emb = self.time_embed(t)
-        xt = torch.cat([x, t_emb], dim=-1)
-        f_bar = self.net(xt)  # raw network output F_bar_phi
-        return (1 - t) * x + t * f_bar
-
-
 class UNetTransformation(nn.Module):
     """
     U-Net F_phi(x, t) for NDM on MNIST.
@@ -430,50 +390,6 @@ class NeuralDiffusionModel(nn.Module):
 
     def loss(self, x: torch.Tensor) -> torch.Tensor:
         return self.negative_elbo(x)
-
-    @torch.no_grad()
-    def sample_old(self, n_samples: int = 1) -> torch.Tensor:
-        """
-        Ancestral sampling from the NDM.
-        Algorithm 2:
-            z_T ~ N(0, I)
-            for t = T, ..., 1:
-                x_hat = x_hat_theta(z_t, t)          [noise -> x_hat]
-                z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat)
-            x ~ p(x | z_0)  [identity at t=0, so return z_0]
-        Parameters:
-            n_samples: number of samples to generate
-        """
-        shape = (n_samples, self.data_dim)
-        device = self.sqrt_alpha_cumprod.device
-        z_t = torch.randn(shape, device=device)
-        for t in tqdm(range(self.T - 1, -1, -1), desc="NDM Sampling", total=self.T, leave=False):
-            t_idx = torch.full((n_samples,), t, dtype=torch.long, device=device)
-            t_norm = torch.full((n_samples, 1), t / max(self.T - 1, 1), device=device)
-            # --- Predict x_hat from z_t (Eq. 34, Appendix C) ---
-            eps_hat = self.network(z_t, t_norm)
-            alpha_t = self.sqrt_alpha_cumprod[t].unsqueeze(0)
-            sigma_t = self.sigma[t].unsqueeze(0)
-            x_hat = (z_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
-            if t == 0:
-                z_t = x_hat
-                break
-            # --- Sample z_{t-1} ~ q_phi(z_{t-1} | z_t, x_hat) (Eq. 7/15) ---
-            s = t - 1
-            s_idx = torch.full((n_samples,), s, dtype=torch.long, device=device)
-            s_norm = torch.full((n_samples, 1), s / max(self.T - 1, 1), device=device)
-            Fx_hat_s = self.F_phi(x_hat, s_norm)  # noqa: N806
-            Fx_hat_t = self.F_phi(x_hat, t_norm)  # noqa: N806
-            alpha_s = self.sqrt_alpha_cumprod[s].view(1, 1)
-            sigma_s_sq = self.sigma_sq[s].view(1, 1)
-            sigma_t_val = self.sigma[t].view(1, 1)
-            alpha_t_val = self.sqrt_alpha_cumprod[t].view(1, 1)
-            sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx)[0].view(1, 1)
-            coeff = (sigma_s_sq - sigma_tilde_sq).clamp(min=0).sqrt() / sigma_t_val.clamp(min=1e-6)
-            mu = alpha_s * Fx_hat_s + coeff * (z_t - alpha_t_val * Fx_hat_t)
-            noise = torch.randn_like(z_t) if sigma_tilde_sq.item() > 0 else torch.zeros_like(z_t)
-            z_t = mu + sigma_tilde_sq.clamp(min=0).sqrt() * noise
-        return z_t
 
     @torch.no_grad()
     def sample(self, n_samples: int = 1) -> torch.Tensor:
