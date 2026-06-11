@@ -281,7 +281,7 @@ def run_training(
                     model_name=args.model,
                     normalize=args.normalize,
                 )
-
+                """
                 plot_val_elbo_progression(
                     model=model,
                     data_loader_val=data_loader_val,
@@ -289,7 +289,7 @@ def run_training(
                     run_dir=run_dir,
                     filename="val_elbo_progression",
                 )
-
+                """
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "weight_inr_diffusion"):
                 plot_reconstruction_progression(
                     model,

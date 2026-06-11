@@ -1,8 +1,8 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name Latent-Diffusion-Probabilistic-onestage-Testing4 \
+    --run_name Latent-Diffusion-Probabilistic-test \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 50 \
+    --epochs 40 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -10,7 +10,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --log_every_n_steps 100 \
     --subset_frac 1.0 \
     --normalize False\
-    --do_scaling True \
+    --do_scaling False \
     --do_latent_recon False \
     --probablistic True \
     --lambda_kl 1.0 \
@@ -22,10 +22,10 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --latent_dim 32 \
     --latent_size 8 \
     --latent_patch_size 2 \
-    --latent_enc_hidden_dim 15\
+    --latent_enc_hidden_dim 16\
     --pred_d_model 128 \
     --pred_n_heads 8 \
-    --pred_n_layers 4 \
+    --pred_n_layers 6 \
     --pred_d_ff 1024 \
     --pred_t_embed_dim 256 \
     --dec_trans_dim 128 \

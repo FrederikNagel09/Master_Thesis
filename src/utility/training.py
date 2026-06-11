@@ -170,8 +170,8 @@ def train(
 
     # two-stage training control variables (for applicable models)
     stage2_triggered = False
-    plateau_window = 30      # 30 * 100 steps = 3000 steps
-    plateau_threshold = 0.6 # tune after dry run
+    plateau_window = 40      # 30 * 100 steps = 3000 steps
+    plateau_threshold = 0.4 # tune after dry run
     
     if two_stage:
         print("[Training] Two-stage mode: freezing denoiser for stage 1.")
