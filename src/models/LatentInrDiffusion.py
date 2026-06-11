@@ -242,7 +242,7 @@ class LatentDiffusion(nn.Module):
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         ######### Apply noise ##########
-        z_t, epsilon = self._forward_process(z, t_idx)
+        z_t, epsilon = self._forward_process(z.detach(), t_idx)
 
         ######### Compute diffusion loss terms ##########
         if self._do_latent_recon:
@@ -269,7 +269,7 @@ class LatentDiffusion(nn.Module):
         if self.__do_scaling:
             total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
         else:
-            total = l_diff - lambda_kl * l_entropy + l_rec
+            total = (self.T - 1)*l_diff - lambda_kl * l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -421,7 +421,7 @@ class LatentDiffusion(nn.Module):
 
         scaling = beta_t / (2 * alpha_t * (1.0 - alpha_bar_t))
 
-        unscaled_loss = mse.sum(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
+        unscaled_loss = mse.mean(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
         # Bin MSE by timestep to see where the model fails
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
@@ -502,7 +502,7 @@ class LatentDiffusion(nn.Module):
         # Use .mean(dim=-1) to average across all latent dimensions cleanly.
         # Invert the sign to negative so that minimizing this term maximizes true entropy.
         entropy_per_dim = 0.5 * (1.0 + torch.log(torch.as_tensor(2.0 * math.pi, device=logvar.device)) + logvar)
-        return entropy_per_dim.mean(dim=-1)  # (B,) — sum over latent dims, return positive entropy
+        return entropy_per_dim.mean(dim=(-3, -2, -1))  # (B,) — sum over latent dims, return positive entropy
 
     def _l_rec(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
