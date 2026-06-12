@@ -166,24 +166,25 @@ class DiTBlock(nn.Module):
         self.mlp = nn.Sequential(nn.Linear(d_model, d_ff), nn.GELU(), nn.Linear(d_ff, d_model))
 
         # AdaLN parameter projection: splits into scale (gamma) and shift (beta) multipliers
-        # We need 2 sets of scale/shift parameters (one for attention, one for MLP)
-        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(t_dim, 4 * d_model))
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(t_dim, 6 * d_model))
+        nn.init.zeros_(self.adaLN_modulation[-1].weight)
+        nn.init.zeros_(self.adaLN_modulation[-1].bias)
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         # Generate scale and shift modulations from time embedding
-        mods = self.adaLN_modulation(t_emb).unsqueeze(1)  # (B, 1, 4*d_model)
-        shift_msa, scale_msa, shift_mlp, scale_mlp = mods.chunk(4, dim=-1)
+        mods = self.adaLN_modulation(t_emb).unsqueeze(1)  # (B, 1, 6*d_model)
 
         # 1. Attention Block with adaLN
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mods.chunk(6, dim=-1)
+
         h = self.norm1(x)
         h = h * (1 + scale_msa) + shift_msa
         h_attn, _ = self.attn(h, h, h)
-        x = x + h_attn
+        x = x + gate_msa * h_attn  # gate added
 
-        # 2. MLP Feedforward with adaLN
         h = self.norm2(x)
         h = h * (1 + scale_mlp) + shift_mlp
-        x = x + self.mlp(h)
+        x = x + gate_mlp * self.mlp(h)
         return x
 
 
@@ -231,10 +232,12 @@ class LatentTransformerNoisePredictor(nn.Module):
         self.blocks = nn.ModuleList([DiTBlock(d_model, n_heads, d_ff, dropout, t_dim=d_model) for _ in range(n_layers)])
 
         # --- Readout Projection ---
-        self.final_norm = nn.LayerNorm(d_model)
-        self.token_readout = nn.Linear(d_model, latent_dim)
+        self.final_norm = nn.LayerNorm(d_model, elementwise_affine=False)
+        self.final_modulation = nn.Sequential(nn.SiLU(), nn.Linear(d_model, 2 * d_model))
+        nn.init.zeros_(self.final_modulation[-1].weight)
+        nn.init.zeros_(self.final_modulation[-1].bias)
 
-        # Zero-initialize output layers (Crucial DiT trick: helps start diffusion training as an identity mapping)
+        self.token_readout = nn.Linear(d_model, latent_dim)
         nn.init.zeros_(self.token_readout.weight)
         nn.init.zeros_(self.token_readout.bias)
 
@@ -260,8 +263,7 @@ class LatentTransformerNoisePredictor(nn.Module):
             x = block(x, t_emb)
 
         # Final mapping reconstruction
-        x = self.final_norm(x)
-        x = self.token_readout(x)  # (B, N, C)
-
-        # Transform Sequence Matrix back to Spatial Layout
+        shift, scale = self.final_modulation(t_emb).unsqueeze(1).chunk(2, dim=-1)
+        x = self.final_norm(x) * (1 + scale) + shift
+        x = self.token_readout(x)  # (B, N, latent_dim)
         return x.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()

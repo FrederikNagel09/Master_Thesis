@@ -19,20 +19,23 @@ def _modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
-def timestep_embedding(timesteps: torch.Tensor, dim: int) -> torch.Tensor:
+def timestep_embedding(timesteps, dim, max_period=10000):
     """
     Create sinusoidal timestep embeddings.
 
-    Args:
-        timesteps: (B,) tensor of timestep indices
-        dim: embedding dimension
-    Returns:
-        (B, dim) sinusoidal embedding tensor
+    :param timesteps: a 1-D Tensor of N indices, one per batch element.
+                      These may be fractional.
+    :param dim: the dimension of the output.
+    :param max_period: controls the minimum frequency of the embeddings.
+    :return: an [N x dim] Tensor of positional embeddings.
     """
     half = dim // 2
-    freqs = torch.exp(-math.log(10000) * torch.arange(half, device=timesteps.device) / (half - 1))
-    args = timesteps[:, None].float() * freqs[None, :]
-    return torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+    freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(device=timesteps.device)
+    args = timesteps[:, None].float() * freqs[None]
+    embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+    if dim % 2:
+        embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+    return embedding
 
 
 class ParamDiTBlock(nn.Module):
