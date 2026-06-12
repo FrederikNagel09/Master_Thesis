@@ -5,7 +5,8 @@ Generates final samples and computes FID + ELBO for a single model.
 Usage
 -----
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/Latent-Diffusion-Probabilistic-TESTING/metadata/config.json
+    --config_path src/train_results/Weight-Diffusion-Deterministic_Test/metadata/config.json \
+    --n_fid_samples 256
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ def _extract_run_name(config_path: str) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Generate samples and compute FID/ELBO for a single model.")
     parser.add_argument("--config_path", type=str, required=True)
+    parser.add_argument("--n_fid_samples", type=int, default=10000, help="Number of samples to generate for FID computation.")
     args = parser.parse_args()
 
     from src.utility.dataset_builders import build_dataset
@@ -103,7 +105,7 @@ def main():
         drop_last=True,
         num_workers=hparams.num_workers,
     )
-
+    print("### val loader", len(val_loader.dataset), "samples, batch size", hparams.batch_size, "->", len(val_loader), "batches.")
     # ── Generate samples + FID + ELBO ─────────────────────────────────────────
     plot_final_samples(
         model=model,
@@ -113,6 +115,8 @@ def main():
         device=device,
         data_config=data_config,
         val_loader=val_loader,
+        debug=False,
+        n_fid_samples=args.n_fid_samples,
     )
 
 

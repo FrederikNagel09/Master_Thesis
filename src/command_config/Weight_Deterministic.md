@@ -46,12 +46,12 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --model weight_inr_diffusion\
     --dataset mnist \
     --epochs 5 \
-    --batch_size 128 \
+    --batch_size 16 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 2 \
-    --subset_frac 0.02 \
+    --subset_frac 0.05 \
     --normalize True\
     --probablistic False \
     --stop_gradient_flow True \

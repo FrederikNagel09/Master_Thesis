@@ -175,6 +175,7 @@ def _model_to_grid(
     device: str,
     data_config: dict,
     collect_snapshots: bool = False,
+    debug: bool = True,
 ) -> tuple[np.ndarray, dict[int, np.ndarray] | None]:
     """
     Draw n_samples from model and return rendered grid + optional denoising snapshots.
@@ -215,13 +216,13 @@ def _model_to_grid(
 
         elif model_type == "ndm_inr" or model_type in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
             if collect_snapshots:
-                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True)
+                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True, debug=debug)
             else:
-                raw_samples = model.sample(n_samples)
+                raw_samples = model.sample(n_samples, debug=debug)
 
             samples = (raw_samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
 
-            if GLOBAL_DEBUG_BOOL:
+            if GLOBAL_DEBUG_BOOL and debug:
                 print("################## RAW SAMPLES: ##############################")
                 print(f"Raw samples shape: {raw_samples.shape}")
                 print(f"Raw samples stats: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f},")
@@ -234,10 +235,10 @@ def _model_to_grid(
 
         elif model_type == "ndm_transinr" or model_type in ("weight_inr_diffusion", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             if collect_snapshots:
-                raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True)
+                raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True, debug=debug)
                 theta = model.weight_encoder.decode_modulations(raw_samples)
             else:
-                raw_samples = model.sample_weight(n_samples)
+                raw_samples = model.sample_weight(n_samples, debug=debug)
                 theta = model.weight_encoder.decode_modulations(raw_samples)
             # Use only first n_samples for the image grid
             samples = model._inr_decode(theta[:n_samples])
@@ -262,6 +263,7 @@ def plot_final_samples(
     n_samples: int = 64,
     n_fid_samples: int = 512,
     val_loader: torch.utils.data.DataLoader = None,  # optional: if provided and model has compute_full_elbo, it will be computed
+    debug=False,
 ) -> None:
     """
     Sample an 8x8 grid from the model, compute MNIST + Inception FID scores,
@@ -300,11 +302,11 @@ def plot_final_samples(
 
     # ── Grid samples (for display) ────────────────────────────────────────────
     n_side = int(np.sqrt(n_samples))
-    grid, _ = _model_to_grid(model, model_type, n_side * n_side, device, data_config)
+    grid, _ = _model_to_grid(model, model_type, n_side * n_side, device, data_config, debug=debug)
 
     # ── FID samples ───────────────────────────────────────────────────────────
     print(f"  Computing FID ({n_fid_samples} samples) …")
-    fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config)
+    fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config, debug=debug)
 
     # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1] for feature extractors
     if channels == 1:
