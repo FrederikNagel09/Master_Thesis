@@ -158,7 +158,7 @@ def run_training(
         drop_last=True,
         num_workers=getattr(args, "num_workers", 0),
     )
-    data_loader_val = torch.utils.data.DataLoader(  # noqa: F841
+    data_loader_val = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
@@ -366,7 +366,9 @@ def run_training(
 
     print("\n  Training complete...")
     print("  Generating final sample grid …")
-    plot_final_samples(model, args.model, end_epoch, run_dir, device, data_config, n_fid_samples=args.n_fid_samples)
+    plot_final_samples(
+        model, args.model, end_epoch, run_dir, device, data_config, n_fid_samples=args.n_fid_samples, val_loader=data_loader_val
+    )
     print("Final sample grid saved to training directory.")
 
     # ── 5. Save ───────────────────────────────────────────────────────────────

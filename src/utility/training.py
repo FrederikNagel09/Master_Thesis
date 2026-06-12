@@ -59,7 +59,7 @@ def train(
     history: dict | None = None,
     data_config: dict | None = None,
     deactivate_progress_bar=False,
-    freeze_encoder: float | None = None,
+    freeze_encoder: float | None = None,  # noqa: ARG001
     two_stage: bool = False,
 ) -> nn.Module:
     """
@@ -170,9 +170,9 @@ def train(
 
     # two-stage training control variables (for applicable models)
     stage2_triggered = False
-    plateau_window = 40      # 30 * 100 steps = 3000 steps
-    plateau_threshold = 0.4 # tune after dry run
-    
+    plateau_window = 40  # 30 * 100 steps = 3000 steps
+    plateau_threshold = 0.4  # tune after dry run
+
     if two_stage:
         print("[Training] Two-stage mode: freezing denoiser for stage 1.")
         if model_type == "weight_inr_diffusion":
@@ -186,7 +186,6 @@ def train(
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
-
         if GLOBAL_DEBUG_BOOL:
             print(f"\n############## EPOCH: {epoch} ##############\n")
         for batch in data_loader:
@@ -242,7 +241,7 @@ def train(
 
             # ── Progress bar postfix ─────────────────────────────────────────
             progress_bar.set_postfix(
-                #epoch=f"{epoch}/{start_epoch + epochs}",
+                # epoch=f"{epoch}/{start_epoch + epochs}",
                 loss=f"{loss.item():.4f}",
                 diff=f"{l_diff.item():.4f}",
                 prior=f"{l_prior.item():.4f}",
@@ -270,20 +269,21 @@ def train(
                         stage2_triggered = True
                         print(f"[Step {global_step}] Rec plateaued — switching to stage 2.")
                         if model_type == "weight_inr_diffusion":
-                            for p in model.weight_encoder.parameters(): p.requires_grad = False
-                            for p in model.denoiser.parameters(): p.requires_grad = True
+                            for p in model.weight_encoder.parameters():
+                                p.requires_grad = False
+                            for p in model.denoiser.parameters():
+                                p.requires_grad = True
                             remaining_steps = total_steps - global_step
-                            optimizer = torch.optim.Adam(
-                                model.denoiser.parameters(), lr=lr, weight_decay=weight_decay
-                            )
+                            optimizer = torch.optim.Adam(model.denoiser.parameters(), lr=lr, weight_decay=weight_decay)
                         elif model_type == "latent_inr_diffusion":
-                            for p in model.latent_encoder.parameters(): p.requires_grad = False
-                            for p in model.decoder.parameters(): p.requires_grad = False
-                            for p in model.noise_predictor.parameters(): p.requires_grad = True
+                            for p in model.latent_encoder.parameters():
+                                p.requires_grad = False
+                            for p in model.decoder.parameters():
+                                p.requires_grad = False
+                            for p in model.noise_predictor.parameters():
+                                p.requires_grad = True
                             remaining_steps = total_steps - global_step
-                            optimizer = torch.optim.Adam(
-                                model.noise_predictor.parameters(), lr=lr, weight_decay=weight_decay
-                            )
+                            optimizer = torch.optim.Adam(model.noise_predictor.parameters(), lr=lr, weight_decay=weight_decay)
                         if use_scheduler:
                             scheduler = _build_scheduler(
                                 optimizer,
@@ -291,8 +291,6 @@ def train(
                                 total_steps=remaining_steps,
                                 peak_lr=_peak_lr,
                             )
-
-
 
             # ── Sampling checkpoints ─────────────────────────────────────────
             if sample_fn is not None and global_step in _sample_steps:
