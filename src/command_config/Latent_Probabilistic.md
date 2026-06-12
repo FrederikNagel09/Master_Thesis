@@ -47,17 +47,18 @@ python main.py \
     --model latent_inr_diffusion \
     --dataset mnist \
     --epochs 5 \
-    --batch_size 64 \
+    --batch_size 16 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 50 \
+    --log_every_n_steps 2 \
     --subset_frac 0.01 \
     --normalize False\
     --do_scaling True \
     --do_latent_recon False \
     --probablistic True \
     --lambda_kl 1.0 \
+    --n_fid_sample 32 \
     --T 100 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \

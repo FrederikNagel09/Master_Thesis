@@ -9,7 +9,8 @@ from tqdm import tqdm
 
 if TYPE_CHECKING:
     import numpy as np
-from models.WeightDiffusion import WeightDiffusion
+
+from src.models.WeightDiffusion import WeightDiffusion
 
 
 class WeightNDMDiffusion(WeightDiffusion):
