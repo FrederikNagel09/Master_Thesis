@@ -1245,6 +1245,7 @@ def _build_latent_diffusion(args, data_config: dict):
         scaling=args.do_scaling,
         latent_recon=args.do_latent_recon,
         probabilistic=args.probablistic,
+        stop_gradient_flow=args.stop_gradient_flow,
     )
 
     # Final print of total model params (encoder + decoder + predictor)
