@@ -53,12 +53,13 @@ def _style_ax(ax: plt.Axes) -> None:
     ax.yaxis.grid(True, color="#eeeeee", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
 
+
 def _plot_loss_panel(
     ax: plt.Axes,
     steps: list[float],
     values: list[float],
     key: str,
-    ) -> None:
+) -> None:
     """Plot raw (faint) + smoothed (bold) loss curve onto ax."""
     color = _COLORS[key]
     ax.set_title(_LABELS[key], fontsize=12, fontweight="medium", pad=8)
@@ -69,7 +70,7 @@ def _plot_loss_panel(
 
     if len(steps) >= 10:
         smoothed, kernel = _smooth(values, n_points=20)
-        ax.plot(steps[kernel - 1:], smoothed, color=color, linewidth=2.2, alpha=0.9)
+        ax.plot(steps[kernel - 1 :], smoothed, color=color, linewidth=2.2, alpha=0.9)
 
     # If spike is >100x the min, clip y-axis using median-based upper bound
     vmax, vmin = max(values), min(v for v in values if v > 0)
@@ -78,6 +79,7 @@ def _plot_loss_panel(
         ymax = median * 3.0
         ymin = max(0.0, float(np.min(values)) * 0.95)
         ax.set_ylim(ymin, ymax)
+
 
 def _add_lr_twin(ax: plt.Axes, steps: list[float], lr_values: list[float]) -> None:
     """Overlay the LR schedule on a twin y-axis of the given axes."""
@@ -173,6 +175,7 @@ def _model_to_grid(
     device: str,
     data_config: dict,
     collect_snapshots: bool = False,
+    debug: bool = True,
 ) -> tuple[np.ndarray, dict[int, np.ndarray] | None]:
     """
     Draw n_samples from model and return rendered grid + optional denoising snapshots.
@@ -213,13 +216,13 @@ def _model_to_grid(
 
         elif model_type == "ndm_inr" or model_type in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
             if collect_snapshots:
-                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True)
+                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True, debug=debug)
             else:
-                raw_samples = model.sample(n_samples)
+                raw_samples = model.sample(n_samples, debug=debug)
 
             samples = (raw_samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
 
-            if GLOBAL_DEBUG_BOOL:
+            if GLOBAL_DEBUG_BOOL and debug:
                 print("################## RAW SAMPLES: ##############################")
                 print(f"Raw samples shape: {raw_samples.shape}")
                 print(f"Raw samples stats: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f},")
@@ -232,10 +235,10 @@ def _model_to_grid(
 
         elif model_type == "ndm_transinr" or model_type in ("weight_inr_diffusion", "ndm_temporal_transinr", "ndm_static_mlpinr"):
             if collect_snapshots:
-                raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True)
+                raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True, debug=debug)
                 theta = model.weight_encoder.decode_modulations(raw_samples)
             else:
-                raw_samples = model.sample_weight(n_samples)
+                raw_samples = model.sample_weight(n_samples, debug=debug)
                 theta = model.weight_encoder.decode_modulations(raw_samples)
             # Use only first n_samples for the image grid
             samples = model._inr_decode(theta[:n_samples])
@@ -259,6 +262,8 @@ def plot_final_samples(
     data_config: dict,
     n_samples: int = 64,
     n_fid_samples: int = 512,
+    val_loader: torch.utils.data.DataLoader = None,  # optional: if provided and model has compute_full_elbo, it will be computed
+    debug=False,
 ) -> None:
     """
     Sample an 8x8 grid from the model, compute MNIST + Inception FID scores,
@@ -273,6 +278,7 @@ def plot_final_samples(
         data_config:    Dict with "channels", "img_size", "data_dim", "dataset".
         n_samples:      Total grid samples; displayed as sqrt x sqrt grid.
         n_fid_samples:  Number of samples used for FID computation.
+        val_loader:     Validation DataLoader; required for ELBO computation.
     Returns:
         None
     """
@@ -296,18 +302,16 @@ def plot_final_samples(
 
     # ── Grid samples (for display) ────────────────────────────────────────────
     n_side = int(np.sqrt(n_samples))
-    grid, _ = _model_to_grid(model, model_type, n_side * n_side, device, data_config)
+    grid, _ = _model_to_grid(model, model_type, n_side * n_side, device, data_config, debug=debug)
 
     # ── FID samples ───────────────────────────────────────────────────────────
     print(f"  Computing FID ({n_fid_samples} samples) …")
-    fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config)
+    fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config, debug=debug)
 
     # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1] for feature extractors
     if channels == 1:
-        # grid is (N, H, W) → (N, 1, H, W)
         fid_tensor = torch.from_numpy(fid_grid).unsqueeze(1).float()
     else:
-        # grid is (N, H, W, C) → (N, C, H, W)
         fid_tensor = torch.from_numpy(fid_grid).permute(0, 3, 1, 2).float()
 
     inception = _get_inception(device)
@@ -318,10 +322,6 @@ def plot_final_samples(
         gen_mnist_feats, _ = _mnist_features(fid_tensor, classifier, device)
         mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
     else:
-        # CIFAR-10: skip MNIST FID, only compute Inception FID
-        # Real inception features must be computed separately for CIFAR-10;
-        # reuse _inception_features on a CIFAR-10 real batch if needed.
-        # For now load cached or raise a clear error.
         raise NotImplementedError(
             "CIFAR-10 real Inception features cache not yet wired into plot_final_samples. "
             "Add a CIFAR-10 equivalent of _load_or_compute_real_features."
@@ -330,15 +330,22 @@ def plot_final_samples(
     gen_inception_feats = _inception_features(fid_tensor, inception, device)
     inception_fid = _fid(real_inception_feats, gen_inception_feats)
 
+    # ── ELBO (optional) ───────────────────────────────────────────────────────
+    elbo_str = ""
+    if val_loader is not None and hasattr(model, "compute_full_elbo"):
+        print("  Computing full ELBO over validation set …")
+        elbo_val = model.compute_full_elbo(val_loader)
+        elbo_str = f"ELBO: {elbo_val:.2f}"
+
     # ── Build figure ──────────────────────────────────────────────────────────
     fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5 + 0.6))
 
-    # Main title + FID subtitle via suptitle + text
     fig.suptitle(f"Final samples — epoch {epoch}", fontsize=12, y=1.01)
 
     fid_str = f"MNIST FID: {mnist_fid:.2f}    Inception FID: {inception_fid:.2f}" if is_mnist else f"Inception FID: {inception_fid:.2f}"
+    subtitle = f"{fid_str}\n{elbo_str}" if elbo_str else fid_str
 
-    fig.text(0.5, 0.995, fid_str, ha="center", va="top", fontsize=9, color="#444444")
+    fig.text(0.5, 0.995, subtitle, ha="center", va="top", fontsize=9, color="#444444")
 
     for i, ax in enumerate(axes.flatten()):
         if channels == 1:

@@ -164,7 +164,7 @@ class LatentDiffusion(nn.Module):
         return self._negative_elbo(x, lambda_kl)
 
     @torch.no_grad()
-    def sample(self, n_samples: int = 1, collect_snapshots: bool = False) -> torch.Tensor:
+    def sample(self, n_samples: int = 1, collect_snapshots: bool = False, debug: bool = True) -> torch.Tensor:
         """
         Generate images by reverse diffusion in latent space.
 
@@ -174,14 +174,16 @@ class LatentDiffusion(nn.Module):
         Returns:
             images: (n_samples, data_dim)
         """
+        print("Debug value: ", debug)
+
         # Sample latents:
         if collect_snapshots:
-            z, snapshots = self._sample_latent(n_samples, collect_snapshots=True)
+            z, snapshots = self._sample_latent(n_samples, collect_snapshots=True, debug=debug)
             if self._normalize:
                 z = self._denormalize_z(z)
             return self._decode_latent(z), snapshots
         else:
-            z = self._sample_latent(n_samples, collect_snapshots=collect_snapshots)  # (B, latent_dim, H', W')
+            z = self._sample_latent(n_samples, collect_snapshots=collect_snapshots, debug=debug)  # (B, latent_dim, H', W')
             if self._normalize:
                 z = self._denormalize_z(z)
             return self._decode_latent(z)  # (B, data_dim)
@@ -273,7 +275,7 @@ class LatentDiffusion(nn.Module):
         if self.__do_scaling:
             total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
         else:
-            total = (self.T - 1)*l_diff - lambda_kl * l_entropy + l_rec
+            total = (self.T - 1) * l_diff - lambda_kl * l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")
@@ -369,7 +371,7 @@ class LatentDiffusion(nn.Module):
             z = self._normalize_z(z_raw) if self._normalize else z_raw
 
             # l_rec and l_entropy computed once per batch
-            l_rec = self._l_rec(x, z_raw)  # (B,)
+            l_rec = self._l_rec(x, z_raw, debug=False)  # (B,)
             l_entropy = self._l_entropy(logvar) if self._probabilistic else torch.zeros(B, device=device)  # (B,)
 
             # Sum l_diff over all t
@@ -382,7 +384,7 @@ class LatentDiffusion(nn.Module):
                 if t == 0 and self._do_latent_recon:
                     l_diff_sum += self._l_latent_rec(z_t, t_norm, z)  # (B,)
                 else:
-                    l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx)  # (B,)
+                    l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx, debug=False)  # (B,)
 
             # Full ELBO per sample (negative, so lower is better during training)
             elbo = l_diff_sum + l_entropy + l_rec  # (B,)
@@ -401,6 +403,7 @@ class LatentDiffusion(nn.Module):
         t_norm: torch.Tensor,
         epsilon: torch.Tensor,
         t_idx: torch.Tensor,
+        debug: bool = True,
     ) -> torch.Tensor:
         """
         Noise-prediction MSE loss.
@@ -428,7 +431,7 @@ class LatentDiffusion(nn.Module):
         unscaled_loss = mse.mean(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
         # Bin MSE by timestep to see where the model fails
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
             t_flat = t_norm.flatten()
             low_t_mask = t_flat < 0.2  # t in [0, 0.2]
             high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
@@ -444,7 +447,7 @@ class LatentDiffusion(nn.Module):
             l_diff_loss = unscaled_loss
 
         # Debug logs updated to match the spatial reality
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
             print("############# Diffusion Loss: #################")
             print("epsilon shape:", epsilon.shape)
             print(
@@ -508,7 +511,7 @@ class LatentDiffusion(nn.Module):
         entropy_per_dim = 0.5 * (1.0 + torch.log(torch.as_tensor(2.0 * math.pi, device=logvar.device)) + logvar)
         return entropy_per_dim.mean(dim=(-3, -2, -1))  # (B,) — sum over latent dims, return positive entropy
 
-    def _l_rec(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+    def _l_rec(self, x: torch.Tensor, z: torch.Tensor, debug: bool = True) -> torch.Tensor:
         """
         Pixel-space reconstruction loss.
 
@@ -522,7 +525,7 @@ class LatentDiffusion(nn.Module):
         x_hat = x_hat.reshape(x_hat.shape[0], -1)
         x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
 
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
             print("############# Reconstruction Loss: #################")
             print("x_flat shape:", x_flat.shape)
             print(
@@ -600,7 +603,7 @@ class LatentDiffusion(nn.Module):
     # Sampling helpers
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def _sample_latent(self, n_samples: int, collect_snapshots: bool = False) -> torch.Tensor:
+    def _sample_latent(self, n_samples: int, collect_snapshots: bool = False, debug: bool = True) -> torch.Tensor:
         """
         Reverse diffusion in latent space (DDPM, ε-prediction).
 
@@ -643,7 +646,7 @@ class LatentDiffusion(nn.Module):
                 snapshots[t] = z.detach().cpu().numpy().flatten()
 
             # Print statistics every 100 steps for debugging
-            if (t % 100 == 0 and GLOBAL_DEBUG_BOOL) or (t == 0 and GLOBAL_DEBUG_BOOL):
+            if debug and GLOBAL_DEBUG_BOOL and (t % 100 == 0 or t == 0):
                 print("################## Sampling: ##############################")
                 print(f"Sampling step {t}/{self.T}:")
                 print(

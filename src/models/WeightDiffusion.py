@@ -337,7 +337,6 @@ class WeightDiffusion(nn.Module):
         device = self.sqrt_alpha_cumprod.device
         total_loss = 0.0
         n_batches = 0
-
         for x, _ in val_loader:
             x = x.to(device)
             batch_size = x.shape[0]
@@ -362,7 +361,7 @@ class WeightDiffusion(nn.Module):
 
             # --------- 4. Compute Non-Diffusion Core Losses ---------
             theta = self.weight_encoder.decode_modulations(theta_prime_raw)
-            l_rec = self._l_rec(x_flat, theta)  # (B,)
+            l_rec = self._l_rec(x_flat, theta, debug=False)  # (B,)
 
             # --------- 5. Integrate Diffusion Loss Over All T ---------
             l_diff_sum = torch.zeros(batch_size, device=device)  # (B,)
@@ -377,7 +376,7 @@ class WeightDiffusion(nn.Module):
 
                 # Accumulate the unscaled, step-specific weighted MSE loss
                 # Fixed: Added theta_prime (x0) to the argument match list
-                l_diff_sum += self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx)  # (B,)
+                l_diff_sum += self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx, debug=False)  # (B,)
 
             # --------- 6. Aggregate Total Negative ELBO Per Sample ---------
             # Scaled exactly to match your negative_elbo calculation configuration
@@ -392,7 +391,7 @@ class WeightDiffusion(nn.Module):
     # -------------------------------------------------------------------------
     # Loss term Helpers:
     # -------------------------------------------------------------------------
-    def _l_rec(self, x, theta_prime_raw) -> torch.Tensor:
+    def _l_rec(self, x, theta_prime_raw, debug=True) -> torch.Tensor:
         """
         Reconstruction is done my taking Theta Prime, decoding it to pixel space, and comparing to the original image x.
 
@@ -406,7 +405,7 @@ class WeightDiffusion(nn.Module):
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
 
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
             print("############# Reconstruction Loss: #################")
             print("x_flat shape:", x_flat.shape)
             print(
@@ -434,7 +433,7 @@ class WeightDiffusion(nn.Module):
 
         return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
-    def _l_diff(self, theta_t, t_norm, epsilon, x0, t_idx) -> torch.Tensor:
+    def _l_diff(self, theta_t, t_norm, epsilon, x0, t_idx, debug=True) -> torch.Tensor:
         """
         V-prediction diffusion loss: network predicts v = sqrt(a_bar)*eps - sqrt(1-a_bar)*x0.
         Args:
@@ -456,7 +455,7 @@ class WeightDiffusion(nn.Module):
         mse = F.mse_loss(v_hat, v_target, reduction="none")
 
         # Bin MSE by timestep to see where the model fails
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
             t_flat = t_norm.flatten()
             low_t_mask = t_flat < 0.2
             high_t_mask = t_flat > 0.8
@@ -465,7 +464,7 @@ class WeightDiffusion(nn.Module):
             if high_t_mask.any():
                 print(f"MSE @ high t (>0.8): {mse[high_t_mask].mean():.4f}")
 
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
             print("############# Diffusion Loss: #################")
             print("v_target shape:", v_target.shape)
             print(
@@ -530,6 +529,7 @@ class WeightDiffusion(nn.Module):
         self,
         n_samples: int = 1,
         collect_snapshots: bool = False,
+        debug: bool = True,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[int, np.ndarray]]:
         """
         Sample weight vectors via reverse diffusion with v-prediction.
@@ -547,7 +547,7 @@ class WeightDiffusion(nn.Module):
 
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
-        if GLOBAL_DEBUG_BOOL:
+        if GLOBAL_DEBUG_BOOL and debug:
             fixed_theta = torch.randn(1, weight_dim, device=device)
             t_high = torch.full((1, 1), 999 / (self.T - 1), device=device)
             t_low = torch.full((1, 1), 0 / (self.T - 1), device=device)
@@ -585,7 +585,7 @@ class WeightDiffusion(nn.Module):
             if collect_snapshots and t in T_values:
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
-            if (t % 100 == 0 and GLOBAL_DEBUG_BOOL) or (t == 0 and GLOBAL_DEBUG_BOOL):
+            if (t % 100 == 0 and GLOBAL_DEBUG_BOOL and debug) or (t == 0 and GLOBAL_DEBUG_BOOL and debug):
                 print("################## Sampling: ##############################")
                 print(f"Sampling step {t}/{self.T}:")
                 print(

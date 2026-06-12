@@ -15,7 +15,6 @@ import argparse
 
 import torch
 import torch.nn as nn
-from models.WeightNdmDiffusion import WeightNDMDiffusion
 
 from src.models.LatentEncoder import ResNetLatentEncoder
 from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor
@@ -36,6 +35,7 @@ from src.models.NDM_INR import (
 from src.models.trans_inr import TransInr, make_coord_grid
 from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor, TransInrTemporalEncoder
 from src.models.WeightDiffusion import WeightDiffusion
+from src.models.WeightNdmDiffusion import WeightNDMDiffusion
 from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
 
 # =============================================================================

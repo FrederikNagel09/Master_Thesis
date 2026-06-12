@@ -49,7 +49,7 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--do_scaling", type=lambda x: x.lower() == "true", default=True)
     p.add_argument("--do_latent_recon", type=lambda x: x.lower() == "true", default=True)
     p.add_argument("--stop_gradient_flow", type=lambda x: x.lower() == "true", default=True)
-
+    p.add_argument("--n_fid_samples", type=int, default=2048)
     # ── Scheduler ─────────────────────────────────────────────────────────────
     p.add_argument("--use_scheduler", action="store_true")
     p.add_argument("--warmup_steps", type=int, default=5_000)
