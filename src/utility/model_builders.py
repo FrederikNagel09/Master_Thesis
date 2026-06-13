@@ -37,7 +37,7 @@ from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor
 from src.models.WeightDiffusion import WeightDiffusion
 from src.models.WeightNdmDiffusion import WeightNDMDiffusion
 from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
-
+from src.models.WeightTransform import WeightTransformationParam, WeightTransformationTrans
 # =============================================================================
 # Public API
 # =============================================================================
@@ -160,27 +160,36 @@ def print_encoder_stats(model, mode="Static"):
     return total_learnable
 
 
-def print_noise_predictor_stats(model):
+def print_noise_predictor_stats(model, name="Noise Predictor"):
     def count(params):
         return sum(p.numel() for p in params)
+
+    # Unwrap WeightTransformation wrappers to get the base model stats
+    base = model
 
     total = count(model.parameters())
 
     print("\n" + "=" * 60)
-    print(f"{'TransInrNoise Predictor ε_θ Statistics':^60}")
-    print(f"{'(Encoder-Only DiT Architecture)':^60}")
+
+    if isinstance(model, (WeightTransformationTrans, WeightTransformationParam)):
+        arch = "Trans-INR" if isinstance(model, WeightTransformationTrans) else "ParamDiT"
+        print(f"{'Weight Transformation F_φ Statistics':^60}")
+        print(f"{f'(Identity-Constrained {arch} Architecture)':^60}")
+    else:
+        print(f"{'TransInrNoise Predictor ε_θ Statistics':^60}")
+        print(f"{'(Encoder-Only DiT Architecture)':^60}")
+
     print("=" * 60)
 
-    if isinstance(model, TransInrNoisePredictor):
-        # Updated to match new attribute names
-        time_p = count(model.time_embed.parameters()) + count(model.time_mlp.parameters())
-        token_p = count(model.token_embed.parameters())
-        pos_p = model.pos_embed.numel()
-        transformer_p = count(model.transformer.parameters())
-        head_p = count(model.noise_head.parameters())
+    if isinstance(base, (TransInrNoisePredictor, WeightTransformationTrans)):
+        time_p = count(base.time_embed.parameters()) + count(base.time_mlp.parameters())
+        token_p = count(base.token_embed.parameters())
+        pos_p = base.pos_embed.numel()
+        transformer_p = count(base.transformer.parameters())
+        head_p = count(base.noise_head.parameters())
 
-        print(f"  Weight Dim:   {model.weight_dim:<10} | Chunk Size: {model.chunk_size}")
-        print(f"  Num Tokens:   {model.n_tokens:<10} | Padded Dim: {model.padded_dim}")
+        print(f"  Weight Dim:   {base.weight_dim:<10} | Chunk Size: {base.chunk_size}")
+        print(f"  Num Tokens:   {base.n_tokens:<10} | Padded Dim: {base.padded_dim}")
         print("-" * 60)
         print("Learnable Parameters:")
         print(f"  Time Conditioning (MLP): {time_p:>12,} params")
@@ -189,14 +198,34 @@ def print_noise_predictor_stats(model):
         print(f"  Transformer Blocks:      {transformer_p:>12,} params")
         print(f"  Noise Prediction Head:   {head_p:>12,} params")
         print(f"  {'─'*44}")
-        print(f"  Total Predictor:         {total:>12,} params")
+        print(f"  Total:                   {total:>12,} params")
+
+    elif isinstance(base, (ParamDiT, WeightTransformationParam)):
+        time_p = count(base.time_embed.parameters())
+        tokenizer_p = count(base.tokenizer.parameters())
+        detokenizer_p = count(base.detokenizer.parameters())
+        blocks_p = count(base.blocks.parameters())
+        norm_p = count(base.final_norm.parameters())
+
+        n_tokens = base.tokenizer.num_params  # total weight params being tokenized
+        print(f"  Hidden Dim:   {base.hidden_dim:<10} | Depth: {len(base.blocks)}")
+        print(f"  Num Tokens:   {n_tokens:<10} | Time Dim: {base.time_dim}")
+        print("-" * 60)
+        print("Learnable Parameters:")
+        print(f"  Time Embedding:          {time_p:>12,} params")
+        print(f"  Tokenizer:               {tokenizer_p:>12,} params")
+        print(f"  Detokenizer:             {detokenizer_p:>12,} params")
+        print(f"  Transformer Blocks:      {blocks_p:>12,} params")
+        print(f"  Final LayerNorm:         {norm_p:>12,} params")
+        print(f"  {'─'*44}")
+        print(f"  Total:                   {total:>12,} params")
+
     else:
         print("  Generic or Legacy Noise Predictor detected.")
         print(f"  Total parameters: {total:,}")
 
     print("=" * 60 + "\n")
     return total
-
 
 def print_mlp_encoder_stats(model):
     total = sum(p.numel() for p in model.parameters())
@@ -1072,7 +1101,7 @@ def _build_weight_ndm_diffusion(args, data_config: dict):
     using a shallower ParamDiT with the same column tokenizer as the noise predictor.
     """
     from src.models.param_dit import ParamDiT
-    from src.models.WeightTransform import WeightTransformation
+    from src.models.WeightTransform import WeightTransformationParam, WeightTransformationTrans
 
     channels = data_config["channels"]
     img_size = data_config["img_size"]
@@ -1175,23 +1204,40 @@ def _build_weight_ndm_diffusion(args, data_config: dict):
 
     noise_predictor_params = print_noise_predictor_stats(network)
 
-    # ── F_phi (WeightTransformation) ─────────────────────────────────────────
+    # ── F_phi ─────────────────────────────────────────────────────────────────
     f_phi_hidden_dim = getattr(args, "f_phi_hidden_dim", noise_predictor_dim // 2)
     f_phi_depth = getattr(args, "f_phi_depth", 2)
     f_phi_num_heads = getattr(args, "f_phi_num_heads", noise_predictor_n_head)
-    f_phi_t_embed = getattr(args, "f_phi_t_embed", getattr(args, "noise_predictor_t_embed", 128))
+    f_phi_t_embed = getattr(args, "f_phi_t_embed", 128)
+    f_phi_type = getattr(args, "f_phi_type", "mlp")
 
-    f_phi = WeightTransformation(
-        param_shapes=param_shapes,
-        hidden_dim=f_phi_hidden_dim,
-        depth=f_phi_depth,
-        num_heads=f_phi_num_heads,
-        mlp_ratio=getattr(args, "noise_predictor_mlp_ratio", 4.0),
-        dropout=dropout,
-        time_dim=f_phi_t_embed,
-        tokenizer="column",
-    )
-    f_phi_params = sum(p.numel() for p in f_phi.parameters())
+    if f_phi_type == "param":
+        f_phi = WeightTransformationParam(
+            param_shapes=param_shapes,
+            hidden_dim=f_phi_hidden_dim,
+            depth=f_phi_depth,
+            num_heads=f_phi_num_heads,
+            mlp_ratio=getattr(args, "f_phi_mlp_ratio", 4.0),
+            dropout=dropout,
+            time_dim=f_phi_t_embed,
+            tokenizer="column",
+        )
+    elif f_phi_type == "trans":
+        f_phi = WeightTransformationTrans(
+            weight_dim=weight_dim,
+            dim=f_phi_hidden_dim,
+            depth=f_phi_depth,
+            n_head=f_phi_num_heads,
+            head_dim=args.f_phi_head_dim,
+            ff_dim=4 * f_phi_hidden_dim,
+            chunk_size=getattr(args, "noise_predictor_chunk_size", 128),
+            t_embed_dim=f_phi_t_embed,
+            dropout=dropout,
+        )
+    else:
+        raise ValueError(f"Unknown f_phi_type: {f_phi_type}")
+
+    f_phi_params = print_noise_predictor_stats(f_phi, name="F_phi")
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
@@ -1212,6 +1258,7 @@ def _build_weight_ndm_diffusion(args, data_config: dict):
         probablistic=args.probablistic,
         lambda_kl=args.lambda_kl if hasattr(args, "lambda_kl") else 1.0,
         stop_gradient_flow=args.stop_gradient_flow,
+        normalize=args.normalize,
     )
 
     total_params = sum(p.numel() for p in model.parameters())

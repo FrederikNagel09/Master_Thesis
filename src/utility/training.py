@@ -14,6 +14,7 @@ import sys
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+import random
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL
 
@@ -221,8 +222,25 @@ def train(
 
             # ── Backward pass ────────────────────────────────────────────────
             optimizer.zero_grad()
+            # 2. Check for NaN in Loss
+            if torch.isnan(loss):
+                print(f"CRITICAL: Loss is NaN at step {global_step}. Skipping...")
+                continue # Safe to skip here as we haven't done backward() yet
             loss.backward()
+            # 4. Check for NaN in Gradients (Crucial Step)
+            # This finds exactly which layer is exploding before you clip or step
+            nan_found = False
+            for name, param in model.named_parameters():
+                if param.grad is not None and torch.isnan(param.grad).any():
+                    print(f"NaN detected in gradients of: {name}")
+                    nan_found = True
+                    break 
 
+            if nan_found:
+                optimizer.zero_grad() # Clear the bad gradients
+                continue # Skip this step entirely
+
+            # 5. Gradient Clipping and Step
             if grad_clip > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
@@ -268,7 +286,7 @@ def train(
                     if (max(window) - min(window)) < plateau_threshold:
                         stage2_triggered = True
                         print(f"[Step {global_step}] Rec plateaued — switching to stage 2.")
-                        if model_type == "weight_inr_diffusion":
+                        if model_type in ("weight_inr_diffusion", "weight_inr_ndm_diffusion"):
                             for p in model.weight_encoder.parameters():
                                 p.requires_grad = False
                             for p in model.denoiser.parameters():
@@ -305,6 +323,7 @@ def train(
                         "weight_inr_diffusion",
                         "latent_inr_diffusion",
                         "latent_ndm_inr_diffusion",
+                        "weight_inr_ndm_diffusion",
                     ):
                         sample_fn(model, global_step, device, batch=batch)
                     else:

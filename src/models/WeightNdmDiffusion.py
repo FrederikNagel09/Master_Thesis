@@ -6,11 +6,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
+import random
 
 if TYPE_CHECKING:
     import numpy as np
 
 from src.models.WeightDiffusion import WeightDiffusion
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 
 
 class WeightNDMDiffusion(WeightDiffusion):
@@ -85,6 +87,10 @@ class WeightNDMDiffusion(WeightDiffusion):
         t_norm = (t_idx.float() / (self.T - 1)).unsqueeze(1)  # (B, 1)
         Fx = self.F_phi(theta_prime, t_norm)  # noqa: N806
 
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("==================== DEBUG: Forward Process with F_phi ====================")
+            print(f"F_phi stats: mean={Fx.mean():.4f}, std={Fx.std():.4f}, min={Fx.min():.4f}, max={Fx.max():.4f}")
+            print("===========================================================================")
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
         epsilon = torch.randn_like(theta_prime)
@@ -102,6 +108,7 @@ class WeightNDMDiffusion(WeightDiffusion):
         epsilon: torch.Tensor,
         x0: torch.Tensor,
         t_idx: torch.Tensor,
+        debug: bool = False,
     ) -> torch.Tensor:
         """
         V-prediction loss where the clean signal is F_phi(x0, t) not x0.
@@ -136,6 +143,7 @@ class WeightNDMDiffusion(WeightDiffusion):
         self,
         n_samples: int = 1,
         collect_snapshots: bool = False,
+        debug: bool = True,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[int, np.ndarray]]:
         """
         Reverse diffusion with v-prediction, using F_phi in the forward model.
@@ -162,29 +170,32 @@ class WeightNDMDiffusion(WeightDiffusion):
             sqrt_ab = self.sqrt_alpha_cumprod[t]
             sqrt_1mab = self.sigma[t]
 
-            # Recover x0_hat and eps_hat from v
-            x0_hat = sqrt_ab * curr_theta - sqrt_1mab * v_hat
-            eps_hat = sqrt_1mab * curr_theta + sqrt_ab * v_hat  # noqa: F841
+            # 1. Recover the transformed signal F_phi(x0, t), NOT x0
+            Fx0_hat = sqrt_ab * curr_theta - sqrt_1mab * v_hat
+            
+            # 2. Recover the noise directly
+            eps_hat = sqrt_1mab * curr_theta + sqrt_ab * v_hat  
 
             if t == 0:
-                # Identity constraint: F_phi(theta, 0) = theta, so x0_hat is already in weight space
-                curr_theta = x0_hat
+                # Assuming your identity constraint F_phi(theta, 0) == theta holds perfectly,
+                # Fx0_hat at t=0 is effectively x0.
+                curr_theta = Fx0_hat
+                if collect_snapshots and t in T_values:
+                    snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
                 break
 
-            # Apply F_phi to x0_hat to get the transformed signal for the posterior mean
-            Fx0_hat = self.F_phi(x0_hat, t_norm)  # noqa: N806
+            # DO NOT re-apply self.F_phi here. Fx0_hat is already transformed.
 
             alpha_t = self.alpha[t]
             alpha_bar_t = self.alpha_cumprod[t]
             beta_t = self.beta[t]
 
-            # DDPM posterior mean using F_phi(x0_hat, t) as clean signal
+            # DDPM posterior mean using F_phi(x0_hat, t) as the clean signal
             coeff1 = 1.0 / torch.sqrt(alpha_t)
             coeff2 = (1.0 - alpha_t) / torch.sqrt(1.0 - alpha_bar_t)
 
-            # Recompute eps from Fx0_hat to stay consistent with the transformed forward process
-            eps_from_Fx = (curr_theta - sqrt_ab * Fx0_hat) / sqrt_1mab.clamp(min=1e-6)  # noqa: N806
-            mean = coeff1 * (curr_theta - coeff2 * eps_from_Fx)
+            # Use the eps_hat we got for free from v-prediction inversion
+            mean = coeff1 * (curr_theta - coeff2 * eps_hat)
 
             curr_theta = mean + torch.sqrt(beta_t) * torch.randn_like(curr_theta) if t > 0 else mean
 

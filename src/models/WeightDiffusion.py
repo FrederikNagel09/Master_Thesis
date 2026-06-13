@@ -235,9 +235,9 @@ class WeightDiffusion(nn.Module):
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
-                f"running_std: mean={self.scaler.running_std.mean():.6f},",
-                f"std={self.scaler.running_std.std():.6f},",
-                f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
+                #f"running_std: mean={self.scaler.running_std.mean():.6f},",
+                #f"std={self.scaler.running_std.std():.6f},",
+                #f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
             )
 
             print(

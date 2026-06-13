@@ -16,7 +16,8 @@ from src.models.param_tokenizer import (
 
 
 def _modulate(x, shift, scale):
-    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+    # Squashing the scale ensures the output cannot explode
+    return x * (1 + torch.tanh(scale.unsqueeze(1))) + shift.unsqueeze(1)
 
 
 def timestep_embedding(timesteps, dim, max_period=10000):

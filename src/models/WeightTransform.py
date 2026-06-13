@@ -1,8 +1,9 @@
 import torch
-from models.param_dit import ParamDiT
+from src.models.param_dit import ParamDiT
+from src.models.trans_inr_encoder import TransInrNoisePredictor
 
 
-class WeightTransformation(ParamDiT):
+class WeightTransformationParam(ParamDiT):
     """
     F_phi(theta, t) for NDM-style transformation in weight space.
 
@@ -31,3 +32,37 @@ class WeightTransformation(ParamDiT):
         """
         f_bar = super().forward(theta, t)  # ParamDiT forward
         return (1 - t) * theta + t * f_bar  # identity constraint
+
+
+
+class WeightTransformationTrans(TransInrNoisePredictor):
+    """
+    F_phi(theta, t) for NDM-style transformation in weight space.
+
+    Applies an identity constraint:
+        F_phi(theta, 0) = theta  exactly,  via  (1 - t) * theta + t * f_bar
+
+    Args:
+        weight_dim:   total weight vector dimension
+        dim:          transformer hidden dimension
+        depth:        number of transformer blocks
+        n_head:       number of attention heads
+        head_dim:     dimension per attention head
+        ff_dim:       feedforward dimension
+        chunk_size:   tokenization chunk size
+        t_embed_dim:  timestep embedding dimension
+        dropout:      dropout rate
+    Returns:
+        Transformed weight vector (B, weight_dim), same shape as input
+    """
+
+    def forward(self, theta: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            theta: (B, weight_dim) weight vectors
+            t:     (B,)            normalised timestep in [0, 1]
+        Returns:
+            (B, weight_dim) transformed weights
+        """
+        f_bar = super().forward(theta, t)
+        return (1 - t) * theta + t * f_bar

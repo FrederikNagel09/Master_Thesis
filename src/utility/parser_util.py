@@ -74,7 +74,15 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--prior", type=str, default="gaussian")
 
     # ── F_phi / noise predictor ───────────────────────────────────────────────
-    p.add_argument("--f_phi_type", type=str, default="mlp")
+
+    p.add_argument("--f_phi_hidden_dim", type=int, default=512)
+    p.add_argument("--f_phi_depth", type=int, default=2)
+    p.add_argument("--f_phi_num_heads", type=int, default=8)
+    p.add_argument("--f_phi_head_dim", type=int, default=64)
+    p.add_argument("--f_phi_mlp_ratio", type=float, default=4.0)
+
+
+    p.add_argument("--f_phi_type", type=str, default="mlp", choices=["mlp", "trans", "param"])
     p.add_argument("--f_phi_hidden", type=int, nargs="+", default=[512, 512, 512])
     p.add_argument("--f_phi_t_embed", type=int, default=64)
     p.add_argument("--base_channels", type=int, default=64)
