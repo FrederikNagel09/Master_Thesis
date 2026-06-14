@@ -2,14 +2,14 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --run_name Weight-NDM-Diffusion-Deterministic-NewApproach \
     --model weight_inr_ndm_diffusion\
     --dataset mnist \
-    --epochs 10 \
+    --epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 100 \
-    --n_fid_samples 32 \
-    --subset_frac 1.0 \
+    --n_fid_samples 512 \
+    --subset_frac 0.1 \
     --normalize False\
     --probablistic False \
     --peak_lr 1e-4 \
@@ -45,4 +45,4 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --f_phi_num_heads 8 \
     --f_phi_head_dim 16 \
     --f_phi_t_embed 256 \
-    --f_phi_mlp_ratio 3 
+    --f_phi_mlp_ratio 3

@@ -27,8 +27,9 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 from tqdm import tqdm
+import random
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL
+from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
 from src.configs.train_plot_config import _COLORS, _LABELS
 
 # =============================================================================
@@ -236,10 +237,21 @@ def _model_to_grid(
         elif model_type == "ndm_transinr" or model_type in ("weight_inr_diffusion", "ndm_temporal_transinr", "ndm_static_mlpinr", "weight_inr_ndm_diffusion"):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True, debug=debug)
+                
+                
+                
+                print("################## RAW SAMPLES: ##############################")
+                print(f"DEBUG sampled theta: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f}")
                 theta = model.weight_encoder.decode_modulations(raw_samples)
+                print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
+                print("###########################################################\n")
             else:
                 raw_samples = model.sample_weight(n_samples, debug=debug)
+                
+                print(f"DEBUG sampled theta: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f}")
                 theta = model.weight_encoder.decode_modulations(raw_samples)
+                
+                print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
             # Use only first n_samples for the image grid
             samples = model._inr_decode(theta[:n_samples])
             samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)

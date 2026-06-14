@@ -1,0 +1,38 @@
+/bin/bash: line 1: sh/transformer_ndm_inr.sh: Permission denied
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@hpc.dtu.dk>
+Subject: Job 28649788: <NONAME> in cluster <dcc> Exited
+
+Job <NONAME> was submitted from host <n-62-12-19> by user <s204213> in cluster <dcc> at Sun Jun 14 10:37:52 2026
+Job was executed on host(s) <n-62-31-4>, in queue <hpc>, as user <s204213> in cluster <dcc> at Sun Jun 14 10:37:54 2026
+</zhome/66/4/156534> was used as the home directory.
+</zhome/66/4/156534/Master_Thesis> was used as the working directory.
+Started at Sun Jun 14 10:37:54 2026
+Terminated at Sun Jun 14 10:37:55 2026
+Results reported at Sun Jun 14 10:37:55 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+sh/transformer_ndm_inr.sh
+------------------------------------------------------------
+
+Exited with exit code 126.
+
+Resource usage summary:
+
+    CPU time :                                   0.45 sec.
+    Max Memory :                                 -
+    Average Memory :                             -
+    Total Requested Memory :                     1024.00 MB
+    Delta Memory :                               -
+    Max Swap :                                   -
+    Max Processes :                              -
+    Max Threads :                                -
+    Run time :                                   1 sec.
+    Turnaround time :                            3 sec.
+
+The output (if any) is above this job summary.
+
