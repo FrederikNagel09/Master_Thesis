@@ -1,17 +1,18 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name Weight-NDM-Diffusion-Deterministic-NewApproach \
+    --run_name Weight-NDM-Diffusion-Probabilistic \
+    --epochs 5 \
+    --batch_size 16 \
+    --subset_frac 0.01 \
+    --normalize True\
+    --probablistic True \
+    --stop_gradient_flow True \
+    --n_fid_samples 16 \
     --model weight_inr_ndm_diffusion\
     --dataset mnist \
-    --epochs 10 \
-    --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 100 \
-    --n_fid_samples 32 \
-    --subset_frac 1.0 \
-    --normalize False\
-    --probablistic False \
+    --log_every_n_steps 2 \
     --peak_lr 1e-4 \
     --lambda_kl 1.0 \
     --T 1000 \
@@ -30,19 +31,18 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --encoder_trans_n_groups 32 \
     --encoder_trans_update_strategy scale \
     --predictor_variant transformer \
-    --noise_predictor_type transinr \
     --noise_predictor_dim 128 \
-    --noise_predictor_n_head 16 \
+    --noise_predictor_n_head 8 \
     --noise_predictor_head_dim 32 \
     --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 4 \
-    --noise_predictor_dropout 0.0 \
+    --noise_predictor_depth 6 \
+    --noise_predictor_dropout 0.1 \
     --noise_predictor_chunk_size 32 \
-    --noise_predictor_t_embed_dim 256 \
+    --noise_predictor_t_embed_dim 128 \
     --f_phi_type trans \
-    --f_phi_hidden_dim 64 \
-    --f_phi_depth 4 \
+    --f_phi_hidden_dim 128 \
+    --f_phi_depth 3 \
     --f_phi_num_heads 8 \
-    --f_phi_head_dim 16 \
-    --f_phi_t_embed 256 \
+    --f_phi_head_dim 32 \
+    --f_phi_t_embed 128 \
     --f_phi_mlp_ratio 3 
