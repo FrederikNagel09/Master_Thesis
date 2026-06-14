@@ -198,6 +198,36 @@ class LatentDiffusion(nn.Module):
         """Invert _normalize_z. Args: z (B, C, H', W'). Returns: same shape."""
         return self.latent_scaler(z, reverse=True)
 
+    def compute_rec_loss(self, val_loader: torch.utils.data.DataLoader) -> float:
+        """
+        Computes average reconstruction loss over the full validation set.
+
+        Args:
+            val_loader: Validation DataLoader yielding (x, _) batches. Shape (B, C, H, W).
+        Returns:
+            Mean reconstruction loss (scalar float) across all batches.
+        """
+        self.eval()
+        total_loss = 0.0
+        n_batches = 0
+
+        with torch.no_grad():
+            for x, _ in val_loader:
+                B = x.shape[0]  # noqa: N806
+                if x.dim() == 2:
+                    channels = self.data_dim // (self.img_size * self.img_size)
+                    x = x.view(B, channels, self.img_size, self.img_size)
+
+                x = x.to(next(self.parameters()).device)
+
+                mu, logvar = self.latent_encoder(x)
+                z_raw = mu if not self._probabilistic else self.latent_encoder.reparameterize(mu, logvar)
+
+                total_loss += self._l_rec(x, z_raw).mean().item()
+                n_batches += 1
+
+        return total_loss / n_batches
+
     # -------------------------------------------------------------------------
     # ELBO
     # -------------------------------------------------------------------------

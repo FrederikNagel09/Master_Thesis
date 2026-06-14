@@ -6,7 +6,7 @@ Usage
 -----
 python src/scripts/eval_single_model.py \
     --config_path src/train_results/Weight-Diffusion-Deterministic_Test/metadata/config.json \
-    --n_fid_samples 256
+    --n_fid_samples 16
 """
 
 from __future__ import annotations

@@ -187,6 +187,35 @@ class WeightDiffusion(nn.Module):
         """
         return self.negative_elbo(x, lambda_kl=lambda_kl)
 
+    def compute_rec_loss(self, val_loader: torch.utils.data.DataLoader) -> float:
+        """
+        Computes average reconstruction loss over the full validation set.
+
+        Args:
+            val_loader: Validation DataLoader yielding (x, _) batches. Shape (B, data_dim).
+        Returns:
+            Mean reconstruction loss (scalar float) across all batches.
+        """
+        self.eval()
+        total_loss = 0.0
+        n_batches = 0
+
+        with torch.no_grad():
+            for x, _ in val_loader:
+                x = x.to(next(self.parameters()).device)
+
+                if self.probablistic:
+                    mean, logvar = self.weight_encoder(x)
+                    theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+                else:
+                    theta_prime_raw = self.weight_encoder(x)
+
+                theta = self.weight_encoder.decode_modulations(theta_prime_raw)
+                total_loss += self._l_rec(x, theta).mean().item()
+                n_batches += 1
+
+        return total_loss / n_batches
+
     # -------------------------------------------------------------------------
     # Negative ELBO Computation:
     # -------------------------------------------------------------------------

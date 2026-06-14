@@ -262,12 +262,12 @@ def plot_final_samples(
     data_config: dict,
     n_samples: int = 64,
     n_fid_samples: int = 512,
-    val_loader: torch.utils.data.DataLoader = None,  # optional: if provided and model has compute_full_elbo, it will be computed
+    val_loader: torch.utils.data.DataLoader = None,
     debug=False,
 ) -> None:
     """
     Sample an 8x8 grid from the model, compute MNIST + Inception FID scores,
-    and save to <run_dir>/final_samples_ep{epoch}.png.
+    reconstruction loss, ELBO, and class uniformity. Saves figure and metrics JSON.
 
     Args:
         model:          Trained model, already on device.
@@ -278,10 +278,12 @@ def plot_final_samples(
         data_config:    Dict with "channels", "img_size", "data_dim", "dataset".
         n_samples:      Total grid samples; displayed as sqrt x sqrt grid.
         n_fid_samples:  Number of samples used for FID computation.
-        val_loader:     Validation DataLoader; required for ELBO computation.
+        val_loader:     Validation DataLoader; required for ELBO and rec loss computation.
     Returns:
         None
     """
+    import json
+
     import torch
 
     from src.utility.classifier_utils import (
@@ -308,7 +310,7 @@ def plot_final_samples(
     print(f"  Computing FID ({n_fid_samples} samples) …")
     fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config, debug=debug)
 
-    # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1] for feature extractors
+    # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1]
     if channels == 1:
         fid_tensor = torch.from_numpy(fid_grid).unsqueeze(1).float()
     else:
@@ -319,7 +321,7 @@ def plot_final_samples(
     if is_mnist:
         classifier = _load_classifier(device)
         real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(classifier, inception, device)
-        gen_mnist_feats, _ = _mnist_features(fid_tensor, classifier, device)
+        gen_mnist_feats, gen_logits = _mnist_features(fid_tensor, classifier, device)
         mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
     else:
         raise NotImplementedError(
@@ -330,12 +332,54 @@ def plot_final_samples(
     gen_inception_feats = _inception_features(fid_tensor, inception, device)
     inception_fid = _fid(real_inception_feats, gen_inception_feats)
 
+    # ── Uniformity (normalized entropy of predicted class distribution) ───────
+    print("  Computing class uniformity …")
+    predicted_classes = gen_logits.argmax(dim=1)  # (N,)
+    n_classes = gen_logits.shape[1]
+    class_counts = torch.bincount(predicted_classes, minlength=n_classes).float()
+    class_probs = class_counts / class_counts.sum()
+    # Normalized entropy: 0 = all one class, 1 = perfectly uniform
+    entropy = -(class_probs * (class_probs + 1e-8).log()).sum()
+    uniformity_score = float(entropy / np.log(n_classes))
+    class_breakdown = {str(i): int(class_counts[i].item()) for i in range(n_classes)}
+
+    # ── Reconstruction loss (optional) ────────────────────────────────────────
+    rec_loss = None
+    if val_loader is not None and hasattr(model, "compute_rec_loss"):
+        print("  Computing reconstruction loss over validation set …")
+        rec_loss = model.compute_rec_loss(val_loader)
+
     # ── ELBO (optional) ───────────────────────────────────────────────────────
-    elbo_str = ""
+    elbo_val = None
     if val_loader is not None and hasattr(model, "compute_full_elbo"):
         print("  Computing full ELBO over validation set …")
         elbo_val = model.compute_full_elbo(val_loader)
-        elbo_str = f"ELBO: {elbo_val:.2f}"
+
+    # ── Print summary ─────────────────────────────────────────────────────────
+    print(f"\n{'=' * 45}")
+    print(f"  Eval Summary  —  epoch {epoch}")
+    print(f"{'=' * 45}")
+    print(f"  Rec Loss      : {rec_loss:.4f}" if rec_loss is not None else "  Rec Loss      : None")
+    print(f"  ELBO          : {elbo_val:.4f}" if elbo_val is not None else "  ELBO          : None")
+    print(f"  MNIST FID     : {mnist_fid:.2f}")
+    print(f"  Inception FID : {inception_fid:.2f}")
+    print(f"  Uniformity    : {uniformity_score:.4f}  (0=collapsed, 1=uniform)")
+    print(f"{'=' * 45}\n")
+
+    # ── Save metrics JSON ─────────────────────────────────────────────────────
+    metrics = {
+        "epoch": epoch,
+        "rec_loss": rec_loss,
+        "elbo": elbo_val,
+        "mnist_fid": mnist_fid,
+        "inception_fid": inception_fid,
+        "uniformity_score": uniformity_score,
+        "class_breakdown": class_breakdown,
+    }
+    metrics_path = os.path.join(run_dir, f"eval_metrics_ep{epoch}.json")
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"  Metrics saved → {metrics_path}")
 
     # ── Build figure ──────────────────────────────────────────────────────────
     fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5 + 0.6))
@@ -343,6 +387,7 @@ def plot_final_samples(
     fig.suptitle(f"Final samples — epoch {epoch}", fontsize=12, y=1.01)
 
     fid_str = f"MNIST FID: {mnist_fid:.2f}    Inception FID: {inception_fid:.2f}" if is_mnist else f"Inception FID: {inception_fid:.2f}"
+    elbo_str = f"ELBO: {elbo_val:.2f}" if elbo_val is not None else ""
     subtitle = f"{fid_str}\n{elbo_str}" if elbo_str else fid_str
 
     fig.text(0.5, 0.995, subtitle, ha="center", va="top", fontsize=9, color="#444444")
@@ -358,7 +403,7 @@ def plot_final_samples(
     save_path = os.path.join(run_dir, f"final_samples_ep{epoch}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Final samples saved → {save_path}")
+    print(f"  Final samples saved → {save_path}")
 
 
 def plot_sample_progression(
