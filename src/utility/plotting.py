@@ -233,7 +233,12 @@ def _model_to_grid(
                 )
                 print("###########################################################\n")
 
-        elif model_type == "ndm_transinr" or model_type in ("weight_inr_diffusion", "ndm_temporal_transinr", "ndm_static_mlpinr"):
+        elif model_type == "ndm_transinr" or model_type in (
+            "weight_inr_diffusion",
+            "ndm_temporal_transinr",
+            "ndm_static_mlpinr",
+            "weight_inr_ndm_diffusion",
+        ):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True, debug=debug)
                 theta = model.weight_encoder.decode_modulations(raw_samples)
@@ -321,7 +326,7 @@ def plot_final_samples(
     if is_mnist:
         classifier = _load_classifier(device)
         real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(classifier, inception, device)
-        gen_mnist_feats, gen_logits = _mnist_features(fid_tensor, classifier, device)
+        gen_mnist_feats, gen_preds = _mnist_features(fid_tensor, classifier, device)
         mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
     else:
         raise NotImplementedError(
@@ -334,11 +339,10 @@ def plot_final_samples(
 
     # ── Uniformity (normalized entropy of predicted class distribution) ───────
     print("  Computing class uniformity …")
-    predicted_classes = gen_logits.argmax(dim=1)  # (N,)
-    n_classes = gen_logits.shape[1]
+    predicted_classes = torch.from_numpy(gen_preds)
+    n_classes = 10
     class_counts = torch.bincount(predicted_classes, minlength=n_classes).float()
     class_probs = class_counts / class_counts.sum()
-    # Normalized entropy: 0 = all one class, 1 = perfectly uniform
     entropy = -(class_probs * (class_probs + 1e-8).log()).sum()
     uniformity_score = float(entropy / np.log(n_classes))
     class_breakdown = {str(i): int(class_counts[i].item()) for i in range(n_classes)}
@@ -832,6 +836,230 @@ def plot_fphi_progression(
     plt.close(fig)
 
 
+def plot_fphi_weight_histograms(
+    model: object,
+    batch: torch.Tensor,
+    epoch: int,
+    run_dir: str,
+    device: str,
+    data_config: dict,  # noqa: ARG001
+    filename: str = "fphi_weight_histogram",
+    model_name: str = "",  # noqa: ARG001
+) -> None:
+    """
+    Append a row showing the weight distribution (histogram) of theta_prime
+    passed through F_phi at 6 evenly spaced timesteps to a progression figure.
+
+    Column 0: theta_prime (normalized if model.normalize, else raw encoder output).
+    Columns 1-5: F_phi(theta_prime, t) at increasing timesteps.
+
+    X-axis is shared per row (computed from column 0 range) so distribution
+    shifts are visually comparable. Always renders N_ROWS_TOTAL rows; empty
+    rows shown as blank axes until filled.
+
+    Parameters
+    ----------
+    model       : WeightNDMDiffusion model with F_phi, scaler, weight_encoder.
+    batch       : Current training batch — tuple (images, labels) or raw tensor.
+    epoch       : Current epoch, used as the row label.
+    run_dir     : Run results directory.
+    device      : Device string.
+    data_config : Dict with at least "data_dim".
+    filename    : Base name for saved png and metadata files.
+    model_name  : Optional model name string (unused but kept for API parity).
+    """
+
+    os.makedirs(run_dir, exist_ok=True)
+
+    N_ROWS_TOTAL = 5  # noqa: N806
+    N_BINS = 60  # histogram bins  # noqa: N806
+    n_cols = 6
+
+    T = model.T  # noqa: N806
+
+    # ── Timesteps: t=0 is column 0 (baseline), cols 1-5 are evenly spaced ───
+    timesteps = [round(T * i / (n_cols - 1)) for i in range(n_cols)]
+    timesteps[-1] = T - 1  # clamp last to valid index
+    # Column 0 is the baseline (theta_prime itself), so F_phi timesteps start at col 1
+    fphi_timesteps = timesteps[1:]  # 5 timesteps for F_phi columns
+
+    # ── Extract image tensor from batch (handles (imgs, labels) tuples) ──────
+    x = batch[0] if isinstance(batch, (list, tuple)) else batch
+    x = x.to(device)
+    print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
+
+    if x.dim() > 2:
+        x = x.reshape(x.shape[0], -1)
+    print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
+
+    # ── Encode full batch to theta_prime ─────────────────────────────────────
+    model.eval()
+    with torch.no_grad():
+        print("DEBUG: [F_phi]", model.probablistic, "normalize", model.normalize)
+        if model.probablistic:
+            mean, logvar = model.weight_encoder(x)
+            theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
+        else:
+            theta_prime_raw = model.weight_encoder(x)
+
+        # Normalize if the model uses normalization (mirrors training flow)
+        theta_prime = model.scaler(theta_prime_raw, reverse=False) if model.normalize else theta_prime_raw
+        print(f"DEBUG: F_phi | Mean: {theta_prime.mean():.4f} | Std: {theta_prime.std():.4f}")
+
+        # ── Build row: col 0 = baseline, cols 1-5 = F_phi at each timestep ──
+        row_values = []
+
+        # Column 0: baseline distribution
+        row_values.append(theta_prime.detach().cpu().numpy().flatten())
+
+        # Columns 1-5: F_phi(theta_prime, t)
+        for t in fphi_timesteps:
+            t_norm = torch.full((x.shape[0], 1), t / max(T - 1, 1), device=device)
+            z_t = model.F_phi(theta_prime, t_norm)  # (B, modulation_dim)
+            row_values.append(z_t.detach().cpu().numpy().flatten())
+
+    model.train()
+
+    # ── Compute shared x-axis range from baseline ─────────────────────────────
+    baseline = row_values[0]
+    x_min = float(np.percentile(baseline, 0.5))
+    x_max = float(np.percentile(baseline, 99.5))
+    margin = (x_max - x_min) * 0.1
+    x_range = (x_min - margin, x_max + margin)
+
+    # ── Precompute histogram arrays for persistence ───────────────────────────
+    # Store as (n_cols, N_BINS) bin counts + one shared edges array per row
+    row_counts = np.zeros((n_cols, N_BINS), dtype=np.float32)
+    row_edges = np.zeros((n_cols, N_BINS + 1), dtype=np.float32)
+    for c, vals in enumerate(row_values):
+        counts, edges = np.histogram(vals, bins=N_BINS, range=x_range)
+        row_counts[c] = counts.astype(np.float32)
+        row_edges[c] = edges.astype(np.float32)
+
+    # ── Load existing rows from disk if available ─────────────────────────────
+    metadata_dir = os.path.join(run_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
+    counts_path = os.path.join(metadata_dir, f"{filename}_counts.npy")
+    edges_path = os.path.join(metadata_dir, f"{filename}_edges.npy")
+
+    if os.path.exists(meta_path) and os.path.exists(counts_path) and os.path.exists(edges_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        all_counts = np.concatenate([np.load(counts_path), row_counts[None]], axis=0)
+        all_edges = np.concatenate([np.load(edges_path), row_edges[None]], axis=0)
+        all_epochs = meta["epochs"] + [epoch]
+        all_xranges = meta["xranges"] + [list(x_range)]
+    else:
+        all_counts = row_counts[None]
+        all_edges = row_edges[None]
+        all_epochs = [epoch]
+        all_xranges = [list(x_range)]
+
+    # ── Persist updated rows ──────────────────────────────────────────────────
+    np.save(counts_path, all_counts)
+    np.save(edges_path, all_edges)
+    with open(meta_path, "w") as f:
+        json.dump({"epochs": all_epochs, "timesteps": timesteps, "xranges": all_xranges}, f)
+
+    # ── Pad to always render N_ROWS_TOTAL rows ────────────────────────────────
+    n_existing = len(all_epochs)
+    padded_counts = list(all_counts) + [None] * (N_ROWS_TOTAL - n_existing)
+    padded_edges = list(all_edges) + [None] * (N_ROWS_TOTAL - n_existing)
+    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
+    padded_xranges = list(all_xranges) + [None] * (N_ROWS_TOTAL - n_existing)
+
+    # ── Build figure ──────────────────────────────────────────────────────────
+    label_width = 0.75
+    hist_w_inches = 1.4
+    hist_h_inches = 0.9
+    row_gap = 0.25
+    title_pad = 0.35
+    header_pad = 0.35
+
+    fig_w = label_width + n_cols * hist_w_inches + (n_cols - 1) * 0.1  # adjust spacing
+    fig_h = title_pad + header_pad + N_ROWS_TOTAL * hist_h_inches + (N_ROWS_TOTAL - 1) * row_gap
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor("white")
+
+    # Column headers
+    col_labels = ["θ' (base)"] + [f"t={t}" for t in fphi_timesteps]
+    for c, label in enumerate(col_labels):
+        label_x = (label_width + c * hist_w_inches + hist_w_inches * 0.5) / fig_w
+        label_y = 1.0 - (title_pad / fig_h) - (header_pad * 0.3 / fig_h)
+        fig.text(label_x, label_y, label, ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
+
+    for r, (counts_row, edges_row, ep, xrange_row) in enumerate(
+        zip(padded_counts, padded_edges, padded_epochs, padded_xranges, strict=False)
+    ):
+        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (hist_h_inches / fig_h) - r * (row_gap / fig_h)
+
+        for c in range(n_cols):
+            left = (label_width + c * hist_w_inches) / fig_w
+            ax = fig.add_axes([left, row_bottom, hist_w_inches / fig_w, hist_h_inches / fig_h])
+
+            if counts_row is None:
+                ax.set_axis_off()
+                continue
+
+            # Density calculation
+            bin_width = edges_row[c][1] - edges_row[c][0]
+            density = counts_row[c] / (counts_row[c].sum() * bin_width + 1e-9)
+
+            # Colors: col 0 blue, others orange
+            color = "#5b7fa6" if c == 0 else "#E2844A"
+            ax.bar(edges_row[c][:-1], density, width=bin_width, align="edge", color=color, alpha=0.75, linewidth=0)
+
+            # Gaussian Overlay for F_phi (cols > 0)
+            if c > 0:
+                xs = np.linspace(xrange_row[0], xrange_row[1], 300)
+                gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
+                ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--")
+
+            # Statistics Box
+            mu_val, std_val = np.mean(row_values[c]), np.std(row_values[c])
+            ax.text(
+                0.97,
+                0.93,
+                f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=6,
+                bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+            )
+
+            # Style adjustments to match trajectory plot
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.tick_params(labelsize=6)
+            ax.set_xlim(xrange_row)
+
+            # Y-axis labels only on column 0
+            if c > 0:
+                ax.tick_params(left=False, labelleft=False)
+
+            if r == N_ROWS_TOTAL - 1:
+                ax.set_xlabel("weight value", fontsize=7)
+
+        # Epoch label
+        fig.text(
+            (label_width * 0.4) / fig_w,
+            row_bottom + (hist_h_inches * 0.5) / fig_h,
+            f"ep {ep}",
+            ha="right",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    fig.suptitle("F_phi Weight Distribution Progression", fontsize=11, fontweight="bold", y=0.99)
+
+    save_path = os.path.join(run_dir, f"{filename}.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def plot_ztrans_histogram(
     model: object,
     batch: tuple,
@@ -1005,7 +1233,7 @@ def plot_reconstruction_progression(
             else:
                 z = mu  # deterministic case uses mean directly
             x_recon = model._decode_latent(z)
-    elif model_name == "weight_inr_diffusion":
+    elif model_name in ("weight_inr_diffusion", "weight_inr_ndm_diffusion"):
         with torch.no_grad():
             if model.probablistic:
                 mean, logvar = model.weight_encoder(x)
@@ -1846,7 +2074,9 @@ def plot_forward_trajectory_progression(
 
     # ── 1. Encode batch to weights ────────────────────────────────────────────
     x = batch[0].to(device)
+    # print("DEBUG: [Trajectory]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
     model.eval()
+    # print("DEBUG: [Trajectory]", model.probablistic, "normalize", model.normalize)
 
     if model_name in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
         if x.dim() == 2:
@@ -1865,7 +2095,7 @@ def plot_forward_trajectory_progression(
                 theta_t = model.sqrt_alpha_cumprod[t] * z + model.sigma[t] * epsilon
             raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
 
-    elif model_name == "weight_inr_diffusion":
+    elif model_name in ("weight_inr_diffusion", "weight_inr_ndm_diffusion"):
         if model.probablistic:
             mean, logvar = model.weight_encoder(x)
             theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
@@ -1873,6 +2103,7 @@ def plot_forward_trajectory_progression(
             theta_prime_raw = model.weight_encoder(x)
         if normalize:
             theta_prime_raw = model.scaler(theta_prime_raw, reverse=False)
+        # print(f"DEBUG: Trajectory | Mean: {theta_prime_raw.mean():.4f} | Std: {theta_prime_raw.std():.4f}")
         raw_arrays = []
         for t in T_values_sorted:
             if t == 0:

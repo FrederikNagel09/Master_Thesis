@@ -1,18 +1,19 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name Latent-Diffusion-Probabilistic-test \
+    --run_name Latent-Diffusion-Probabilistic-test-detach \
     --model latent_inr_diffusion \
     --dataset mnist \
-    --epochs 40 \
+    --epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 100 \
-    --subset_frac 1.0 \
+    --subset_frac 0.5 \
     --normalize False\
     --do_scaling False \
     --do_latent_recon False \
-    --probablistic True \
+    --probablistic True\
+    --stop_gradient_flow True \
     --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -35,9 +36,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --dec_trans_enc_depth 4 \
     --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
-    --dec_trans_update_strategy scale \
-    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Latent-Diffusion-Probabilistic-v4/weights/weights.pt
-
+    --dec_trans_update_strategy scale
 
 
 ############### Testing ###################

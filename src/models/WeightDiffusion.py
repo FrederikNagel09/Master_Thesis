@@ -178,7 +178,14 @@ class WeightDiffusion(nn.Module):
             return images, snapshots
 
         theta = self.sample_weight(n_samples)
+        prob = random.random() < probability_threshold
+        if GLOBAL_DEBUG_BOOL and prob:
+            print(f"DEBUG sampled theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
+
         theta = self.weight_encoder.decode_modulations(theta)
+
+        if GLOBAL_DEBUG_BOOL and prob:
+            print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
         return self.decode_weights(theta, coords)
 
     def loss(self, x: torch.Tensor, lambda_kl: float = 5e-3) -> torch.Tensor:
@@ -264,9 +271,9 @@ class WeightDiffusion(nn.Module):
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
-                f"running_std: mean={self.scaler.running_std.mean():.6f},",
-                f"std={self.scaler.running_std.std():.6f},",
-                f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
+                # f"running_std: mean={self.scaler.running_std.mean():.6f},",
+                # f"std={self.scaler.running_std.std():.6f},",
+                # f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
             )
 
             print(

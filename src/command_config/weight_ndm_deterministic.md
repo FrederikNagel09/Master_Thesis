@@ -1,31 +1,14 @@
-#!/bin/bash
-#BSUB -J Weight-NDM-Diffusion-Deterministic-NewApproach      # Job name
-#BSUB -q gpuv100                          # Queue to submit the job to
-#BSUB -W 300                             # Wall time limit (6 hours)
-#BSUB -n 8                                 # Request 8 cores
-#BSUB -R "rusage[mem=1GB]"                 # Request 1 GB of memory per core
-#BSUB -R "span[hosts=1]"                   # Request all cores on the same host
-#BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Weight-NDM-Diffusion-Deterministic-NewApproach.out                        # Standard output redirection
-#BSUB -e src/outputs/Weight-NDM-Diffusion-Deterministic-NewApproach.err                        # Standard error redirection
-#BSUB -N                                   # send email when job finishes
-#BSUB -B                                   # Send email when job begins
-
-# Activate virtual environment
-source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
-
-# --- Phase 1+2+3: Training ---
-python /zhome/66/4/156534/Master_Thesis/main.py\
+CUDA_VISIBLE_DEVICES=1 python main.py \
     --run_name Weight-NDM-Diffusion-Deterministic-NewApproach \
     --model weight_inr_ndm_diffusion\
     --dataset mnist \
-    --epochs 80 \
+    --epochs 10 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 100 \
-    --n_fid_samples 512 \
+    --n_fid_samples 32 \
     --subset_frac 1.0 \
     --normalize False\
     --probablistic False \
@@ -62,4 +45,4 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --f_phi_num_heads 8 \
     --f_phi_head_dim 16 \
     --f_phi_t_embed 256 \
-    --f_phi_mlp_ratio 3
+    --f_phi_mlp_ratio 3 

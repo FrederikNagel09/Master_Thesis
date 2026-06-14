@@ -45,6 +45,7 @@ from src.utility.plotting import (
     plot_final_samples,
     plot_forward_trajectory_progression,
     plot_fphi_progression,
+    plot_fphi_weight_histograms,
     plot_reconstruction_diffusion_progression,  # noqa: F401
     plot_reconstruction_progression,
     plot_sample_progression,
@@ -101,6 +102,9 @@ def run_training(
             "denoising_trajectory_progression.png",
             "Forward_noising_progression_*.png",
             "Reverse_denoising_progression_ep*.png",
+            "fphi_weight_histogram_ep*.png",
+            "metadata/fphi_weight_histogram_*.json",
+            "metadata/fphi_weight_histogram_*.npy",
             "training_graph.png",
             "final_samples_ep*.png",
             "sample_progression_ep*.png",
@@ -290,6 +294,38 @@ def run_training(
                     filename="val_elbo_progression",
                 )
                 """
+            elif args.model == "weight_inr_ndm_diffusion":
+                plot_reconstruction_progression(
+                    model,
+                    batch,
+                    epoch,
+                    run_dir,
+                    device,
+                    data_config,
+                    filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                )
+                plot_forward_trajectory_progression(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    data_config=data_config,
+                    filename=f"Forward_noising_progression_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                    normalize=args.normalize,
+                )
+                plot_fphi_weight_histograms(
+                    model=model,
+                    batch=batch,
+                    epoch=epoch,
+                    run_dir=run_dir,
+                    device=device,
+                    data_config=data_config,
+                    filename=f"fphi_weight_histogram_ep{start_epoch + 1}-{end_epoch}",
+                    model_name=args.model,
+                )
             elif args.model in ("ndm_inr", "ndm_transinr", "ndm_static_mlpinr", "ndm_temporal_transinr", "weight_inr_diffusion"):
                 plot_reconstruction_progression(
                     model,

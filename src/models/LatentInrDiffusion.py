@@ -99,6 +99,7 @@ class LatentDiffusion(nn.Module):
         scaling: bool = True,
         latent_recon: bool = True,
         probabilistic: bool = True,
+        stop_gradient_flow: bool = True,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -118,6 +119,7 @@ class LatentDiffusion(nn.Module):
         self.__do_scaling = scaling
         self._do_latent_recon = latent_recon
         self._probabilistic = probabilistic
+        self.stop_gradient_flow = stop_gradient_flow
 
         self.i = 0
         self.latent_scaler = LatentScaler(latent_dim)
@@ -274,7 +276,9 @@ class LatentDiffusion(nn.Module):
         t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
 
         ######### Apply noise ##########
-        z_t, epsilon = self._forward_process(z.detach(), t_idx)
+        z = z.detach() if self.stop_gradient_flow else z
+
+        z_t, epsilon = self._forward_process(z, t_idx)
 
         ######### Compute diffusion loss terms ##########
         if self._do_latent_recon:
