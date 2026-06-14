@@ -27,9 +27,8 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 from tqdm import tqdm
-import random
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
+from src.configs.general_config import GLOBAL_DEBUG_BOOL
 from src.configs.train_plot_config import _COLORS, _LABELS
 
 # =============================================================================
@@ -72,14 +71,6 @@ def _plot_loss_panel(
     if len(steps) >= 10:
         smoothed, kernel = _smooth(values, n_points=20)
         ax.plot(steps[kernel - 1 :], smoothed, color=color, linewidth=2.2, alpha=0.9)
-
-    # If spike is >100x the min, clip y-axis using median-based upper bound
-    vmax, vmin = max(values), min(v for v in values if v > 0)
-    if vmax > 100 * vmin:
-        median = float(np.median(values))
-        ymax = median * 3.0
-        ymin = max(0.0, float(np.min(values)) * 0.95)
-        ax.set_ylim(ymin, ymax)
 
 
 def _add_lr_twin(ax: plt.Axes, steps: list[float], lr_values: list[float]) -> None:
@@ -249,10 +240,10 @@ def _model_to_grid(
                 print("###########################################################\n")
             else:
                 raw_samples = model.sample_weight(n_samples, debug=debug)
-                
+
                 print(f"DEBUG sampled theta: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f}")
                 theta = model.weight_encoder.decode_modulations(raw_samples)
-                
+
                 print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
             # Use only first n_samples for the image grid
             samples = model._inr_decode(theta[:n_samples])
@@ -908,16 +899,16 @@ def plot_fphi_weight_histograms(
     # ── Extract image tensor from batch (handles (imgs, labels) tuples) ──────
     x = batch[0] if isinstance(batch, (list, tuple)) else batch
     x = x.to(device)
-    print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
+    # print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
 
     if x.dim() > 2:
         x = x.reshape(x.shape[0], -1)
-    print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
+    # print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
 
     # ── Encode full batch to theta_prime ─────────────────────────────────────
     model.eval()
     with torch.no_grad():
-        print("DEBUG: [F_phi]", model.probablistic, "normalize", model.normalize)
+        # print("DEBUG: [F_phi]", model.probablistic, "normalize", model.normalize)
         if model.probablistic:
             mean, logvar = model.weight_encoder(x)
             theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
@@ -926,7 +917,7 @@ def plot_fphi_weight_histograms(
 
         # Normalize if the model uses normalization (mirrors training flow)
         theta_prime = model.scaler(theta_prime_raw, reverse=False) if model.normalize else theta_prime_raw
-        print(f"DEBUG: F_phi | Mean: {theta_prime.mean():.4f} | Std: {theta_prime.std():.4f}")
+        # print(f"DEBUG: F_phi | Mean: {theta_prime.mean():.4f} | Std: {theta_prime.std():.4f}")
 
         # ── Build row: col 0 = baseline, cols 1-5 = F_phi at each timestep ──
         row_values = []
@@ -1040,7 +1031,10 @@ def plot_fphi_weight_histograms(
                 ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--")
 
             # Statistics Box
-            mu_val, std_val = np.mean(row_values[c]), np.std(row_values[c])
+            bin_centers = (edges_row[c][:-1] + edges_row[c][1:]) / 2
+            total = counts_row[c].sum()
+            mu_val = float(np.sum(bin_centers * counts_row[c]) / (total + 1e-9))
+            std_val = float(np.sqrt(np.sum(counts_row[c] * (bin_centers - mu_val) ** 2) / (total + 1e-9)))
             ax.text(
                 0.97,
                 0.93,
