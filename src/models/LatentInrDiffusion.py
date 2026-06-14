@@ -305,7 +305,7 @@ class LatentDiffusion(nn.Module):
         if self.__do_scaling:
             total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
         else:
-            total = (self.T - 1) * l_diff - lambda_kl * l_entropy + l_rec
+            total = l_diff - lambda_kl * l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")

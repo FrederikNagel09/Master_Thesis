@@ -397,29 +397,42 @@ def plot_final_samples(
         json.dump(metrics, f, indent=2)
     print(f"  Metrics saved → {metrics_path}")
 
-    # ── Build figure ──────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5 + 0.6))
-
-    fig.suptitle(f"Final samples — epoch {epoch}", fontsize=12, y=1.01)
-
-    fid_str = f"MNIST FID: {mnist_fid:.2f}    Inception FID: {inception_fid:.2f}" if is_mnist else f"Inception FID: {inception_fid:.2f}"
-    elbo_str = f"ELBO: {elbo_val:.2f}" if elbo_val is not None else ""
-    subtitle = f"{fid_str}\n{elbo_str}" if elbo_str else fid_str
-
-    fig.text(0.5, 0.995, subtitle, ha="center", va="top", fontsize=9, color="#444444")
-
+    # ── Main grid figure (no text) ────────────────────────────────────────────
+    fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5))
     for i, ax in enumerate(axes.flatten()):
         if channels == 1:
             ax.imshow(grid[i], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
         else:
             ax.imshow(grid[i], vmin=0, vmax=1, interpolation="nearest")
         ax.axis("off")
-
     plt.subplots_adjust(hspace=0.02, wspace=0.02)
     save_path = os.path.join(run_dir, f"final_samples_ep{epoch}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Final samples saved → {save_path}")
+
+    # ── Single-row figures (10, 8, 6 samples) ────────────────────────────────
+    # Sample without replacement across all three rows so they're all different
+    all_indices = np.random.choice(len(grid), size=10 + 8 + 6, replace=False)
+    row_sizes = [10, 8, 6]
+    row_names = ["10", "8", "6"]
+    offset = 0
+    for n_row, name in zip(row_sizes, row_names):  # noqa: B905
+        indices = all_indices[offset : offset + n_row]
+        offset += n_row
+
+        fig, axes = plt.subplots(1, n_row, figsize=(n_row * 1.5, 1.5))
+        for ax, idx in zip(axes, indices):  # noqa: B905
+            if channels == 1:
+                ax.imshow(grid[idx], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            else:
+                ax.imshow(grid[idx], vmin=0, vmax=1, interpolation="nearest")
+            ax.axis("off")
+        plt.subplots_adjust(hspace=0.02, wspace=0.02)
+        row_path = os.path.join(run_dir, f"samples_row{name}_ep{epoch}.png")
+        fig.savefig(row_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Row-{name} samples saved → {row_path}")
 
 
 def plot_sample_progression(

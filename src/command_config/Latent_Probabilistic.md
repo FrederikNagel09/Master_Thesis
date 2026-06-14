@@ -1,6 +1,6 @@
 python main.py \
-    --run_name Latent-Diffusion-Probabilistic \
-    --epochs 400 \
+    --run_name Latent-Diffusion-Probabilistic-noldiffscaling \
+    --epochs 40 \
     --batch_size 128 \
     --subset_frac 1.0 \
     --normalize False\
