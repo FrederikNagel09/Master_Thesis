@@ -242,9 +242,6 @@ def _model_to_grid(
         ):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True, debug=debug)
-                
-                
-                
                 print("################## RAW SAMPLES: ##############################")
                 print(f"DEBUG sampled theta: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f}")
                 theta = model.weight_encoder.decode_modulations(raw_samples)
