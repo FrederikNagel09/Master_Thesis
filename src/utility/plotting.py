@@ -28,7 +28,6 @@ import torch
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from src.configs.general_config import GLOBAL_DEBUG_BOOL
 from src.configs.train_plot_config import _COLORS, _LABELS
 
 # =============================================================================
@@ -206,49 +205,13 @@ def _model_to_grid(
             pixels = model.inr(coords_batch, flat_weights)
             samples = pixels.permute(0, 2, 1).reshape(n_samples, channels, img_size, img_size).clamp(0, 1)
 
-        elif model_type == "ndm_inr" or model_type in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
+        elif model_type == "ndm_inr" or model_type in ("latent_inr_diffusion", "weight_inr_diffusion", "weight_inr_ndm_diffusion"):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True, debug=debug)
             else:
                 raw_samples = model.sample(n_samples, debug=debug)
 
             samples = (raw_samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
-
-            if GLOBAL_DEBUG_BOOL and debug:
-                print("################## RAW SAMPLES: ##############################")
-                print(f"Raw samples shape: {raw_samples.shape}")
-                print(f"Raw samples stats: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f},")
-                print(f"Raw samples min={raw_samples.min():.4f}, max={raw_samples.max():.4f}")
-                print(f"Samples shape: {samples.shape}")
-                print(
-                    f"Samples stats: mean={samples.mean():.4f}, std={samples.std():.4f}, min={samples.min():.4f}, max={samples.max():.4f}"
-                )
-                print("###########################################################\n")
-
-        elif model_type == "ndm_transinr" or model_type in (
-            "weight_inr_diffusion",
-            "ndm_temporal_transinr",
-            "ndm_static_mlpinr",
-            "weight_inr_ndm_diffusion",
-        ):
-            if collect_snapshots:
-                raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True, debug=debug)
-                print("################## RAW SAMPLES: ##############################")
-                print(f"DEBUG sampled theta: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f}")
-                theta = model.weight_encoder.decode_modulations(raw_samples)
-                print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
-                print("###########################################################\n")
-            else:
-                raw_samples = model.sample_weight(n_samples, debug=debug)
-
-                print(f"DEBUG sampled theta: mean={raw_samples.mean():.4f}, std={raw_samples.std():.4f}")
-                theta = model.weight_encoder.decode_modulations(raw_samples)
-
-                print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
-            # Use only first n_samples for the image grid
-            samples = model._inr_decode(theta[:n_samples])
-            samples = (samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
-
         else:
             raise ValueError(f"Unknown model_type '{model_type}' for sampling.")
 
@@ -1238,26 +1201,14 @@ def plot_reconstruction_progression(
     # ── Reconstruct via encoder(t=0) → INR decode ────────────────────────────
     model.eval()
 
-    if model_name in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
+    if model_name in ("latent_inr_diffusion", "weight_inr_diffusion", "weight_inr_ndm_diffusion"):
         with torch.no_grad():
             if x.dim() == 2:
                 channels = x.shape[1] // (model.img_size * model.img_size)
                 x = x.view(x.shape[0], channels, model.img_size, model.img_size)
-            mu, logvar = model.latent_encoder(x)
-            if model._probabilistic:  # noqa: SIM108
-                z = model.latent_encoder.reparameterize(mu, logvar)
-            else:
-                z = mu  # deterministic case uses mean directly
-            x_recon = model._decode_latent(z)
-    elif model_name in ("weight_inr_diffusion", "weight_inr_ndm_diffusion"):
-        with torch.no_grad():
-            if model.probablistic:
-                mean, logvar = model.weight_encoder(x)
-                theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
-            else:
-                theta_prime_raw = model.weight_encoder(x)
-        theta = model.weight_encoder.decode_modulations(theta_prime_raw)
-        x_recon = model._inr_decode(theta)
+
+            x_recon = model.get_reconstructions(x)  # (3, C, H, W)
+
     else:
         with torch.no_grad():
             if hasattr(model, "F_phi"):
@@ -2052,7 +2003,7 @@ def plot_forward_trajectory_progression(
     data_config: dict,
     filename: str = "forward_trajectory_progression",
     model_name: str = "",
-    normalize: bool = False,
+    normalize: bool = False,  # noqa: ARG001
 ) -> None:
     """
     Appends a row of 5 weight distribution histograms (one per t-value) to the
@@ -2094,39 +2045,16 @@ def plot_forward_trajectory_progression(
     model.eval()
     # print("DEBUG: [Trajectory]", model.probablistic, "normalize", model.normalize)
 
-    if model_name in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
+    if model_name in ("latent_inr_diffusion", "weight_inr_diffusion", "weight_inr_ndm_diffusion"):
         if x.dim() == 2:
             channels = x.shape[1] // (model.img_size * model.img_size)
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)
-        mu, logvar = model.latent_encoder(x)
-        z = model.latent_encoder.reparameterize(mu, logvar) if model._probabilistic else mu
-        if normalize:
-            z = model._normalize_z(z)
-        raw_arrays = []
-        for t in T_values_sorted:
-            if t == 0:
-                theta_t = z
-            else:
-                epsilon = torch.randn_like(z)
-                theta_t = model.sqrt_alpha_cumprod[t] * z + model.sigma[t] * epsilon
-            raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
 
-    elif model_name in ("weight_inr_diffusion", "weight_inr_ndm_diffusion"):
-        if model.probablistic:
-            mean, logvar = model.weight_encoder(x)
-            theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
-        else:
-            theta_prime_raw = model.weight_encoder(x)
-        if normalize:
-            theta_prime_raw = model.scaler(theta_prime_raw, reverse=False)
-        # print(f"DEBUG: Trajectory | Mean: {theta_prime_raw.mean():.4f} | Std: {theta_prime_raw.std():.4f}")
+        z, _, _ = model.encode(x)
+
         raw_arrays = []
         for t in T_values_sorted:
-            if t == 0:
-                theta_t = theta_prime_raw
-            else:
-                epsilon = torch.randn_like(theta_prime_raw)
-                theta_t = model.sqrt_alpha_cumprod[t] * theta_prime_raw + model.sigma[t] * epsilon
+            theta_t = z if t == 0 else model._forward_process(z, torch.tensor([t], device=z.device))[0]
             raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
 
     else:
@@ -2147,11 +2075,7 @@ def plot_forward_trajectory_progression(
                 print("weights stats after scaler:", weights.mean(), weights.std())
             raw_arrays = []
             for t in T_values_sorted:
-                if t == 0:
-                    theta_t = weights
-                else:
-                    epsilon = torch.randn_like(weights)
-                    theta_t = model.sqrt_alpha_cumprod[t] * weights + model.sigma[t] * epsilon
+                theta_t = weights if t == 0 else model._forward_process(weights, t)
                 raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
 
     model.train()

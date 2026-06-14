@@ -174,8 +174,6 @@ class LatentDiffusion(nn.Module):
         Returns:
             images: (n_samples, data_dim)
         """
-        print("Debug value: ", debug)
-
         # Sample latents:
         if collect_snapshots:
             z, snapshots = self._sample_latent(n_samples, collect_snapshots=True, debug=debug)
@@ -230,6 +228,42 @@ class LatentDiffusion(nn.Module):
 
         return total_loss / n_batches
 
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        mu, logvar = self.latent_encoder(x)
+        if self._probabilistic:
+            z_raw = self.latent_encoder.reparameterize(mu, logvar)
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                std = torch.exp(0.5 * logvar)
+                print(f"==================== Probablistic Components {self.i}: ====================")
+                print(f"[Encoder] mu:     mean={mu.mean():.3f}, std={mu.std():.3f}, min={mu.min():.3f}, max={mu.max():.3f}")
+                print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
+                print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
+                print(
+                    f"theta mean={z_raw.mean():.4f}," f"std={z_raw.std():.4f}, min={z_raw.min():.4f}, max={z_raw.max():.4f}",
+                )
+                print("================================================================\n")
+        else:
+            z_raw = mu  # Use mean directly for deterministic latents (ablation)
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                print(f"theta mean={z_raw.mean():.4f}, std={z_raw.std():.4f}")
+                print(f"theta min={z_raw.min():.4f}, max={z_raw.max():.4f}")
+        return z_raw, mu, logvar
+
+    def get_reconstructions(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Get reconstructed images from the model for a batch of inputs.
+
+        Args:
+            x: (B, C, H, W) input images
+        Returns:
+            x_hat: (B, data_dim) reconstructed images in flattened form
+        """
+        z_raw, _, _ = self.encode(x)
+
+        x_recon = self._decode_latent(z_raw)
+
+        return x_recon
+
     # -------------------------------------------------------------------------
     # ELBO
     # -------------------------------------------------------------------------
@@ -249,24 +283,7 @@ class LatentDiffusion(nn.Module):
             x = x.view(B, channels, self.img_size, self.img_size)
 
         ######### Encode Image ##########
-        mu, logvar = self.latent_encoder(x)
-        if self._probabilistic:
-            z_raw = self.latent_encoder.reparameterize(mu, logvar)
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                std = torch.exp(0.5 * logvar)
-                print(f"==================== Probablistic Components {self.i}: ====================")
-                print(f"[Encoder] mu:     mean={mu.mean():.3f}, std={mu.std():.3f}, min={mu.min():.3f}, max={mu.max():.3f}")
-                print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
-                print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
-                print(
-                    f"theta mean={z_raw.mean():.4f}," f"std={z_raw.std():.4f}, min={z_raw.min():.4f}, max={z_raw.max():.4f}",
-                )
-                print("================================================================\n")
-        else:
-            z_raw = mu  # Use mean directly for deterministic latents (ablation)
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                print(f"theta mean={z_raw.mean():.4f}, std={z_raw.std():.4f}")
-                print(f"theta min={z_raw.min():.4f}, max={z_raw.max():.4f}")
+        z_raw, _, logvar = self.encode(x)
 
         ######### Normalize Latents ##########
         z = self._normalize_z(z_raw) if self._normalize else z_raw
@@ -305,11 +322,11 @@ class LatentDiffusion(nn.Module):
         if self.__do_scaling:
             total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
         else:
-            scaling = (self.T - 1)
+            scaling = self.T - 1
             # ramp scaling up from 0 to 1 over the first 10000 steps determined by self.i
             if self.i < 10000:
                 scaling *= self.i / 10000
-            total = scaling*l_diff - lambda_kl * l_entropy + l_rec
+            total = scaling * l_diff - lambda_kl * l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############# Negative ELBO: #################")

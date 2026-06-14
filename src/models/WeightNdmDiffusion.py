@@ -64,10 +64,43 @@ class WeightNDMDiffusion(WeightDiffusion):
         )
         self.F_phi = F_phi
 
+    @torch.no_grad()
+    def sample(
+        self, n_samples: int = 1, coords: torch.Tensor | None = None, collect_snapshots: bool = False, debug: bool = False
+    ) -> torch.Tensor:
+        """
+        Sample from the model by sampling weights and decoding to pixel space.
+        """
+
+        if collect_snapshots:
+            theta, snapshots = self.sample_weight(n_samples, collect_snapshots=True, debug=debug)
+            theta_mod = self.weight_encoder.decode_modulations(theta)
+            images = self.decode_weights(theta_mod, coords)
+
+            if GLOBAL_DEBUG_BOOL:
+                print("############### Sampling DEBUG ###############")
+                print(
+                    f"Theta_raw stats: mean={theta.mean().item():.4f}, "
+                    f"std={theta.std().item():.4f}, min={theta.min().item():.4f}, "
+                    f"max={theta.max().item():.4f} "
+                )
+                print(
+                    f"Theta_mod stats: mean={theta_mod.mean().item():.4f}, "
+                    f"std={theta_mod.std().item():.4f}, min={theta_mod.min().item():.4f}, "
+                    f"max={theta_mod.max().item():.4f}"
+                )
+                print("###########################################")
+
+            return images, snapshots
+
+        theta = self.sample_weight(n_samples)
+        theta = self.weight_encoder.decode_modulations(theta)
+        return self.decode_weights(theta, coords)
+
     # -------------------------------------------------------------------------
     # Override: forward process uses F_phi(theta_prime, t) as clean signal
     # -------------------------------------------------------------------------
-    def _construct_theta_t(
+    def _forward_process(
         self,
         theta_prime: torch.Tensor,
         t_idx: torch.Tensor,
@@ -87,6 +120,28 @@ class WeightNDMDiffusion(WeightDiffusion):
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)
         sigma_t = self.sigma[t_idx].unsqueeze(1)
         epsilon = torch.randn_like(theta_prime)
+
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("############### Forward Process DEBUG ###############")
+            print(
+                f"Theta_raw stats: mean={theta_prime.mean().item():.4f}, "
+                f"std={theta_prime.std().item():.4f}, min={theta_prime.min().item():.4f}, "
+                f"max={theta_prime.max().item():.4f} "
+            )
+            print(
+                f"Fx stats:       mean={Fx.mean().item():.4f}, "
+                f"std={Fx.std().item():.4f}, min={Fx.min().item():.4f}, "
+                f"max={Fx.max().item():.4f}"
+            )
+            # get difference between theta_prime and Fx in terms of mean and std to check if F_phi is doing something non-trivial
+            diff = theta_prime - Fx
+            print(
+                f"Diff (theta_prime - Fx) stats: mean={diff.mean().item():.4f}, "
+                f"std={diff.std().item():.4f}, min={diff.min().item():.4f}, "
+                f"max={diff.max().item():.4f}"
+            )
+            print("####################################################")
+
         return alpha_t * Fx + sigma_t * epsilon, epsilon
 
     def negative_elbo(self, x: torch.Tensor, lambda_kl: float = 1.0) -> torch.Tensor:
@@ -103,7 +158,7 @@ class WeightNDMDiffusion(WeightDiffusion):
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
         theta_prime = theta_prime.detach() if self.stop_gradient_flow else theta_prime
 
-        theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
+        theta_t, epsilon = self._forward_process(theta_prime, t_idx)
 
         l_diff = self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx)
 
@@ -119,10 +174,16 @@ class WeightNDMDiffusion(WeightDiffusion):
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############### ELBO DEBUG ###############")
-            print("theta_prime_raw stats:", theta_prime_raw.mean().item(), theta_prime_raw.std().item())
-            print("theta_prime stats:    ", theta_prime.mean().item(), theta_prime.std().item())
-            print("theta_t stats:        ", theta_t.mean().item(), theta_t.std().item())
-            print("theta stats:          ", theta.mean().item(), theta.std().item())
+            print(
+                f"Theta prime stats: mean={theta_prime.mean().item():.4f}, "
+                f"std={theta_prime.std().item():.4f}, min={theta_prime.min().item():.4f}, "
+                f"max={theta_prime.max().item():.4f} "
+            )
+            print(
+                f"Theta stats:       mean={theta.mean().item():.4f}, "
+                f"std={theta.std().item():.4f}, min={theta.min().item():.4f}, "
+                f"max={theta.max().item():.4f}"
+            )
             print("###########################################")
 
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
@@ -134,7 +195,7 @@ class WeightNDMDiffusion(WeightDiffusion):
         self,
         theta_t: torch.Tensor,
         t_norm: torch.Tensor,
-        epsilon: torch.Tensor,  # unused here; kept for parent interface compatibility  # noqa: ARG002
+        epsilon: torch.Tensor,  # unused here; kept for parent interface compatibility
         x0: torch.Tensor,
         t_idx: torch.Tensor,
         debug: bool = False,  # noqa: ARG002
@@ -184,13 +245,21 @@ class WeightNDMDiffusion(WeightDiffusion):
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("############### L_DIFF DEBUG ###############")
-            print("t_idx stats:          ", t_idx.float().mean().item(), t_idx.float().std().item())
-            print("x0_hat stats:         ", x0_hat.mean().item(), x0_hat.std().item())
-            print("Fx0_hat_t stats:      ", Fx0_hat_t.mean().item(), Fx0_hat_t.std().item())
-            print("Fx0_hat_s stats:      ", Fx0_hat_s.mean().item(), Fx0_hat_s.std().item())
-            print("Fx0_s stats:          ", Fx0_s.mean().item(), Fx0_s.std().item())
-            print("Fx0_t stats:          ", Fx0_t.mean().item(), Fx0_t.std().item())
-            print("diff stats:           ", diff.mean().item(), diff.std().item())
+            eh_mean = eps_hat.mean().item()
+            eh_std = eps_hat.std().item()
+            eh_min = eps_hat.min().item()
+            eh_max = eps_hat.max().item()
+            print(f"epsilon_hat stats: mean={eh_mean:.4f}, std={eh_std:.4f}, " f"min={eh_min:.4f}, max={eh_max:.4f}")
+            print(
+                f"epsilon stats    : mean={epsilon.mean().item():.4f}, "
+                f"std={epsilon.std().item():.4f}, min={epsilon.min().item():.4f}, "
+                f"max={epsilon.max().item():.4f}"
+            )
+            print("______________________________________________")
+            print(
+                f"diff stats       : mean={diff.mean().item():.4f}, std={diff.std().item():.4f}, "
+                f"min={diff.min().item():.4f}, max={diff.max().item():.4f}"
+            )
             print("###########################################")
 
         return (diff**2).sum(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))

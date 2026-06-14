@@ -167,25 +167,20 @@ class WeightDiffusion(nn.Module):
     # Main callable functions:
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def sample(self, n_samples: int = 1, coords: torch.Tensor | None = None, collect_snapshots: bool = False) -> torch.Tensor:
+    def sample(
+        self, n_samples: int = 1, coords: torch.Tensor | None = None, collect_snapshots: bool = False, debug: bool = False
+    ) -> torch.Tensor:
         """
         Sample from the model by sampling weights and decoding to pixel space.
         """
         if collect_snapshots:
-            theta, snapshots = self.sample_weight(n_samples, collect_snapshots=True)
+            theta, snapshots = self.sample_weight(n_samples, collect_snapshots=True, debug=debug)
             theta = self.weight_encoder.decode_modulations(theta)
             images = self.decode_weights(theta, coords)
             return images, snapshots
 
         theta = self.sample_weight(n_samples)
-        prob = random.random() < probability_threshold
-        if GLOBAL_DEBUG_BOOL and prob:
-            print(f"DEBUG sampled theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
-
         theta = self.weight_encoder.decode_modulations(theta)
-
-        if GLOBAL_DEBUG_BOOL and prob:
-            print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
         return self.decode_weights(theta, coords)
 
     def loss(self, x: torch.Tensor, lambda_kl: float = 5e-3) -> torch.Tensor:
@@ -223,6 +218,60 @@ class WeightDiffusion(nn.Module):
 
         return total_loss / n_batches
 
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Encodes input images x into the latent space of the weight encoder.
+
+        Args:
+            x: (B, data_dim) input images, can be flat or spatial
+        Returns:
+            theta_prime_raw: (B, weight_dim) raw latent vectors before normalization
+            mean: (B, weight_dim) mean of the latent distribution (only if probabilistic)
+            logvar: (B, weight_dim) log variance of the latent distribution (only if probabilistic)
+        """
+        if self.probablistic:
+            mean, logvar = self.weight_encoder(x)
+            theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                std = torch.exp(0.5 * logvar)
+                print(f"==================== Probablistic Components {self.i}: ====================")
+                print(f"[Encoder] mu:     mean={mean.mean():.3f}, std={mean.std():.3f}, min={mean.min():.3f}, max={mean.max():.3f}")
+                print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
+                print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
+                print(
+                    f"theta mean={theta_prime_raw.mean():.4f},",
+                    f"std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}",
+                )
+                print("================================================================\n")
+        else:
+            theta_prime_raw = self.weight_encoder(x)
+            mean = logvar = None  # type: ignore[assignment]
+            # Split long debug print into two lines to satisfy line length limits
+            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+                print(f"==================== Deterministic Components {self.i}: ====================")
+                print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}")
+                print(f"theta min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+
+        return theta_prime_raw, mean, logvar
+
+    def get_reconstructions(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Given input images x, returns the reconstructed images from the weight encoder and SIREN decoder.
+
+        Args:
+            x: (B, data_dim) input images, can be flat or spatial
+        Returns:
+            x_recon: (B, data_dim) reconstructed images, flattened to match input shape
+        """
+        theta_prime_raw, _, _ = self.encode(x)
+
+        theta = self.weight_encoder.decode_modulations(theta_prime_raw)
+
+        x_recon = self._inr_decode(theta)
+
+        return x_recon
+
     # -------------------------------------------------------------------------
     # Negative ELBO Computation:
     # -------------------------------------------------------------------------
@@ -243,39 +292,12 @@ class WeightDiffusion(nn.Module):
         t_idx = torch.randint(1, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
 
-        if self.probablistic:
-            mean, logvar = self.weight_encoder(x)
-            theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
-
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                std = torch.exp(0.5 * logvar)
-                print(f"==================== Probablistic Components {self.i}: ====================")
-                print(f"[Encoder] mu:     mean={mean.mean():.3f}, std={mean.std():.3f}, min={mean.min():.3f}, max={mean.max():.3f}")
-                print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
-                print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
-                print(
-                    f"theta mean={theta_prime_raw.mean():.4f},",
-                    f"std={theta_prime_raw.std():.4f}, min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}",
-                )
-                print("================================================================\n")
-        else:
-            theta_prime_raw = self.weight_encoder(x)
-            # Split long debug print into two lines to satisfy line length limits
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                print(f"==================== Deterministic Components {self.i}: ====================")
-                print(f"theta mean={theta_prime_raw.mean():.4f}, std={theta_prime_raw.std():.4f}")
-                print(f"theta min={theta_prime_raw.min():.4f}, max={theta_prime_raw.max():.4f}")
+        theta_prime_raw, _, logvar = self.encode(x)
 
         theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
-            print(
-                # f"running_std: mean={self.scaler.running_std.mean():.6f},",
-                # f"std={self.scaler.running_std.std():.6f},",
-                # f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
-            )
-
             print(
                 f"DEBUG raw encoder: mean={theta_prime_raw.mean():.4f}, "
                 f"std={theta_prime_raw.std():.4f}, "
@@ -334,13 +356,7 @@ class WeightDiffusion(nn.Module):
         # Construct theta_t by adding noise to theta_prime according to the noise schedule at time step t_idx
         theta_prime = theta_prime.detach() if self.stop_gradient_flow else theta_prime
 
-        theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
-
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-            print("==================== DEBUG: Construct Theta_t ====================")
-            print(f"DEBUG epsilon: mean={epsilon.mean():.4f}, std={epsilon.std():.4f}")
-            print(f"DEBUG epsilon: min={epsilon.min():.4f}, max={epsilon.max():.4f}")
-            print("================================================================\n")
+        theta_t, epsilon = self._forward_process(theta_prime, t_idx)
 
         # Given theta_t, and theta_prime we compute the three loss terms:
         l_diff = self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx)
@@ -698,7 +714,7 @@ class WeightDiffusion(nn.Module):
         base = (sigma_t_sq - alpha_t_sq / alpha_s_sq * sigma_s_sq) * sigma_s_sq / sigma_t_sq
         return self.sigma_tilde_factor * base
 
-    def _construct_theta_t(self, theta_prime, t_idx):
+    def _forward_process(self, theta_prime, t_idx):
         """
         Given Theta Prime, we construct the noise variant theta_t at time step t_idx using the noise schedule parameters.
 
