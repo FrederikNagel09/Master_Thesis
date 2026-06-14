@@ -181,9 +181,9 @@ class WeightDiffusion(nn.Module):
         prob = random.random() < probability_threshold
         if GLOBAL_DEBUG_BOOL and prob:
             print(f"DEBUG sampled theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
-        
+
         theta = self.weight_encoder.decode_modulations(theta)
-        
+
         if GLOBAL_DEBUG_BOOL and prob:
             print(f"DEBUG decoded theta: mean={theta.mean():.4f}, std={theta.std():.4f}")
         return self.decode_weights(theta, coords)
@@ -193,6 +193,35 @@ class WeightDiffusion(nn.Module):
         Computes the negative ELBO for a batch of input images x.
         """
         return self.negative_elbo(x, lambda_kl=lambda_kl)
+
+    def compute_rec_loss(self, val_loader: torch.utils.data.DataLoader) -> float:
+        """
+        Computes average reconstruction loss over the full validation set.
+
+        Args:
+            val_loader: Validation DataLoader yielding (x, _) batches. Shape (B, data_dim).
+        Returns:
+            Mean reconstruction loss (scalar float) across all batches.
+        """
+        self.eval()
+        total_loss = 0.0
+        n_batches = 0
+
+        with torch.no_grad():
+            for x, _ in val_loader:
+                x = x.to(next(self.parameters()).device)
+
+                if self.probablistic:
+                    mean, logvar = self.weight_encoder(x)
+                    theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+                else:
+                    theta_prime_raw = self.weight_encoder(x)
+
+                theta = self.weight_encoder.decode_modulations(theta_prime_raw)
+                total_loss += self._l_rec(x, theta).mean().item()
+                n_batches += 1
+
+        return total_loss / n_batches
 
     # -------------------------------------------------------------------------
     # Negative ELBO Computation:
@@ -242,9 +271,9 @@ class WeightDiffusion(nn.Module):
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
             print("==================== DEBUG: Normalization ====================")
             print(
-                #f"running_std: mean={self.scaler.running_std.mean():.6f},",
-                #f"std={self.scaler.running_std.std():.6f},",
-                #f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
+                # f"running_std: mean={self.scaler.running_std.mean():.6f},",
+                # f"std={self.scaler.running_std.std():.6f},",
+                # f"min={self.scaler.running_std.min():.6f}," f"max={self.scaler.running_std.max():.6f}",
             )
 
             print(

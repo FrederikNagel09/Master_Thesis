@@ -1,124 +1,41 @@
-CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name Latent-Diffusion-Probabilistic-test-detach \
-    --model latent_inr_diffusion \
-    --dataset mnist \
-    --epochs 5 \
+python main.py \
+    --run_name Latent-Diffusion-Probabilistic \
+    --epochs 400 \
     --batch_size 128 \
-    --lr 1e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 100 \
-    --subset_frac 0.5 \
+    --subset_frac 1.0 \
     --normalize False\
     --do_scaling False \
     --do_latent_recon False \
     --probablistic True\
-    --stop_gradient_flow True \
+    --stop_gradient_flow False \
+    --n_fid_samples 16 \
+    --model latent_inr_diffusion \
+    --dataset mnist \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 100 \
     --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --latent_dim 32 \
-    --latent_size 8 \
+    --latent_dim 16 \
+    --latent_size 12 \
     --latent_patch_size 2 \
-    --latent_enc_hidden_dim 16\
+    --latent_enc_hidden_dim 20\
     --pred_d_model 128 \
     --pred_n_heads 8 \
     --pred_n_layers 6 \
     --pred_d_ff 1024 \
-    --pred_t_embed_dim 256 \
+    --pred_t_embed_dim 128 \
     --dec_trans_dim 128 \
     --dec_trans_n_head 8 \
-    --dec_trans_head_dim 64 \
+    --dec_trans_head_dim 32 \
     --dec_trans_ff_dim 1024 \
     --dec_trans_enc_depth 4 \
     --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale
 
-
-############### Testing ###################
-
-python main.py \
-    --run_name Latent-Diffusion-Probabilistic-TESTING \
-    --model latent_inr_diffusion \
-    --dataset mnist \
-    --epochs 5 \
-    --batch_size 16 \
-    --lr 1e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 2 \
-    --subset_frac 0.01 \
-    --normalize False\
-    --do_scaling True \
-    --do_latent_recon False \
-    --probablistic True \
-    --lambda_kl 1.0 \
-    --n_fid_sample 32 \
-    --T 100 \
-    --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --inr_hidden_dim 20 \
-    --inr_layers 3 \
-    --latent_dim 8 \
-    --latent_size 4 \
-    --latent_patch_size 2 \
-    --latent_enc_hidden_dim 6\
-    --pred_d_model 32 \
-    --pred_n_heads 2 \
-    --pred_n_layers 1 \
-    --pred_d_ff 128 \
-    --pred_t_embed_dim 32 \
-    --dec_trans_dim 32 \
-    --dec_trans_n_head 2 \
-    --dec_trans_head_dim 8 \
-    --dec_trans_ff_dim 128 \
-    --dec_trans_enc_depth 1 \
-    --dec_trans_dec_depth 1 \
-    --dec_trans_n_groups 1 \
-    --dec_trans_update_strategy scale
-
-
-
-
-    --run_name Latent-Diffusion-Probabilistic-cifar10 \
-    --model latent_inr_diffusion \
-    --dataset cifar10 \
-    --epochs 780 \
-    --batch_size 128 \
-    --lr 1e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 100 \
-    --subset_frac 1.0 \
-    --normalize False\
-    --do_scaling True \
-    --do_latent_recon False \
-    --probablistic True \
-    --lambda_kl 1.0 \
-    --T 1000 \
-    --beta_1 1e-4 \
-    --beta_T 5e-2 \
-    --inr_hidden_dim 256 \
-    --inr_layers 5 \
-    --latent_dim 64 \
-    --latent_size 12 \
-    --latent_patch_size 2 \
-    --latent_enc_hidden_dim 16\
-    --pred_d_model 256 \
-    --pred_n_heads 8 \
-    --pred_n_layers 6 \
-    --pred_d_ff 1024 \
-    --pred_t_embed_dim 256 \
-    --dec_trans_dim 256 \
-    --dec_trans_n_head 8 \
-    --dec_trans_head_dim 128 \
-    --dec_trans_ff_dim 1024 \
-    --dec_trans_enc_depth 4 \
-    --dec_trans_dec_depth 4 \
-    --dec_trans_n_groups 1 \
-    --dec_trans_update_strategy scale \
-    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Latent-Diffusion-Probabilistic-cifar10/weights/weights.pt

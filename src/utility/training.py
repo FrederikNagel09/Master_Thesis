@@ -14,7 +14,6 @@ import sys
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-import random
 
 from src.configs.general_config import GLOBAL_DEBUG_BOOL
 
@@ -225,7 +224,7 @@ def train(
             # 2. Check for NaN in Loss
             if torch.isnan(loss):
                 print(f"CRITICAL: Loss is NaN at step {global_step}. Skipping...")
-                continue # Safe to skip here as we haven't done backward() yet
+                continue  # Safe to skip here as we haven't done backward() yet
             loss.backward()
             # 4. Check for NaN in Gradients (Crucial Step)
             # This finds exactly which layer is exploding before you clip or step
@@ -234,11 +233,11 @@ def train(
                 if param.grad is not None and torch.isnan(param.grad).any():
                     print(f"NaN detected in gradients of: {name}")
                     nan_found = True
-                    break 
+                    break
 
             if nan_found:
-                optimizer.zero_grad() # Clear the bad gradients
-                continue # Skip this step entirely
+                optimizer.zero_grad()  # Clear the bad gradients
+                continue  # Skip this step entirely
 
             # 5. Gradient Clipping and Step
             if grad_clip > 0:

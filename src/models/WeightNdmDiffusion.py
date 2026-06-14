@@ -1,18 +1,17 @@
 from __future__ import annotations
 
+import random
 from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
-import random
 
 if TYPE_CHECKING:
     import numpy as np
 
-from src.models.WeightDiffusion import WeightDiffusion
 from src.configs.general_config import GLOBAL_DEBUG_BOOL, probability_threshold
+from src.models.WeightDiffusion import WeightDiffusion
 
 
 class WeightNDMDiffusion(WeightDiffusion):
@@ -90,10 +89,9 @@ class WeightNDMDiffusion(WeightDiffusion):
         epsilon = torch.randn_like(theta_prime)
         return alpha_t * Fx + sigma_t * epsilon, epsilon
 
-
     def negative_elbo(self, x: torch.Tensor, lambda_kl: float = 1.0) -> torch.Tensor:
         batch_size = x.shape[0]
-        t_idx  = torch.randint(1, self.T, (batch_size,), device=x.device)
+        t_idx = torch.randint(1, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
 
         if self.probablistic:
@@ -109,8 +107,8 @@ class WeightNDMDiffusion(WeightDiffusion):
 
         l_diff = self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx)
 
-        theta  = self.weight_encoder.decode_modulations(theta_prime_raw)
-        l_rec  = self._l_rec(x, theta)
+        theta = self.weight_encoder.decode_modulations(theta_prime_raw)
+        l_rec = self._l_rec(x, theta)
 
         if self.probablistic:
             l_prior = self._l_entropy(logvar)
@@ -127,7 +125,6 @@ class WeightNDMDiffusion(WeightDiffusion):
             print("theta stats:          ", theta.mean().item(), theta.std().item())
             print("###########################################")
 
-
         return elbo.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
@@ -137,10 +134,10 @@ class WeightNDMDiffusion(WeightDiffusion):
         self,
         theta_t: torch.Tensor,
         t_norm: torch.Tensor,
-        epsilon: torch.Tensor,  # unused here; kept for parent interface compatibility
+        epsilon: torch.Tensor,  # unused here; kept for parent interface compatibility  # noqa: ARG002
         x0: torch.Tensor,
         t_idx: torch.Tensor,
-        debug: bool = False,
+        debug: bool = False,  # noqa: ARG002
     ) -> torch.Tensor:
         """
         NDM ELBO diffusion loss. Denoiser predicts epsilon; loss measures how
@@ -159,7 +156,7 @@ class WeightNDMDiffusion(WeightDiffusion):
         eps_hat = self.denoiser(theta_t, t_norm.unsqueeze(1))
 
         alpha_t = self.sqrt_alpha_cumprod[t_idx].unsqueeze(1)  # (B, 1)
-        sigma_t = self.sigma[t_idx].unsqueeze(1)               # (B, 1)
+        sigma_t = self.sigma[t_idx].unsqueeze(1)  # (B, 1)
 
         # Recover clean signal estimate from epsilon prediction
         x0_hat = (theta_t - sigma_t * eps_hat) / alpha_t.clamp(min=1e-6)
@@ -170,12 +167,12 @@ class WeightNDMDiffusion(WeightDiffusion):
 
         # Apply F_phi to all four needed (signal, time) pairs
         # Gradients: Fx0_hat_* flows through F_phi + denoiser; Fx0_* flows through F_phi only
-        Fx0_hat_t = self.F_phi(x0_hat, t_norm.unsqueeze(1))   # F_phi(x0_hat, t)
-        Fx0_hat_s = self.F_phi(x0_hat, s_norm.unsqueeze(1))   # F_phi(x0_hat, s)
-        Fx0_s     = self.F_phi(x0, s_norm.unsqueeze(1))       # F_phi(x0, s) — ground truth  # noqa: E241
-        Fx0_t     = self.F_phi(x0, t_norm.unsqueeze(1))       # F_phi(x0, t) — ground truth  # noqa: E241
+        Fx0_hat_t = self.F_phi(x0_hat, t_norm.unsqueeze(1))  # F_phi(x0_hat, t)  # noqa: N806
+        Fx0_hat_s = self.F_phi(x0_hat, s_norm.unsqueeze(1))  # F_phi(x0_hat, s)  # noqa: N806
+        Fx0_s = self.F_phi(x0, s_norm.unsqueeze(1))  # F_phi(x0, s) — ground truth  # noqa: N806
+        Fx0_t = self.F_phi(x0, t_norm.unsqueeze(1))  # F_phi(x0, t) — ground truth  # noqa: N806
 
-        alpha_s        = self.sqrt_alpha_cumprod[s_idx].unsqueeze(1)       # (B, 1)  # noqa: E241
+        alpha_s = self.sqrt_alpha_cumprod[s_idx].unsqueeze(1)  # (B, 1)
         sigma_tilde_sq = self._sigma_tilde_sq(s_idx, t_idx).unsqueeze(1)  # (B, 1)
 
         # sqrt(sigma_s^2 - sigma_tilde^2) / sigma_t
@@ -196,7 +193,7 @@ class WeightNDMDiffusion(WeightDiffusion):
             print("diff stats:           ", diff.mean().item(), diff.std().item())
             print("###########################################")
 
-        return (diff ** 2).sum(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
+        return (diff**2).sum(dim=-1) / (2.0 * sigma_tilde_sq.squeeze(1).clamp(min=1e-8))
 
     # -------------------------------------------------------------------------
     # Override: NDM reverse diffusion — eps → x0_hat → F_phi → posterior mean
@@ -246,11 +243,11 @@ class WeightNDMDiffusion(WeightDiffusion):
             s_norm = torch.full((n_samples, 1), s / T_minus_1, device=device)
 
             # Batch F_phi(x0_hat, s) and F_phi(x0_hat, t) into one forward pass
-            Fx_2x = self.F_phi(
+            Fx_2x = self.F_phi(  # noqa: N806
                 torch.cat([x0_hat, x0_hat], dim=0),
                 torch.cat([s_norm, t_norm], dim=0),
             )  # (2N, D)
-            Fx0_hat_s, Fx0_hat_t = Fx_2x.chunk(2, dim=0)
+            Fx0_hat_s, Fx0_hat_t = Fx_2x.chunk(2, dim=0)  # noqa: N806
 
             sigma_tilde_sq = self._sigma_tilde_sq(
                 torch.tensor([s], device=device),
@@ -267,14 +264,14 @@ class WeightNDMDiffusion(WeightDiffusion):
 
             if collect_snapshots and t in T_values:
                 snapshots[t] = z_t.detach().cpu().numpy().flatten()
-            
+
             if (t % 100 == 0 and GLOBAL_DEBUG_BOOL and debug) or (t == 0 and GLOBAL_DEBUG_BOOL and debug):
                 print("################## Sampling: ##############################")
                 print(f"Sampling step {t}/{self.T}:")
                 print("x0_hat stats:         ", x0_hat.mean().item(), x0_hat.std().item())
                 print("Fx0_hat_s stats:      ", Fx0_hat_s.mean().item(), Fx0_hat_s.std().item())
                 print("Fx0_hat_t stats:      ", Fx0_hat_t.mean().item(), Fx0_hat_t.std().item())
-                print("z_t stats:            ", z_t.mean().item(), z_t.std().item()) 
+                print("z_t stats:            ", z_t.mean().item(), z_t.std().item())
                 print("###########################################################\n")
 
         if self.normalize:

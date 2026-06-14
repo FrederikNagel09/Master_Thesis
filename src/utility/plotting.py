@@ -234,7 +234,12 @@ def _model_to_grid(
                 )
                 print("###########################################################\n")
 
-        elif model_type == "ndm_transinr" or model_type in ("weight_inr_diffusion", "ndm_temporal_transinr", "ndm_static_mlpinr", "weight_inr_ndm_diffusion"):
+        elif model_type == "ndm_transinr" or model_type in (
+            "weight_inr_diffusion",
+            "ndm_temporal_transinr",
+            "ndm_static_mlpinr",
+            "weight_inr_ndm_diffusion",
+        ):
             if collect_snapshots:
                 raw_samples, snapshots = model.sample_weight(n_samples=128, collect_snapshots=True, debug=debug)
                 
@@ -274,12 +279,12 @@ def plot_final_samples(
     data_config: dict,
     n_samples: int = 64,
     n_fid_samples: int = 512,
-    val_loader: torch.utils.data.DataLoader = None,  # optional: if provided and model has compute_full_elbo, it will be computed
+    val_loader: torch.utils.data.DataLoader = None,
     debug=False,
 ) -> None:
     """
     Sample an 8x8 grid from the model, compute MNIST + Inception FID scores,
-    and save to <run_dir>/final_samples_ep{epoch}.png.
+    reconstruction loss, ELBO, and class uniformity. Saves figure and metrics JSON.
 
     Args:
         model:          Trained model, already on device.
@@ -290,10 +295,12 @@ def plot_final_samples(
         data_config:    Dict with "channels", "img_size", "data_dim", "dataset".
         n_samples:      Total grid samples; displayed as sqrt x sqrt grid.
         n_fid_samples:  Number of samples used for FID computation.
-        val_loader:     Validation DataLoader; required for ELBO computation.
+        val_loader:     Validation DataLoader; required for ELBO and rec loss computation.
     Returns:
         None
     """
+    import json
+
     import torch
 
     from src.utility.classifier_utils import (
@@ -320,7 +327,7 @@ def plot_final_samples(
     print(f"  Computing FID ({n_fid_samples} samples) …")
     fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config, debug=debug)
 
-    # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1] for feature extractors
+    # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1]
     if channels == 1:
         fid_tensor = torch.from_numpy(fid_grid).unsqueeze(1).float()
     else:
@@ -331,7 +338,7 @@ def plot_final_samples(
     if is_mnist:
         classifier = _load_classifier(device)
         real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(classifier, inception, device)
-        gen_mnist_feats, _ = _mnist_features(fid_tensor, classifier, device)
+        gen_mnist_feats, gen_preds = _mnist_features(fid_tensor, classifier, device)
         mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
     else:
         raise NotImplementedError(
@@ -342,12 +349,53 @@ def plot_final_samples(
     gen_inception_feats = _inception_features(fid_tensor, inception, device)
     inception_fid = _fid(real_inception_feats, gen_inception_feats)
 
+    # ── Uniformity (normalized entropy of predicted class distribution) ───────
+    print("  Computing class uniformity …")
+    predicted_classes = torch.from_numpy(gen_preds)
+    n_classes = 10
+    class_counts = torch.bincount(predicted_classes, minlength=n_classes).float()
+    class_probs = class_counts / class_counts.sum()
+    entropy = -(class_probs * (class_probs + 1e-8).log()).sum()
+    uniformity_score = float(entropy / np.log(n_classes))
+    class_breakdown = {str(i): int(class_counts[i].item()) for i in range(n_classes)}
+
+    # ── Reconstruction loss (optional) ────────────────────────────────────────
+    rec_loss = None
+    if val_loader is not None and hasattr(model, "compute_rec_loss"):
+        print("  Computing reconstruction loss over validation set …")
+        rec_loss = model.compute_rec_loss(val_loader)
+
     # ── ELBO (optional) ───────────────────────────────────────────────────────
-    elbo_str = ""
+    elbo_val = None
     if val_loader is not None and hasattr(model, "compute_full_elbo"):
         print("  Computing full ELBO over validation set …")
         elbo_val = model.compute_full_elbo(val_loader)
-        elbo_str = f"ELBO: {elbo_val:.2f}"
+
+    # ── Print summary ─────────────────────────────────────────────────────────
+    print(f"\n{'=' * 45}")
+    print(f"  Eval Summary  —  epoch {epoch}")
+    print(f"{'=' * 45}")
+    print(f"  Rec Loss      : {rec_loss:.4f}" if rec_loss is not None else "  Rec Loss      : None")
+    print(f"  ELBO          : {elbo_val:.4f}" if elbo_val is not None else "  ELBO          : None")
+    print(f"  MNIST FID     : {mnist_fid:.2f}")
+    print(f"  Inception FID : {inception_fid:.2f}")
+    print(f"  Uniformity    : {uniformity_score:.4f}  (0=collapsed, 1=uniform)")
+    print(f"{'=' * 45}\n")
+
+    # ── Save metrics JSON ─────────────────────────────────────────────────────
+    metrics = {
+        "epoch": epoch,
+        "rec_loss": rec_loss,
+        "elbo": elbo_val,
+        "mnist_fid": mnist_fid,
+        "inception_fid": inception_fid,
+        "uniformity_score": uniformity_score,
+        "class_breakdown": class_breakdown,
+    }
+    metrics_path = os.path.join(run_dir, f"eval_metrics_ep{epoch}.json")
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"  Metrics saved → {metrics_path}")
 
     # ── Build figure ──────────────────────────────────────────────────────────
     fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5 + 0.6))
@@ -355,6 +403,7 @@ def plot_final_samples(
     fig.suptitle(f"Final samples — epoch {epoch}", fontsize=12, y=1.01)
 
     fid_str = f"MNIST FID: {mnist_fid:.2f}    Inception FID: {inception_fid:.2f}" if is_mnist else f"Inception FID: {inception_fid:.2f}"
+    elbo_str = f"ELBO: {elbo_val:.2f}" if elbo_val is not None else ""
     subtitle = f"{fid_str}\n{elbo_str}" if elbo_str else fid_str
 
     fig.text(0.5, 0.995, subtitle, ha="center", va="top", fontsize=9, color="#444444")
@@ -370,7 +419,7 @@ def plot_final_samples(
     save_path = os.path.join(run_dir, f"final_samples_ep{epoch}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Final samples saved → {save_path}")
+    print(f"  Final samples saved → {save_path}")
 
 
 def plot_sample_progression(
@@ -805,9 +854,9 @@ def plot_fphi_weight_histograms(
     epoch: int,
     run_dir: str,
     device: str,
-    data_config: dict,
+    data_config: dict,  # noqa: ARG001
     filename: str = "fphi_weight_histogram",
-    model_name: str = "",
+    model_name: str = "",  # noqa: ARG001
 ) -> None:
     """
     Append a row showing the weight distribution (histogram) of theta_prime
@@ -835,7 +884,7 @@ def plot_fphi_weight_histograms(
     os.makedirs(run_dir, exist_ok=True)
 
     N_ROWS_TOTAL = 5  # noqa: N806
-    N_BINS = 60       # histogram bins
+    N_BINS = 60  # histogram bins  # noqa: N806
     n_cols = 6
 
     T = model.T  # noqa: N806
@@ -849,16 +898,16 @@ def plot_fphi_weight_histograms(
     # ── Extract image tensor from batch (handles (imgs, labels) tuples) ──────
     x = batch[0] if isinstance(batch, (list, tuple)) else batch
     x = x.to(device)
-    print(f"DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
+    print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
 
     if x.dim() > 2:
         x = x.reshape(x.shape[0], -1)
-    print(f"DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
+    print("DEBUG: [F_phi]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
 
     # ── Encode full batch to theta_prime ─────────────────────────────────────
     model.eval()
     with torch.no_grad():
-        print(f"DEBUG: [F_phi]", model.probablistic, "normalize", model.normalize)
+        print("DEBUG: [F_phi]", model.probablistic, "normalize", model.normalize)
         if model.probablistic:
             mean, logvar = model.weight_encoder(x)
             theta_prime_raw = model.weight_encoder._reparameterize(mean, logvar)
@@ -940,7 +989,7 @@ def plot_fphi_weight_histograms(
     title_pad = 0.35
     header_pad = 0.35
 
-    fig_w = label_width + n_cols * hist_w_inches + (n_cols - 1) * 0.1 # adjust spacing
+    fig_w = label_width + n_cols * hist_w_inches + (n_cols - 1) * 0.1  # adjust spacing
     fig_h = title_pad + header_pad + N_ROWS_TOTAL * hist_h_inches + (N_ROWS_TOTAL - 1) * row_gap
 
     fig = plt.figure(figsize=(fig_w, fig_h))
@@ -957,7 +1006,7 @@ def plot_fphi_weight_histograms(
         zip(padded_counts, padded_edges, padded_epochs, padded_xranges, strict=False)
     ):
         row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (hist_h_inches / fig_h) - r * (row_gap / fig_h)
-        
+
         for c in range(n_cols):
             left = (label_width + c * hist_w_inches) / fig_w
             ax = fig.add_axes([left, row_bottom, hist_w_inches / fig_w, hist_h_inches / fig_h])
@@ -969,7 +1018,7 @@ def plot_fphi_weight_histograms(
             # Density calculation
             bin_width = edges_row[c][1] - edges_row[c][0]
             density = counts_row[c] / (counts_row[c].sum() * bin_width + 1e-9)
-            
+
             # Colors: col 0 blue, others orange
             color = "#5b7fa6" if c == 0 else "#E2844A"
             ax.bar(edges_row[c][:-1], density, width=bin_width, align="edge", color=color, alpha=0.75, linewidth=0)
@@ -982,24 +1031,39 @@ def plot_fphi_weight_histograms(
 
             # Statistics Box
             mu_val, std_val = np.mean(row_values[c]), np.std(row_values[c])
-            ax.text(0.97, 0.93, f"μ:{mu_val:.2f}\nσ:{std_val:.2f}", transform=ax.transAxes, 
-                    ha="right", va="top", fontsize=6, bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"})
+            ax.text(
+                0.97,
+                0.93,
+                f"μ:{mu_val:.2f}\nx:{std_val:.2f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=6,
+                bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+            )
 
             # Style adjustments to match trajectory plot
             ax.spines[["top", "right"]].set_visible(False)
             ax.tick_params(labelsize=6)
             ax.set_xlim(xrange_row)
-            
+
             # Y-axis labels only on column 0
             if c > 0:
                 ax.tick_params(left=False, labelleft=False)
-            
+
             if r == N_ROWS_TOTAL - 1:
                 ax.set_xlabel("weight value", fontsize=7)
 
         # Epoch label
-        fig.text((label_width * 0.4) / fig_w, row_bottom + (hist_h_inches * 0.5) / fig_h, 
-                 f"ep {ep}", ha="right", va="center", fontsize=8, color="#333333")
+        fig.text(
+            (label_width * 0.4) / fig_w,
+            row_bottom + (hist_h_inches * 0.5) / fig_h,
+            f"ep {ep}",
+            ha="right",
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
 
     fig.suptitle("F_phi Weight Distribution Progression", fontsize=11, fontweight="bold", y=0.99)
 
@@ -2022,9 +2086,9 @@ def plot_forward_trajectory_progression(
 
     # ── 1. Encode batch to weights ────────────────────────────────────────────
     x = batch[0].to(device)
-    print(f"DEBUG: [Trajectory]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
+    # print("DEBUG: [Trajectory]", x.shape, "device", x.device, "dtype", x.dtype, "mean", x.mean().item(), "std", x.std().item())
     model.eval()
-    print(f"DEBUG: [Trajectory]", model.probablistic, "normalize", model.normalize)
+    # print("DEBUG: [Trajectory]", model.probablistic, "normalize", model.normalize)
 
     if model_name in ("latent_inr_diffusion", "latent_ndm_inr_diffusion"):
         if x.dim() == 2:
@@ -2051,7 +2115,7 @@ def plot_forward_trajectory_progression(
             theta_prime_raw = model.weight_encoder(x)
         if normalize:
             theta_prime_raw = model.scaler(theta_prime_raw, reverse=False)
-        print(f"DEBUG: Trajectory | Mean: {theta_prime_raw.mean():.4f} | Std: {theta_prime_raw.std():.4f}")
+        # print(f"DEBUG: Trajectory | Mean: {theta_prime_raw.mean():.4f} | Std: {theta_prime_raw.std():.4f}")
         raw_arrays = []
         for t in T_values_sorted:
             if t == 0:

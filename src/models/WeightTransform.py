@@ -1,4 +1,5 @@
 import torch
+
 from src.models.param_dit import ParamDiT
 from src.models.trans_inr_encoder import TransInrNoisePredictor
 
@@ -32,7 +33,6 @@ class WeightTransformationParam(ParamDiT):
         """
         f_bar = super().forward(theta, t)  # ParamDiT forward
         return (1 - t) * theta + t * f_bar  # identity constraint
-
 
 
 class WeightTransformationTrans(TransInrNoisePredictor):

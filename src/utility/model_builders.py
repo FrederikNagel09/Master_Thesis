@@ -32,12 +32,14 @@ from src.models.NDM_INR import (
     TransformerStaticWeightEncoder,
     TransformerTemporalWeightEncoder,
 )
+from src.models.param_dit import ParamDiT
 from src.models.trans_inr import TransInr, make_coord_grid
 from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor, TransInrTemporalEncoder
 from src.models.WeightDiffusion import WeightDiffusion
 from src.models.WeightNdmDiffusion import WeightNDMDiffusion
-from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
 from src.models.WeightTransform import WeightTransformationParam, WeightTransformationTrans
+from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
+
 # =============================================================================
 # Public API
 # =============================================================================
@@ -160,7 +162,7 @@ def print_encoder_stats(model, mode="Static"):
     return total_learnable
 
 
-def print_noise_predictor_stats(model, name="Noise Predictor"):
+def print_noise_predictor_stats(model, name="Noise Predictor"):  # noqa: ARG001
     def count(params):
         return sum(p.numel() for p in params)
 
@@ -226,6 +228,7 @@ def print_noise_predictor_stats(model, name="Noise Predictor"):
 
     print("=" * 60 + "\n")
     return total
+
 
 def print_mlp_encoder_stats(model):
     total = sum(p.numel() for p in model.parameters())
@@ -1356,8 +1359,6 @@ def _build_latent_diffusion(args, data_config: dict):
         hidden_dim=getattr(args, "latent_enc_hidden_dim", 512),
     )
 
-    encoder_params = _print_latent_encoder_info(latent_encoder)
-
     # ── TransInr decoder ──────────────────────────────────────────────────────
     dec_dim = getattr(args, "dec_trans_dim", 256)
     dec_n_head = getattr(args, "dec_trans_n_head", 8)
@@ -1413,8 +1414,6 @@ def _build_latent_diffusion(args, data_config: dict):
         update_strategy=dec_update,
     )
 
-    decoder_params = _print_decoder_info(decoder)
-
     # ── Noise predictor ───────────────────────────────────────────────────────
 
     noise_predictor = LatentTransformerNoisePredictor(
@@ -1427,9 +1426,6 @@ def _build_latent_diffusion(args, data_config: dict):
         dropout=getattr(args, "dropout", 0.0),
         t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
     )
-
-    noise_params = _print_noise_predictor_info(noise_predictor)
-
     # ── Coordinate grid ───────────────────────────────────────────────────────
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
 
@@ -1455,6 +1451,28 @@ def _build_latent_diffusion(args, data_config: dict):
     )
 
     # Final print of total model params (encoder + decoder + predictor)
+    # Layer-by-layer INR table
+    print("\n########## Decoder INR Parameter Breakdown: ##############")
+    print(f"  {'Layer':<10} | {'Shape':>16}   {'Total':>8}")
+    print(f"  {'─'*10}-+-{'─'*16}---{'─'*8}")
+    inr_total = 0
+    for name, shape in decoder.inr.param_shapes.items():
+        total_els = shape[0] * shape[1]
+        shape_str = f"{shape[0]}x{shape[1]}"
+        print(f"  {name:<10} | {shape_str:>16}   {total_els:>8,}")
+        inr_total += total_els
+    print(f"  {'─'*10}-+-{'─'*16}---{'─'*8}")
+    print(f"  {'TOTAL':<10} | {'':>16}   {inr_total:>8,}")
+    print("############## Latent Space & INR Summary: #############")
+    print(f"Latent variable (diffusion) : ({latent_dim}, {latent_size_tuple[0]}, {latent_size_tuple[1]})")
+    print("________________________________________________________")
+    print(f"latent dim: {latent_dim * latent_size_tuple[0] * latent_size_tuple[1]}")
+    print(f"INR dim.  : {inr_total}")
+    print("########################################################")
+    encoder_params = _print_latent_encoder_info(latent_encoder)
+    decoder_params = _print_decoder_info(decoder)
+    noise_params = _print_noise_predictor_info(noise_predictor)
+
     total_params = sum(p.numel() for p in model.parameters())
     print("\n########## Total Parameter Summary: ##############")
     print("Latent Encoder  : ", f"{encoder_params:,}")
@@ -1475,23 +1493,57 @@ def _print_decoder_info(decoder: TransInr) -> int:
     Returns:
         total : total parameter count (int)
     """
+    # ── Tokenizer breakdown ───────────────────────────────────────────────
+    prefc_params = sum(p.numel() for p in decoder.tokenizer.prefc.parameters())
+    posemb_params = decoder.tokenizer.posemb.numel()
+    local_params = sum(p.numel() for p in decoder.tokenizer.local_attn.parameters())
+    global_params = sum(p.numel() for p in decoder.tokenizer.global_attn.parameters())
     tok_params = sum(p.numel() for p in decoder.tokenizer.parameters())
+    n_patches = decoder.tokenizer.posemb.shape[1]
+    tok_dim = decoder.tokenizer.posemb.shape[2]
+
+    # ── Transformer breakdown ─────────────────────────────────────────────
+    cls_name = decoder.transformer.__class__.__name__
     trans_params = sum(p.numel() for p in decoder.transformer.parameters())
-    base_params = sum(p.numel() for p in decoder.base_params.values())
+    if cls_name == "Transformer":
+        enc_params = sum(p.numel() for p in decoder.transformer.encoder.parameters())
+        dec_params = sum(p.numel() for p in decoder.transformer.decoder.parameters())
+    else:
+        enc_params = trans_params
+        dec_params = None
+
+    # ── Wtoken / INR breakdown ────────────────────────────────────────────
+    n_wtokens = decoder.wtokens.shape[0]
+    wtoken_dim = decoder.wtokens.shape[1]
     wtoken_params = decoder.wtokens.numel()
     postfc_params = sum(p.numel() for p in decoder.wtoken_postfc.parameters())
+    base_params = sum(p.numel() for p in decoder.base_params.values())
     inr_params = sum(p.numel() for p in decoder.inr.parameters())
     total = sum(p.numel() for p in decoder.parameters())
 
-    print("############## Latent Decoder Summary: #############")
-    print(f"Tokenizer           : {tok_params:>12,}")
-    print(f"Transformer         : {trans_params:>12,}")
-    print(f"Base INR params     : {base_params:>12,}")
-    print(f"Weight tokens       : {wtoken_params:>12,}")
-    print(f"Wtoken post-FC      : {postfc_params:>12,}")
-    print(f"SIREN (INR module)  : {inr_params:>12,}")
+    # ── Print: architecture stats ─────────────────────────────────────────
+    print("############## Latent Decoder Summary: ##############")
+    print("---- Architecture Stats ------------------------------")
+    print(f"  Data tokens               : {n_patches:>6}   (dim={tok_dim})")
+    print(f"  Weight tokens             : {n_wtokens:>6}   (dim={wtoken_dim})")
+
+    # ── Print: parameter counts ───────────────────────────────────────────
+    print("---- Parameters --------------------------------------")
+    print(f"Tokenizer                   : {tok_params:>12,}")
+    print(f"  Pre-FC                    : {prefc_params:>12,}")
+    print(f"  Positional embedding      : {posemb_params:>12,}")
+    print(f"  Local attention           : {local_params:>12,}")
+    print(f"  Global attention          : {global_params:>12,}")
+    print(f"Transformer                 : {trans_params:>12,}")
+    if dec_params is not None:
+        print(f"  Encoder                   : {enc_params:>12,}")
+        print(f"  Decoder                   : {dec_params:>12,}")
+    print(f"Weight tokens               : {wtoken_params:>12,}")
+    print(f"Wtoken post-FC              : {postfc_params:>12,}")
+    print(f"Base INR params             : {base_params:>12,}")
+    print(f"SIREN (INR module)          : {inr_params:>12,}")
     print("--------------------------------------------------------------")
-    print(f"Total               : {total:>12,}")
+    print(f"Total                       : {total:>12,}")
     print("--------------------------------------------------------------")
 
     return total
@@ -1505,25 +1557,53 @@ def _print_noise_predictor_info(predictor: LatentTransformerNoisePredictor) -> i
     Returns:
         total : total parameter count (int)
     """
-    time_params = sum(p.numel() for p in predictor.time_embed.parameters())
-    time_params += sum(p.numel() for p in predictor.time_proj.parameters())
+    # ── Derive architecture stats ─────────────────────────────────────────
+    n_layers = len(predictor.blocks)
+    d_model = predictor.token_embed.out_features
+    n_heads = predictor.blocks[0].attn.num_heads
+    d_ff = predictor.blocks[0].mlp[0].out_features
+
+    # ── Parameter counts ──────────────────────────────────────────────────
+    time_embed_params = sum(p.numel() for p in predictor.time_embed.parameters())
+    time_proj_params = sum(p.numel() for p in predictor.time_proj.parameters())
     embed_params = sum(p.numel() for p in predictor.token_embed.parameters())
-    blocks_params = sum(p.numel() for p in predictor.blocks.parameters())
-    readout_params = sum(p.numel() for p in predictor.final_norm.parameters())
-    readout_params += sum(p.numel() for p in predictor.token_readout.parameters())
+
+    # Per-block component breakdown (assumed uniform across blocks)
+    block0 = predictor.blocks[0]
+    attn_per_block = sum(p.numel() for p in block0.attn.parameters())
+    mlp_per_block = sum(p.numel() for p in block0.mlp.parameters())
+    adaLN_per_block = sum(p.numel() for p in block0.adaLN_modulation.parameters())  # noqa: N806
+    per_block = attn_per_block + mlp_per_block + adaLN_per_block
+    blocks_params = per_block * n_layers
+
+    final_mod_params = sum(p.numel() for p in predictor.final_modulation.parameters())
+    readout_params = sum(p.numel() for p in predictor.token_readout.parameters())
+    norm_params = sum(p.numel() for p in predictor.final_norm.parameters())
     total = sum(p.numel() for p in predictor.parameters())
 
-    n_layers = len(predictor.blocks)
-    per_block = blocks_params // n_layers if n_layers else 0
+    # ── Print: architecture stats ─────────────────────────────────────────
+    print("############# Noise Predictor Summary: #############")
+    print("---- Architecture Stats ----------------------------")
+    print(f"  Latent tokens  : {predictor.n_patches:>6}   (latent_dim={predictor.latent_dim})")
+    print(f"  d_model        : {d_model:>6}   (n_heads={n_heads}, d_ff={d_ff})")
+    print(f"  DiT blocks     : {n_layers:>6}")
 
-    print("#############  Noise Predictor Summary: ############")
-    print(f"Time embedding + proj  : {time_params:>12,}")
-    print(f"Token input projection : {embed_params:>12,}")
-    print(f"DiT blocks ({n_layers} layers)  : {blocks_params:>12,}  (~{per_block:,} / block)")
-    print(f"Readout (norm + proj)  : {readout_params:>12,}")
-    print("-----------------------------------------------------------------------")
-    print(f"Total                  : {total:>12,}")
-    print("")
+    # ── Print: parameter counts ───────────────────────────────────────────
+    print("---- Parameters ------------------------------------")
+    print(f"Time embedding             : {time_embed_params:>12,}")
+    print(f"Time projection            : {time_proj_params:>12,}")
+    print(f"Token input projection     : {embed_params:>12,}")
+    print(f"DiT blocks ({n_layers} layers)      : {blocks_params:>12,}  (~{per_block:,} / block)")
+    print(f"  Attention                : {attn_per_block * n_layers:>12,}  (~{attn_per_block:,} / block)")
+    print(f"  MLP                      : {mlp_per_block * n_layers:>12,}  (~{mlp_per_block:,} / block)")
+    print(f"  AdaLN modulation         : {adaLN_per_block * n_layers:>12,}  (~{adaLN_per_block:,} / block)")
+    print(f"Final modulation           : {final_mod_params:>12,}")
+    print(f"Final norm                 : {norm_params:>12,}")
+    print(f"Token readout              : {readout_params:>12,}")
+    print("----------------------------------------------------")
+    print(f"Total                      : {total:>12,}")
+    print("----------------------------------------------------")
+
     return total
 
 

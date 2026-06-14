@@ -32,6 +32,7 @@ indent-style = "space"
 docstring-code-format = true
 
 [tool.ruff.lint]
+ignore = ["UP038"]
 select = [
     "E",   # pycodestyle errors
     "F",   # pyflakes

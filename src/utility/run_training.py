@@ -45,6 +45,7 @@ from src.utility.plotting import (
     plot_final_samples,
     plot_forward_trajectory_progression,
     plot_fphi_progression,
+    plot_fphi_weight_histograms,
     plot_reconstruction_diffusion_progression,  # noqa: F401
     plot_reconstruction_progression,
     plot_sample_progression,
@@ -52,7 +53,6 @@ from src.utility.plotting import (
     plot_val_elbo_progression,  # noqa: F401
     plot_weight_profile_progression,  # noqa: F401
     plot_ztrans_histogram,
-    plot_fphi_weight_histograms,
 )
 from src.utility.training import train
 
