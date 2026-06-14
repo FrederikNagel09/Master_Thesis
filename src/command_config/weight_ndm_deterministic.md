@@ -1,14 +1,14 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name Weight-NDM-Diffusion-Deterministic-Test \
+    --run_name Weight-NDM-Diffusion-Deterministic-NewApproach \
     --model weight_inr_ndm_diffusion\
     --dataset mnist \
-    --epochs 40 \
+    --epochs 10 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 100 \
-    --n_fid_samples 128 \
+    --n_fid_samples 32 \
     --subset_frac 1.0 \
     --normalize False\
     --probablistic False \
@@ -22,7 +22,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --inr_layers 3 \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 8 \
-    --encoder_trans_head_dim 64 \
+    --encoder_trans_head_dim 32 \
     --encoder_trans_ff_dim 1024 \
     --encoder_trans_enc_depth 4 \
     --encoder_trans_dec_depth 4 \
@@ -35,14 +35,14 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --noise_predictor_n_head 16 \
     --noise_predictor_head_dim 32 \
     --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
+    --noise_predictor_depth 4 \
     --noise_predictor_dropout 0.0 \
     --noise_predictor_chunk_size 32 \
     --noise_predictor_t_embed_dim 256 \
     --f_phi_type trans \
     --f_phi_hidden_dim 64 \
     --f_phi_depth 4 \
-    --f_phi_num_heads 16 \
+    --f_phi_num_heads 8 \
     --f_phi_head_dim 16 \
     --f_phi_t_embed 256 \
-    --f_phi_mlp_ratio 4 
+    --f_phi_mlp_ratio 3 
