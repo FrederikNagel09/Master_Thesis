@@ -6,8 +6,8 @@ Usage
 -----
 python src/scripts/compute_FID.py \
     --model inr_vae \
-    --config src/trained_models/vae_inr_mnist_modulation/metadata/config.json \
-    --n 50000
+    --config src/results/vae-mnist-1.0_config.json \
+    --n 512
     --classifier_type inception
 
 --n defaults to the FID_SCORE_SAMPLES constant if not provided.
