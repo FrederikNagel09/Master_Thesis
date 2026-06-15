@@ -424,7 +424,7 @@ class WeightDiffusion(nn.Module):
                 t_norm = torch.full((batch_size,), t / (self.T - 1), device=device)
 
                 # Generate the specific noisy weight vectors for timestep t
-                theta_t, epsilon = self._construct_theta_t(theta_prime, t_idx)
+                theta_t, epsilon = self._forward_process(theta_prime, t_idx)
 
                 # Accumulate the unscaled, step-specific weighted MSE loss
                 # Fixed: Added theta_prime (x0) to the argument match list

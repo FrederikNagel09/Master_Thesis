@@ -276,7 +276,16 @@ def plot_final_samples(
 
     # ── FID samples ───────────────────────────────────────────────────────────
     print(f"  Computing FID ({n_fid_samples} samples) …")
-    fid_grid, _ = _model_to_grid(model, model_type, n_fid_samples, device, data_config, debug=debug)
+    fid_batch_size = 1024
+    fid_batches = []
+
+    for start in range(0, n_fid_samples, fid_batch_size):
+        print(f"    Sampling FID batch {start} to {min(start + fid_batch_size, n_fid_samples)} …")
+        batch_n = min(fid_batch_size, n_fid_samples - start)
+        batch, _ = _model_to_grid(model, model_type, batch_n, device, data_config, debug=debug)
+        fid_batches.append(batch)
+
+    fid_grid = np.concatenate(fid_batches, axis=0)  # (n_fid_samples, H, W) or (n_fid_samples, H, W, C)
 
     # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1]
     if channels == 1:

@@ -1,12 +1,12 @@
 python main.py \
-    --run_name Weight-Diffusion-Deterministic \
-    --epochs 5 \
-    --batch_size 16 \
-    --subset_frac 0.01 \
-    --normalize True\
+    --run_name Weight-Diffusion-Probabilistic \
+    --epochs 400 \
+    --batch_size 128 \
+    --subset_frac 1.0 \
+    --normalize False\
     --probablistic False \
     --stop_gradient_flow True \
-    --n_fid_samples 16 \
+    --n_fid_samples 4096 \
     --model weight_inr_diffusion\
     --dataset mnist \
     --lr 1e-4 \
@@ -37,5 +37,5 @@ python main.py \
     --noise_predictor_ff_dim 1024 \
     --noise_predictor_depth 6 \
     --noise_predictor_dropout 0.1 \
-    --noise_predictor_chunk_size 32 \
+    --noise_predictor_chunk_size 16 \
     --noise_predictor_t_embed_dim 128
