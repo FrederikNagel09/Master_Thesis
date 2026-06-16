@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 
+import numpy as np
 import torch
 import torch.nn as nn
 from tqdm import tqdm
@@ -31,6 +32,11 @@ if TYPE_CHECKING:
 # =============================================================================
 # Universal training loop
 # =============================================================================
+def _get_beta(global_step: int, beta_final: float, warmup_steps: int) -> float:
+    """Linear KL warmup from 0 to beta_final over warmup_steps."""
+    if warmup_steps == 0:
+        return beta_final
+    return beta_final * min(1.0, global_step / warmup_steps)
 
 
 def train(
@@ -170,8 +176,11 @@ def train(
 
     # two-stage training control variables (for applicable models)
     stage2_triggered = False
-    plateau_window = 40  # 30 * 100 steps = 3000 steps
-    plateau_threshold = 0.4  # tune after dry run
+    plateau_window = 40
+    rel_threshold = 0.02
+    min_stage1_steps = 20000
+    kl_warmup_steps = 10000
+    beta = 0.0
 
     if two_stage:
         print("[Training] Two-stage mode: freezing denoiser for stage 1.")
@@ -190,31 +199,14 @@ def train(
             print(f"\n############## EPOCH: {epoch} ##############\n")
         for batch in data_loader:
             # ── Forward pass (model-type dispatch) ───────────────────────────
-            if model_type == "inr_vae":
-                image_flat, _ = batch
-                image_flat = image_flat.to(device)  # (B, data_dim)
-                b = image_flat.shape[0]
-                coords = _coords.unsqueeze(0).expand(b, -1, -1)  # (B, img_size^2, 2)
 
-                if data_config["channels"] == 1:
-                    pixels = ((image_flat * 0.5 + 0.5).clamp(0, 1)).unsqueeze(-1)  # (B, H*W, 1)
-                else:
-                    pixels = ((image_flat * 0.5 + 0.5).clamp(0, 1)).reshape(b, -1, data_config["channels"])  # (B, H*W, C)
+            x = batch[0] if isinstance(batch, list | tuple) else batch
+            x = x.to(device)
 
-                loss, l_diff, l_prior, l_rec = model(image_flat, coords, pixels)
-            elif model_type == "ndm_transinr":
-                x = batch[0] if isinstance(batch, list | tuple) else batch
-                x = x.to(device)
-                # TransInrEncoder expects spatial (B, C, H, W), but the dataloader
-                # yields flat (B, C*H*W). Reshape here so model internals stay clean.
-                C = data_config["channels"]  # noqa: N806
-                H = W = data_config["img_size"]  # noqa: N806
-                x = x.view(x.shape[0], C, H, W)
-                loss, l_diff, l_prior, l_rec = model.loss(x)
+            if two_stage and not stage2_triggered:
+                beta = _get_beta(global_step, lambda_kl, kl_warmup_steps)
+                loss, l_diff, l_prior, l_rec = model.loss_vae(x, beta)
             else:
-                x = batch[0] if isinstance(batch, list | tuple) else batch
-                x = x.to(device)
-
                 loss, l_diff, l_prior, l_rec = model.loss(x, lambda_kl)
 
             # ── NaN/divergence diagnostics ──────────────────────────────────
@@ -263,7 +255,7 @@ def train(
                 diff=f"{l_diff.item():.4f}",
                 prior=f"{l_prior.item():.4f}",
                 rec=f"{l_rec.item():.4f}",
-                lambda_kl=f"{lambda_kl:.2e}",
+                beta=f"{beta:.2e}",
             )
             progress_bar.update()
 
@@ -281,8 +273,11 @@ def train(
 
                 # Two-stage: check for rec loss plateau → switch to stage 2
                 if two_stage and not stage2_triggered and len(history["rec"]) >= plateau_window:
-                    window = history["rec"][-plateau_window:]
-                    if (max(window) - min(window)) < plateau_threshold:
+                    rec_window = history["rec"][-plateau_window:]
+                    kl_window = history["prior"][-plateau_window:]
+                    rec_flat = (max(rec_window) - min(rec_window)) / (abs(np.mean(rec_window)) + 1e-8) < rel_threshold
+                    kl_flat = (max(kl_window) - min(kl_window)) / (abs(np.mean(kl_window)) + 1e-8) < rel_threshold
+                    if rec_flat and kl_flat and global_step > min_stage1_steps:
                         stage2_triggered = True
                         print(f"[Step {global_step}] Rec plateaued — switching to stage 2.")
                         if model_type in ("weight_inr_diffusion", "weight_inr_ndm_diffusion"):
