@@ -31,16 +31,16 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae_testing \
     --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
-    --epochs 40 \
+    --epochs 400 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --subset_frac 1.0 \
-    --lambda_kl_max 0.1 \
-    --kl_warmup_frac 0.4 \
+    --lambda_kl_max 1.0 \
+    --kl_warmup_frac 0.3 \
     --n_fid_samples 4096 \
-    --fid_batch_size 512 
+    --fid_batch_size 1024 
 
 Resume:
 python src/scripts/VAE_Baseline_Training.py \
@@ -696,7 +696,6 @@ def run_training(args: argparse.Namespace) -> None:
         data_root="data/",
         subset_frac=args.subset_frac,
         single_class=False,
-        single_class_label=1,
     )
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     channels = data_config["channels"]
@@ -714,8 +713,9 @@ def run_training(args: argparse.Namespace) -> None:
         history = {"elbo": [], "recon": [], "kl": []}
 
     total_epochs_planned = epoch_offset + args.epochs
+    epochs_with_no_kl = int(total_epochs_planned * 0.05)  # 5% of total epochs with λ_kl = 0
     # KL warmup is relative to the total training budget across all runs
-    kl_warmup_epochs = max(1, int(args.kl_warmup_frac * total_epochs_planned))
+    kl_warmup_epochs = max(1, int(args.kl_warmup_frac * (total_epochs_planned - epochs_with_no_kl)))
 
     results_dir = os.path.join(args.results_dir, args.run_name)
     # Clear existing run folder if starting fresh (not resuming)
@@ -741,7 +741,10 @@ def run_training(args: argparse.Namespace) -> None:
         global_epoch = epoch_offset + epoch
         model.train()
 
-        lambda_kl = args.lambda_kl_max * min(1.0, global_epoch / kl_warmup_epochs)
+        if global_epoch <= epochs_with_no_kl:
+            lambda_kl = 0.0
+        else:
+            lambda_kl = args.lambda_kl_max * min(1.0, global_epoch / kl_warmup_epochs)
 
         running_mse = 0.0
         running_kl = 0.0
