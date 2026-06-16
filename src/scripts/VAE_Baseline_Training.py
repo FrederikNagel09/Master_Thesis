@@ -30,15 +30,17 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 """
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae_testing \
-    --ldm_config src/train_results2/Latent-Diffusion-Probabilistic-test/metadata/config.json \
-    --epochs 4 \
+    --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
+    --epochs 40 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --subset_frac 0.1 \
+    --subset_frac 1.0 \
     --lambda_kl_max 0.1 \
-    --kl_warmup_frac 0.4
+    --kl_warmup_frac 0.4 \
+    --n_fid_samples 4096 \
+    --fid_batch_size 512 
 
 Resume:
 python src/scripts/VAE_Baseline_Training.py \
@@ -184,6 +186,8 @@ def parse_args() -> argparse.Namespace:
     # KL
     p.add_argument("--lambda_kl_max", type=float, default=0.1)
     p.add_argument("--kl_warmup_frac", type=float, default=0.4)
+    p.add_argument("--n_fid_samples", type=int, default=1000, help="Number of samples to generate for FID evaluation")
+    p.add_argument("--fid_batch_size", type=int, default=64, help="Batch size to use during FID sample generation and feature extraction")
 
     # Resume
     p.add_argument("--resume", type=str, default=None, help="Path to VAE checkpoint .pt to resume from")
@@ -508,6 +512,23 @@ def build_model(
     model = VAEWrapper(encoder, decoder, img_size, device).to(device)
 
     # Print model stats (captured by log file via stdout redirect)
+    print("\n########## Decoder INR Parameter Breakdown: ##############")
+    print(f"  {'Layer':<10} | {'Shape':>16}   {'Total':>8}")
+    print(f"  {'─'*10}-+-{'─'*16}---{'─'*8}")
+    inr_total = 0
+    for name, shape in decoder.inr.param_shapes.items():
+        total_els = shape[0] * shape[1]
+        shape_str = f"{shape[0]}x{shape[1]}"
+        print(f"  {name:<10} | {shape_str:>16}   {total_els:>8,}")
+        inr_total += total_els
+    print(f"  {'─'*10}-+-{'─'*16}---{'─'*8}")
+    print(f"  {'TOTAL':<10} | {'':>16}   {inr_total:>8,}")
+    print("############## Latent Space & INR Summary: #############")
+    print(f"Latent variable (diffusion) : ({latent_dim}, {latent_size_tuple[0]}, {latent_size_tuple[1]})")
+    print("________________________________________________________")
+    print(f"latent dim: {latent_dim * latent_size_tuple[0] * latent_size_tuple[1]}")
+    print(f"INR dim.  : {inr_total}")
+    print("########################################################")
     print("\n########## Encoder Info: ##############")
     _print_latent_encoder_info(encoder)
     print("\n########## Decoder Info: ##############")
@@ -526,6 +547,7 @@ def compute_eval_metrics(
     results_dir: str,
     run_name: str,
     total_epochs: int,
+    fid_batch_size: int,
 ) -> None:
     """
     Computes and saves FID, class uniformity, and avg reconstruction MSE.
@@ -556,7 +578,7 @@ def compute_eval_metrics(
     # ── Batched generation of FID samples ─────────────────────────────────────
     print(f"  Generating {n_fid_samples} samples for FID …")
     all_samples = []
-    batch_size = 64
+    batch_size = fid_batch_size
     remaining = n_fid_samples
     with torch.no_grad():
         while remaining > 0:
@@ -794,7 +816,8 @@ def run_training(args: argparse.Namespace) -> None:
             hparams,
             val_loader,
             data_config,
-            n_fid_samples=64,
+            n_fid_samples=args.n_fid_samples,
+            fid_batch_size=args.fid_batch_size,
             device=device,
             results_dir=results_dir,
             run_name=args.run_name,

@@ -1,6 +1,5 @@
 python main.py \
-    --run_name Latent-Diffusion-Probabilistic-TwoStage \
-    --two_stage True \
+    --run_name Latent-Diffusion-Probabilistic-Small \
     --epochs 400 \
     --batch_size 128 \
     --subset_frac 1.0 \
@@ -22,9 +21,9 @@ python main.py \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --latent_dim 16 \
-    --latent_size 16 \
-    --latent_patch_size 2 \
+    --latent_dim 1 \
+    --latent_size 14 \
+    --latent_patch_size 1 \
     --latent_enc_hidden_dim 20\
     --pred_d_model 128 \
     --pred_n_heads 8 \

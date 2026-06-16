@@ -38,7 +38,7 @@ from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor
 from src.models.WeightDiffusion import WeightDiffusion
 from src.models.WeightNdmDiffusion import WeightNDMDiffusion
 from src.models.WeightTransform import WeightTransformationParam, WeightTransformationTrans
-from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
+#from src.scripts.VAE_Baseline_Training import ProbabilisticResNetLatentEncoder, VAEWrapper
 
 # =============================================================================
 # Public API

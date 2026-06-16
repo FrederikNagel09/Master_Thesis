@@ -408,6 +408,9 @@ class LatentDiffusion(nn.Module):
         total_elbo = 0.0
         n_batches = 0
 
+        total_steps = len(val_loader) * self.T
+        pbar = tqdm(total=total_steps, desc="Validation")
+
         for x, _ in val_loader:
             x = x.to(device)
             B = x.shape[0]  # noqa: N806
@@ -436,12 +439,15 @@ class LatentDiffusion(nn.Module):
                     l_diff_sum += self._l_latent_rec(z_t, t_norm, z)  # (B,)
                 else:
                     l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx, debug=False)  # (B,)
+                
+                pbar.update(1)
 
             # Full ELBO per sample (negative, so lower is better during training)
             elbo = l_diff_sum + l_entropy + l_rec  # (B,)
             total_elbo += elbo.mean().item()
             n_batches += 1
 
+        pbar.close()
         self.train()
         return total_elbo / n_batches
 

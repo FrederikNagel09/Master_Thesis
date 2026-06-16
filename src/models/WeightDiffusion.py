@@ -389,6 +389,10 @@ class WeightDiffusion(nn.Module):
         device = self.sqrt_alpha_cumprod.device
         total_loss = 0.0
         n_batches = 0
+
+        total_steps = len(val_loader) * self.T
+        pbar = tqdm(total=total_steps, desc="Validation")
+
         for x, _ in val_loader:
             x = x.to(device)
             batch_size = x.shape[0]
@@ -418,7 +422,7 @@ class WeightDiffusion(nn.Module):
             # --------- 5. Integrate Diffusion Loss Over All T ---------
             l_diff_sum = torch.zeros(batch_size, device=device)  # (B,)
 
-            for t in tqdm(range(self.T), desc="Sampling", total=self.T):
+            for t in range(self.T):
                 # Construct uniform timestep configurations
                 t_idx = torch.full((batch_size,), t, dtype=torch.long, device=device)
                 t_norm = torch.full((batch_size,), t / (self.T - 1), device=device)
@@ -430,6 +434,8 @@ class WeightDiffusion(nn.Module):
                 # Fixed: Added theta_prime (x0) to the argument match list
                 l_diff_sum += self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx, debug=False)  # (B,)
 
+                pbar.update(1)
+
             # --------- 6. Aggregate Total Negative ELBO Per Sample ---------
             # Scaled exactly to match your negative_elbo calculation configuration
             elbo = l_diff_sum + l_rec - self.lambda_kl * l_prior if self.probablistic else l_diff_sum + l_rec
@@ -437,6 +443,7 @@ class WeightDiffusion(nn.Module):
             total_loss += elbo.mean().item()
             n_batches += 1
 
+        pbar.close()
         self.train()
         return total_loss / n_batches
 
