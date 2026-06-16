@@ -163,6 +163,55 @@ class LatentDiffusion(nn.Module):
         """
         return self._negative_elbo(x, lambda_kl)
 
+    def loss_vae(self, x: torch.Tensor, beta: float) -> tuple[torch.Tensor, ...]:
+        """
+        Compute the negative ELBO for a batch of images.
+        """
+        return self._negative_elbo_vae(x, beta)
+
+    def _negative_elbo_vae(self, x: torch.Tensor, beta: float) -> tuple[torch.Tensor, ...]:
+        """
+        Negative ELBO for the VAE-only stage (no diffusion loss).
+
+        Args:
+            x: (B, C, H, W) input images
+        Returns:
+            (total_loss, l_diff, l_prior, l_rec) — scalar means
+        """
+        """
+        Estimates L = l_diff + l_rec + l_prior.
+
+        Args:
+            x: (B, C, H, W)
+        Returns:
+            (total_loss, l_diff, l_prior, l_rec) — scalar means
+        """
+        ######### Input shape check ##########
+        B = x.shape[0]  # noqa: N806
+        if x.dim() == 2:
+            channels = self.data_dim // (self.img_size * self.img_size)
+            x = x.view(B, channels, self.img_size, self.img_size)
+
+        ######### Encode Image ##########
+        z, mu, logvar = self.encode(x)
+
+        ######### Compute diffusion loss terms ##########
+        l_rec = self._l_rec(x, z)
+        l_kl = self._l_kl(mu, logvar)
+
+        l_diff = torch.zeros_like(l_rec)
+        l_entropy = l_kl
+
+        total = l_rec + beta * l_kl
+
+        return total.mean(), l_diff.mean(), l_entropy.mean(), l_rec.mean()
+
+    def _l_kl(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        # KL(q(z|x) || N(0,I)), closed form
+        # Returns (B,) per-sample
+        kl = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+        return kl.mean(dim=(-3, -2, -1))
+
     @torch.no_grad()
     def sample(self, n_samples: int = 1, collect_snapshots: bool = False, debug: bool = True) -> torch.Tensor:
         """
@@ -439,7 +488,7 @@ class LatentDiffusion(nn.Module):
                     l_diff_sum += self._l_latent_rec(z_t, t_norm, z)  # (B,)
                 else:
                     l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx, debug=False)  # (B,)
-                
+
                 pbar.update(1)
 
             # Full ELBO per sample (negative, so lower is better during training)
