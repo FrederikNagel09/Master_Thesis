@@ -210,7 +210,7 @@ class LatentDiffusion(nn.Module):
         # KL(q(z|x) || N(0,I)), closed form
         # Returns (B,) per-sample
         kl = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
-        return kl.mean(dim=(-3, -2, -1))
+        return kl.sum(dim=(-3, -2, -1))
 
     @torch.no_grad()
     def sample(self, n_samples: int = 1, collect_snapshots: bool = False, debug: bool = True) -> torch.Tensor:

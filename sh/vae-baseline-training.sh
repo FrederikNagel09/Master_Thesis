@@ -25,6 +25,5 @@ python /zhome/66/4/156534/Master_Thesis/src/scripts/VAE_Baseline_Training.py \
     --grad_clip 1.0 \
     --subset_frac 1.0 \
     --lambda_kl_max 1.0 \
-    --kl_warmup_frac 0.3 \
     --n_fid_samples 4096 \
     --fid_batch_size 1024

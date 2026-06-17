@@ -1,6 +1,7 @@
 python main.py \
-    --run_name Latent-Diffusion-Probabilistic-Small \
-    --epochs 400 \
+    --run_name Latent-Diffusion-Probabilistic-twostageTest \
+    --epochs 20 \
+    --two_stage True \
     --batch_size 128 \
     --subset_frac 1.0 \
     --normalize False\
@@ -8,7 +9,7 @@ python main.py \
     --do_latent_recon False \
     --probablistic True\
     --stop_gradient_flow False \
-    --n_fid_samples 4096 \
+    --n_fid_samples 32 \
     --model latent_inr_diffusion \
     --dataset mnist \
     --lr 1e-4 \
@@ -21,8 +22,8 @@ python main.py \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --latent_dim 1 \
-    --latent_size 14 \
+    --latent_dim 16 \
+    --latent_size 16 \
     --latent_patch_size 1 \
     --latent_enc_hidden_dim 20\
     --pred_d_model 128 \

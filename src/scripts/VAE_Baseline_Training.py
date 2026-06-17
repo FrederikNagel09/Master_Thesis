@@ -31,16 +31,15 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae_testing \
     --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
-    --epochs 400 \
+    --epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --subset_frac 1.0 \
     --lambda_kl_max 1.0 \
-    --kl_warmup_frac 0.3 \
-    --n_fid_samples 4096 \
-    --fid_batch_size 1024 
+    --n_fid_samples 8 \
+    --fid_batch_size 8 
 
 Resume:
 python src/scripts/VAE_Baseline_Training.py \
@@ -666,7 +665,19 @@ def compute_eval_metrics(
         json.dump(metrics, f, indent=2)
     print(f"  Eval metrics saved → {metrics_path}")
 
-
+def _get_beta(global_step: int, beta_final: float, warmup_steps: int) -> float:
+    """
+    Beta stays 0 for burnin_steps, then linearly ramps to beta_final over warmup_steps.
+    
+    Args:
+        global_step: current training step
+        beta_final: target beta value
+        warmup_steps: steps to ramp from 0 to beta_final after burnin
+        burnin_steps: steps to hold beta at 0 before ramping
+    Returns:
+        float: current beta value
+    """
+    return beta_final * min(1.0, (global_step) / warmup_steps)
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN TRAINING WORKFLOW
 # ──────────────────────────────────────────────────────────────────────────────
@@ -713,9 +724,8 @@ def run_training(args: argparse.Namespace) -> None:
         history = {"elbo": [], "recon": [], "kl": []}
 
     total_epochs_planned = epoch_offset + args.epochs
-    epochs_with_no_kl = int(total_epochs_planned * 0.05)  # 5% of total epochs with λ_kl = 0
     # KL warmup is relative to the total training budget across all runs
-    kl_warmup_epochs = max(1, int(args.kl_warmup_frac * (total_epochs_planned - epochs_with_no_kl)))
+    kl_warmup_epochs = max(1, int(args.kl_warmup_frac * (total_epochs_planned)))
 
     results_dir = os.path.join(args.results_dir, args.run_name)
     # Clear existing run folder if starting fresh (not resuming)
@@ -735,16 +745,18 @@ def run_training(args: argparse.Namespace) -> None:
 
     total_steps = args.epochs * len(dataloader)
     progress_bar = tqdm(total=total_steps, desc="Training", unit="step")
+    
+    # two-stage training control variables (for applicable models)
+    lambda_kl = args.lambda_kl_max
+    min_stage1_steps = 50000
+    kl_warmup_steps = 30000
+    beta = 0.0
+    global_step = 0
 
     # 5. Training loop
     for epoch in range(1, args.epochs + 1):
         global_epoch = epoch_offset + epoch
         model.train()
-
-        if global_epoch <= epochs_with_no_kl:
-            lambda_kl = 0.0
-        else:
-            lambda_kl = args.lambda_kl_max * min(1.0, global_epoch / kl_warmup_epochs)
 
         running_mse = 0.0
         running_kl = 0.0
@@ -756,6 +768,8 @@ def run_training(args: argparse.Namespace) -> None:
 
             optimizer.zero_grad()
 
+            beta = _get_beta(global_step, lambda_kl, kl_warmup_steps)
+
             x_recon, mu, logvar = model(x)
 
             x_hat_flat = x_recon.reshape(x_recon.shape[0], -1)
@@ -763,7 +777,7 @@ def run_training(args: argparse.Namespace) -> None:
 
             loss_recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
             loss_kl = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3]))
-            total_loss = loss_recon + lambda_kl * loss_kl
+            total_loss = loss_recon + beta * loss_kl
 
             total_loss.backward()
             if args.grad_clip > 0:
@@ -775,7 +789,7 @@ def run_training(args: argparse.Namespace) -> None:
                     "epoch": f"{global_epoch}/{total_epochs_planned}",
                     "MSE": f"{loss_recon.item():.4f}",
                     "KL": f"{loss_kl.item():.2f}",
-                    "λ_kl": f"{lambda_kl:.3f}",
+                    "β": f"{beta:.3f}",
                 }
             )
             progress_bar.update(1)
@@ -786,10 +800,11 @@ def run_training(args: argparse.Namespace) -> None:
 
             running_mse += loss_recon.item()
             running_kl += loss_kl.item()
+            global_step += 1
 
         epoch_mse = running_mse / len(dataloader)
         epoch_kl = running_kl / len(dataloader)
-        print(f"      ↳ [Summary] Avg MSE: {epoch_mse:.5f} | Avg KL: {epoch_kl:.3f} | λ_kl: {lambda_kl:.4f}")
+        print(f"      ↳ [Summary] Avg MSE: {epoch_mse:.5f} | Avg KL: {epoch_kl:.3f} | β: {beta:.4f}")
 
         save_checkpoint(model, optimizer, global_epoch, history, args.run_name, results_dir)
         save_training_graph(history, len(dataloader), global_epoch, graph_path)

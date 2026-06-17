@@ -33,10 +33,18 @@ if TYPE_CHECKING:
 # Universal training loop
 # =============================================================================
 def _get_beta(global_step: int, beta_final: float, warmup_steps: int) -> float:
-    """Linear KL warmup from 0 to beta_final over warmup_steps."""
-    if warmup_steps == 0:
-        return beta_final
-    return beta_final * min(1.0, global_step / warmup_steps)
+    """
+    Beta stays 0 for burnin_steps, then linearly ramps to beta_final over warmup_steps.
+    
+    Args:
+        global_step: current training step
+        beta_final: target beta value
+        warmup_steps: steps to ramp from 0 to beta_final after burnin
+        burnin_steps: steps to hold beta at 0 before ramping
+    Returns:
+        float: current beta value
+    """
+    return beta_final * min(1.0, (global_step) / warmup_steps)
 
 
 def train(
@@ -178,8 +186,8 @@ def train(
     stage2_triggered = False
     plateau_window = 40
     rel_threshold = 0.02
-    min_stage1_steps = 20000
-    kl_warmup_steps = 10000
+    min_stage1_steps = 50000
+    kl_warmup_steps = 30000
     beta = 0.0
 
     if two_stage:
