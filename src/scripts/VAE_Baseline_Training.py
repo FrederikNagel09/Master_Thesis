@@ -31,7 +31,7 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae_testing \
     --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
-    --epochs 5 \
+    --epochs 10 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -372,6 +372,7 @@ def save_training_graph(
         ax.set_title(title)
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Loss")
+        ax.set_ylim(bottom=0, top=100)
         ax.set_xticks(tick_positions)
         ax.set_xticklabels(tick_labels)
         ax.grid(True, linestyle="--", alpha=0.4)
@@ -749,7 +750,7 @@ def run_training(args: argparse.Namespace) -> None:
     # two-stage training control variables (for applicable models)
     lambda_kl = args.lambda_kl_max
     min_stage1_steps = 50000
-    kl_warmup_steps = 30000
+    kl_warmup_steps = 80000
     beta = 0.0
     global_step = 0
 
