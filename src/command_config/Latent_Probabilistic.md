@@ -1,9 +1,8 @@
 python main.py \
     --run_name Latent-Diffusion-Probabilistic-twostageTest \
-    --epochs 20 \
-    --two_stage True \
+    --epochs 5 \
     --batch_size 128 \
-    --subset_frac 1.0 \
+    --subset_frac 0.05 \
     --normalize False\
     --do_scaling False \
     --do_latent_recon False \

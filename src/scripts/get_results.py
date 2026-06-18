@@ -8,11 +8,11 @@ Generates two evaluation plots for a trained INR-based model:
 Usage
 -----
 python src/scripts/get_results.py \
-    --config_path src/train_results/Weight-Diffusion-Probabilistic/metadata/config.json \
+    --config_path src/train_results/Latent-Diffusion-Deterministic/metadata/config.json \
     --sample_scale 128 \
     --n_samples 10 \
     --n_recon 8 \
-    --interp_mode bicubic
+    --interp_mode bilinear
 
 python src/scripts/get_results.py \
     --config_path src/results/vae_baselinea10/vae_baselinea10_config.json \
@@ -20,7 +20,7 @@ python src/scripts/get_results.py \
     --sample_scale 128 \
     --n_samples 10 \
     --n_recon 8 \
-    --interp_mode bicubic  
+    --interp_mode bilinear
 """
 
 from __future__ import annotations

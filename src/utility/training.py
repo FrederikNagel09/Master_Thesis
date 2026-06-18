@@ -22,7 +22,7 @@ sys.path.append(".")
 
 from typing import TYPE_CHECKING
 
-from src.utility.general import _build_scheduler
+from src.utility.general import _build_scheduler, _save_checkpoint
 from src.utility.plotting import print_training_summary
 
 if TYPE_CHECKING:
@@ -333,6 +333,8 @@ def train(
                 model.train()
 
         # ── End of epoch: update training plot ───────────────────────────────
+        _save_checkpoint(model, optimizer, epoch, weights_dir)
+
         if epoch_callback is not None:
             epoch_callback(history)
 
