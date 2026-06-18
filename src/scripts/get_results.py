@@ -8,11 +8,11 @@ Generates two evaluation plots for a trained INR-based model:
 Usage
 -----
 python src/scripts/get_results.py \
-    --config_path src/train_results/Latent-Diffusion-Deterministic-new/metadata/config.json \
+    --config_path src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
     --sample_scale 128 \
     --n_samples 10 \
     --n_recon 8 \
-    --interp_mode bilinear
+    --interp_mode bicubic
 """
 
 from __future__ import annotations

@@ -1,16 +1,15 @@
 ############## LATENT DIFFUSION ######################
 CUDA_VISIBLE_DEVICES=1 python main.py \
     --run_name Latent-Diffusion-CIFAR10 \
-    --epochs 5 \
-    --two_stage True \
-    --batch_size 128 \
-    --subset_frac 0.05 \
+    --epochs 10 \
+    --batch_size 64 \
+    --subset_frac 1.0 \
     --normalize False \
     --do_scaling False \
     --do_latent_recon False \
     --probablistic True \
     --stop_gradient_flow False \
-    --n_fid_samples 256 \
+    --n_fid_samples 16 \
     --model latent_inr_diffusion \
     --dataset cifar10 \
     --lr 1e-4 \

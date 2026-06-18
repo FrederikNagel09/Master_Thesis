@@ -372,9 +372,9 @@ class LatentDiffusion(nn.Module):
             total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
         else:
             scaling = self.T - 1
-            # ramp scaling up from 0 to 1 over the first 10000 steps determined by self.i
-            if self.i < 10000:
-                scaling *= self.i / 10000
+            # ramp scaling up from 0 to 1 over the first 50000 steps determined by self.i
+            if self.i < 50000:
+                scaling *= self.i / 50000
             total = scaling * l_diff - lambda_kl * l_entropy + l_rec
 
         if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
