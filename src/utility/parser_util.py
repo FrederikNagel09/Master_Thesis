@@ -23,7 +23,15 @@ def get_default_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--dataset", type=str, default="mnist", help="'mnist' | 'cifar10' | 'celeba'")
     p.add_argument("--device", type=str, default="cuda")
+
+    # ── two-stage training ────────────────────────────────────────────────────
     p.add_argument("--two_stage", type=lambda x: x.lower() == "true", default=False)
+    p.add_argument("--stage_one_epochs", type=int, default=150)
+    p.add_argument("--stage_two_epochs", type=int, default=250)
+    p.add_argument("--stage1_plateau_window", type=int, default=40)
+    p.add_argument("--stage1_rel_threshold", type=float, default=0.02)
+    p.add_argument("--stage2_plateau_window", type=int, default=40)
+    p.add_argument("--stage2_rel_threshold", type=float, default=0.05)
 
     # ── Data ──────────────────────────────────────────────────────────────────
     p.add_argument("--data_root", type=str, default="data/")
@@ -80,7 +88,6 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--f_phi_num_heads", type=int, default=8)
     p.add_argument("--f_phi_head_dim", type=int, default=64)
     p.add_argument("--f_phi_mlp_ratio", type=float, default=4.0)
-
 
     p.add_argument("--f_phi_type", type=str, default="mlp", choices=["mlp", "trans", "param"])
     p.add_argument("--f_phi_hidden", type=int, nargs="+", default=[512, 512, 512])
