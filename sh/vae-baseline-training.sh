@@ -1,7 +1,7 @@
 #!/bin/bash
 #BSUB -J vae_baseline            # Job name
-#BSUB -q gpuv100                           # Queue to submit the job to
-#BSUB -W 400                             # Wall time limit (6 hours)
+#BSUB -q gpua40                           # Queue to submit the job to
+#BSUB -W 600                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 4 cores
 #BSUB -R "rusage[mem=2GB]"                 # Request 1 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host

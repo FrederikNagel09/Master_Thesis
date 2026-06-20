@@ -173,9 +173,11 @@ class LatentDiffusion(nn.Module):
         """
         Plain epsilon-prediction MSE loss for stage-2 (frozen-encoder) DDPM training.
 
-        Encoder is run under no_grad since it's frozen during this stage — no need
-        to build an autograd graph through it. No KL/entropy term, no t=0 special case:
-        just standard L_simple from Ho et al. 2020.
+        Encoder/decoder are run under no_grad since they're frozen during this stage.
+        l_rec and l_prior are computed for logging/diagnostics only (e.g. confirming
+        the frozen encoder's reconstruction quality holds steady) — they contribute
+        zero gradient and are NOT included in total, so the logged total loss stays
+        a clean read on DDPM optimization progress rather than a constant offset.
 
         Args:
             x: (B, C, H, W) input images
@@ -183,7 +185,7 @@ class LatentDiffusion(nn.Module):
                     signature shared with loss() in the training loop
         Returns:
             (total_loss, l_diff, l_prior, l_rec) — scalar means; l_prior and l_rec
-            are zero tensors since this stage doesn't train the VAE
+            are real (non-zero) diagnostic values but do not affect total or gradients
         """
         B = x.shape[0]  # noqa: N806
         if x.dim() == 2:
@@ -192,7 +194,9 @@ class LatentDiffusion(nn.Module):
 
         ######### Encode (frozen, no grad) ##########
         with torch.no_grad():
-            z_raw, _, _ = self.encode(x)
+            z_raw, mu, logvar = self.encode(x)
+            l_rec = self._l_rec(x, z_raw, debug=False)
+            l_prior = self._l_kl(mu, logvar)
         z = z_raw  # normalization disabled (self._normalize is always False)
 
         ######### Sample timesteps, apply forward noising ##########
@@ -204,9 +208,7 @@ class LatentDiffusion(nn.Module):
         eps_hat = self.noise_predictor(z_t, t_norm)
         l_diff = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=(-3, -2, -1))  # (B,)
 
-        l_prior = torch.zeros_like(l_diff)
-        l_rec = torch.zeros_like(l_diff)
-        total = l_diff
+        total = l_diff  # l_rec / l_prior excluded — logging only, see docstring
 
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
