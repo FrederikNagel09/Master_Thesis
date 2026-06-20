@@ -1,8 +1,8 @@
 python main.py \
-    --run_name Weight-Diffusion-Probabilistic \
-    --epochs 400 \
+    --run_name Test-Weight-3 \
+    --epochs 15 \
     --batch_size 128 \
-    --subset_frac 1.0 \
+    --subset_frac 0.01 \
     --normalize False\
     --probablistic True \
     --stop_gradient_flow True \
@@ -12,7 +12,7 @@ python main.py \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 2 \
+    --log_every_n_steps 1 \
     --peak_lr 1e-4 \
     --lambda_kl 1.0 \
     --T 1000 \
@@ -24,9 +24,9 @@ python main.py \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 8 \
     --encoder_trans_head_dim 32 \
-    --encoder_trans_ff_dim 1024 \
-    --encoder_trans_enc_depth 4 \
-    --encoder_trans_dec_depth 4 \
+    --encoder_trans_ff_dim 512 \
+    --encoder_trans_enc_depth 2 \
+    --encoder_trans_dec_depth 2 \
     --encoder_trans_patch_size 4 \
     --encoder_trans_n_groups 32 \
     --encoder_trans_update_strategy scale \
@@ -34,8 +34,8 @@ python main.py \
     --noise_predictor_dim 128 \
     --noise_predictor_n_head 8 \
     --noise_predictor_head_dim 32 \
-    --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
+    --noise_predictor_ff_dim 512 \
+    --noise_predictor_depth 3 \
     --noise_predictor_dropout 0.1 \
     --noise_predictor_chunk_size 16 \
-    --noise_predictor_t_embed_dim 128
+    --noise_predictor_t_embed_dim 64
