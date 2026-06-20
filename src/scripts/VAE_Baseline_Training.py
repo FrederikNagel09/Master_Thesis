@@ -750,7 +750,7 @@ def run_training(args: argparse.Namespace) -> None:
     # two-stage training control variables (for applicable models)
     lambda_kl = args.lambda_kl_max
     min_stage1_steps = 50000
-    kl_warmup_steps = 80000
+    kl_warmup_steps = 30000
     beta = 0.0
     global_step = 0
 
