@@ -169,6 +169,47 @@ class LatentDiffusion(nn.Module):
         """
         return self._negative_elbo_vae(x, beta)
 
+    def loss_ddpm(self, x: torch.Tensor, lambda_kl: float | None = None) -> tuple[torch.Tensor, ...]:  # noqa: ARG002
+        """
+        Plain epsilon-prediction MSE loss for stage-2 (frozen-encoder) DDPM training.
+
+        Encoder is run under no_grad since it's frozen during this stage — no need
+        to build an autograd graph through it. No KL/entropy term, no t=0 special case:
+        just standard L_simple from Ho et al. 2020.
+
+        Args:
+            x: (B, C, H, W) input images
+            lambda_kl: unused, accepted only to match the (model, x, lambda_kl) call
+                    signature shared with loss() in the training loop
+        Returns:
+            (total_loss, l_diff, l_prior, l_rec) — scalar means; l_prior and l_rec
+            are zero tensors since this stage doesn't train the VAE
+        """
+        B = x.shape[0]  # noqa: N806
+        if x.dim() == 2:
+            channels = self.data_dim // (self.img_size * self.img_size)
+            x = x.view(B, channels, self.img_size, self.img_size)
+
+        ######### Encode (frozen, no grad) ##########
+        with torch.no_grad():
+            z_raw, _, _ = self.encode(x)
+        z = z_raw  # normalization disabled (self._normalize is always False)
+
+        ######### Sample timesteps, apply forward noising ##########
+        t_idx = torch.randint(0, self.T, (B,), device=x.device)
+        t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)
+        z_t, epsilon = self._forward_process(z, t_idx)
+
+        ######### Plain epsilon-MSE (L_simple, unweighted) ##########
+        eps_hat = self.noise_predictor(z_t, t_norm)
+        l_diff = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=(-3, -2, -1))  # (B,)
+
+        l_prior = torch.zeros_like(l_diff)
+        l_rec = torch.zeros_like(l_diff)
+        total = l_diff
+
+        return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
+
     def _negative_elbo_vae(self, x: torch.Tensor, beta: float) -> tuple[torch.Tensor, ...]:
         """
         Negative ELBO for the VAE-only stage (no diffusion loss).
