@@ -1,7 +1,7 @@
 ############## LATENT DIFFUSION ######################
 CUDA_VISIBLE_DEVICES=1 python main.py \
     --run_name Latent-Diffusion-CIFAR10 \
-    --epochs 10 \
+    --epochs 5 \
     --batch_size 64 \
     --subset_frac 1.0 \
     --normalize False \
@@ -25,18 +25,18 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --latent_dim 32 \
     --latent_size 16 \
     --latent_patch_size 2 \
-    --latent_enc_hidden_dim 48 \
+    --latent_enc_hidden_dim 42 \
     --pred_d_model 512 \
     --pred_n_heads 8 \
-    --pred_n_layers 7 \
+    --pred_n_layers 6 \
     --pred_d_ff 2048 \
     --pred_t_embed_dim 512 \
     --dec_trans_dim 256 \
     --dec_trans_n_head 8 \
     --dec_trans_head_dim 64 \
     --dec_trans_ff_dim 2048 \
-    --dec_trans_enc_depth 7 \
-    --dec_trans_dec_depth 7 \
+    --dec_trans_enc_depth 6 \
+    --dec_trans_dec_depth 6 \
     --dec_trans_n_groups 64 \
     --dec_trans_update_strategy scale
 

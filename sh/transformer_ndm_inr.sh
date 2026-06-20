@@ -18,7 +18,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 python /zhome/66/4/156534/Master_Thesis/main.py\
     --run_name Latent-Diffusion-CIFAR10 \
     --epochs 200 \
-    --batch_size 128 \
+    --batch_size 64 \
     --subset_frac 1.0 \
     --normalize False \
     --do_scaling False \
@@ -54,4 +54,5 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --dec_trans_enc_depth 6 \
     --dec_trans_dec_depth 6 \
     --dec_trans_n_groups 64 \
-    --dec_trans_update_strategy scale
+    --dec_trans_update_strategy scale \
+    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/Latent-Diffusion-CIFAR10/weights/weights.pt
