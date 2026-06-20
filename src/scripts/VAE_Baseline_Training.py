@@ -31,13 +31,13 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae_testing \
     --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
-    --epochs 10 \
+    --epochs 40 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --subset_frac 1.0 \
-    --lambda_kl_max 1.0 \
+    --lambda_kl_max 0.1 \
     --n_fid_samples 8 \
     --fid_batch_size 8 
 
