@@ -29,17 +29,18 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 
 """
 python src/scripts/VAE_Baseline_Training.py \
-    --run_name vae_testing \
+    --run_name vae_testing_new \
     --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
-    --epochs 40 \
+    --epochs 400 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --subset_frac 1.0 \
-    --lambda_kl_max 0.1 \
+    --lambda_kl_max 1.0 \
+    --kl_warmup_frac 0.4 \
     --n_fid_samples 8 \
-    --fid_batch_size 8 
+    --fid_batch_size 8
 
 Resume:
 python src/scripts/VAE_Baseline_Training.py \
@@ -372,7 +373,7 @@ def save_training_graph(
         ax.set_title(title)
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Loss")
-        ax.set_ylim(bottom=0, top=100)
+        #ax.set_ylim(bottom=0, top=100)
         ax.set_xticks(tick_positions)
         ax.set_xticklabels(tick_labels)
         ax.grid(True, linestyle="--", alpha=0.4)
@@ -666,10 +667,17 @@ def compute_eval_metrics(
         json.dump(metrics, f, indent=2)
     print(f"  Eval metrics saved → {metrics_path}")
 
-def _get_beta(global_step: int, beta_final: float, warmup_steps: int) -> float:
+
+
+def _get_beta(
+    global_step: int,
+    beta_final: float,
+    warmup_steps: int,
+    burnin_steps: int = 0,
+) -> float:
     """
     Beta stays 0 for burnin_steps, then linearly ramps to beta_final over warmup_steps.
-    
+
     Args:
         global_step: current training step
         beta_final: target beta value
@@ -678,10 +686,10 @@ def _get_beta(global_step: int, beta_final: float, warmup_steps: int) -> float:
     Returns:
         float: current beta value
     """
-    return beta_final * min(1.0, (global_step) / warmup_steps)
-# ──────────────────────────────────────────────────────────────────────────────
-# MAIN TRAINING WORKFLOW
-# ──────────────────────────────────────────────────────────────────────────────
+    if global_step < burnin_steps:
+        return 0.0
+    return beta_final * min(1.0, (global_step - burnin_steps) / warmup_steps)
+
 
 
 def run_training(args: argparse.Namespace) -> None:
@@ -749,8 +757,8 @@ def run_training(args: argparse.Namespace) -> None:
     
     # two-stage training control variables (for applicable models)
     lambda_kl = args.lambda_kl_max
-    min_stage1_steps = 50000
-    kl_warmup_steps = 30000
+    kl_burnin_steps = 0          # set >0 if you want pure-reconstruction burn-in
+    kl_warmup_steps = kl_warmup_epochs * len(dataloader)   # <-- fixed: was hardcoded 30000
     beta = 0.0
     global_step = 0
 
@@ -769,7 +777,7 @@ def run_training(args: argparse.Namespace) -> None:
 
             optimizer.zero_grad()
 
-            beta = _get_beta(global_step, lambda_kl, kl_warmup_steps)
+            beta = _get_beta(global_step, lambda_kl, kl_warmup_steps, kl_burnin_steps)
 
             x_recon, mu, logvar = model(x)
 
@@ -777,7 +785,10 @@ def run_training(args: argparse.Namespace) -> None:
             x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
 
             loss_recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
+
+
             loss_kl = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3]))
+
             total_loss = loss_recon + beta * loss_kl
 
             total_loss.backward()

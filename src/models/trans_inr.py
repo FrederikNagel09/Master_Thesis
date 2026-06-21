@@ -211,3 +211,64 @@ class TransInr(nn.Module):
 
     def get_last_layer(self):
         return self.inr.get_last_layer()
+    
+    def forward_with_weights(self, data, coord=None, **kwargs):
+        """
+        Mirrors forward(), but also returns the flattened modulated INR weight
+        vector alongside the reconstruction — for weight-space analysis (PCA,
+        interpolation) where the per-image modulated weights are needed directly.
+
+        Args:
+            data  : (B, C, H, W) raw image tensor
+            coord : optional custom coordinate grid; uses shared_coord if None
+        Returns:
+            pred:        (B, C_out, H, W) reconstructed image
+            weight_flat: (B, D) flattened modulated INR weights, one vector per
+                        image, concatenated in self.inr.param_shapes order
+        """
+        # 1. Tokenise the raw image  → (B, N_patch, dim)
+        dtokens = self.tokenizer(data, **kwargs)
+        B = dtokens.shape[0]  # noqa: N806
+
+        # 2. Expand wtokens to batch  → (B, N_w, dim)
+        wtokens = einops.repeat(self.wtokens, "n d -> b n d", b=B)
+
+        # 3. Transformer: image tokens → encoder memory; wtokens → decoder
+        cls_name = self.transformer.__class__.__name__
+        if cls_name == "Transformer":
+            trans_out = self.transformer(src=dtokens, tgt=wtokens)
+        elif cls_name == "TransformerEncoder":
+            combined = torch.cat([dtokens, wtokens], dim=1)
+            full_out = self.transformer(combined)
+            trans_out = full_out[:, -self.wtokens.shape[0] :, :]
+        else:
+            raise ValueError(f"Unsupported transformer class: {cls_name}")
+
+        # 4. Modulate base INR parameters with transformer output
+        params = {}
+        for name, shape in self.inr.param_shapes.items():  # noqa: B007
+            wb = einops.repeat(self.base_params[name], "n m -> b n m", b=B)
+            w = wb[:, :-1, :]
+            b = wb[:, -1:, :]
+            l, r = self.wtoken_rng[name]  # noqa: E741
+            x = self.wtoken_postfc[name](trans_out[:, l:r, :])
+            x = x.transpose(-1, -2)
+            w = self.update_strategy(w, x)
+            params[name] = torch.cat([w, b], dim=1)
+        self.inr.set_params(params)
+
+        # 4b. Flatten modulated weights, consistent order via param_shapes dict
+        weight_flat = torch.cat([params[name].reshape(B, -1) for name in self.inr.param_shapes], dim=1)  # (B, D)
+
+        # 5. Query INR at every pixel coordinate
+        if coord is None:
+            coord = self.shared_coord
+        if coord.dim() == 3:
+            coord = einops.repeat(coord, "h w d -> b h w d", b=B)
+        elif coord.dim() == 4:
+            pass
+        pred = self.inr(coord)
+        if pred.dim() == 4:
+            pred = pred.permute(0, 3, 1, 2).contiguous()
+
+        return pred, weight_flat
