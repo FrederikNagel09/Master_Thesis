@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J Latent-Probabilistic-two-stage-fixed      # Job name
-#BSUB -q gpua40                          # Queue to submit the job to
+#BSUB -J Latent-Probabilistic-two-stage      # Job name
+#BSUB -q gpuv100                          # Queue to submit the job to
 #BSUB -W 800                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 8 cores
 #BSUB -R "rusage[mem=2GB]"                 # Request 2 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Latent-Probabilistic-two-stage-fixed.out                        # Standard output redirection
-#BSUB -e src/outputs/Latent-Probabilistic-two-stage-fixed.err                        # Standard error redirection
+#BSUB -o src/outputs/Latent-Probabilistic-two-stage.out                        # Standard output redirection
+#BSUB -e src/outputs/Latent-Probabilistic-two-stage.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -16,7 +16,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name Latent-Probabilistic-two-stage-fixed \
+    --run_name Latent-Probabilistic-two-stage \
     --epochs 400 \
     --two_stage True \
     --stage_one_epochs 150 \

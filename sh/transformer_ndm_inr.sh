@@ -6,8 +6,8 @@
 #BSUB -R "rusage[mem=2GB]"                 # Request 2 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/Latent-Diffusion-CIFAR10.out                        # Standard output redirection
-#BSUB -e src/outputs/Latent-Diffusion-CIFAR10.err                        # Standard error redirection
+#BSUB -o src/outputs/Latent-Diffusion-CIFAR102.out                        # Standard output redirection
+#BSUB -e src/outputs/Latent-Diffusion-CIFAR102.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 

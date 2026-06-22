@@ -24,7 +24,7 @@ python /zhome/66/4/156534/Master_Thesis/src/scripts/VAE_Baseline_Training.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --subset_frac 1.0 \
-    --lambda_kl_max 1.0 \
+    --lambda_kl_max 0.1 \
     --kl_warmup_frac 0.4 \
     --n_fid_samples 4096 \
     --fid_batch_size 1024

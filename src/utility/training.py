@@ -32,7 +32,13 @@ if TYPE_CHECKING:
 # =============================================================================
 # Universal training loop
 # =============================================================================
-def _get_beta(global_step: int, beta_final: float, warmup_steps: int) -> float:
+
+def _get_beta(
+    global_step: int,
+    beta_final: float,
+    warmup_steps: int,
+    burnin_steps: int = 0,
+) -> float:
     """
     Beta stays 0 for burnin_steps, then linearly ramps to beta_final over warmup_steps.
 
@@ -44,7 +50,12 @@ def _get_beta(global_step: int, beta_final: float, warmup_steps: int) -> float:
     Returns:
         float: current beta value
     """
-    return beta_final * min(1.0, (global_step) / warmup_steps)
+    print("total steps:", warmup_steps)
+    if global_step < burnin_steps:
+        return 0.0
+    return beta_final * min(1.0, (global_step - burnin_steps) / warmup_steps)
+
+
 
 
 def _is_plateaued(window_vals: list[float], rel_threshold: float) -> bool:
@@ -262,10 +273,15 @@ def train(
 
     # ── Two-stage training control variables ─────────────────────────────────
     current_stage = 1 if two_stage else None
-    stage1_epoch_count = 0  # epochs completed within stage 1 (fixed-mode counter)
+    stage1_epoch_count = 0
     stage2_epoch_count = 0
-    kl_warmup_steps = 30000
+    kl_burnin_steps = 0 
+    kl_warmup_steps = 0.4 * total_steps  
     beta = 0.0
+    print("total steps:", total_steps)
+    print("kl warmup steps:", kl_warmup_steps)
+    beta = 0.0
+    global_step = 0
 
     if two_stage:
         print("[Training] Two-stage mode: starting stage 1 (VAE).")
@@ -335,7 +351,9 @@ def train(
 
             # ── Forward pass (model-type / stage dispatch) ───────────────────
             if two_stage and current_stage == 1:
-                beta = _get_beta(global_step, lambda_kl, kl_warmup_steps)
+                print("total steps:", total_steps)
+                print("kl warmup steps:", kl_warmup_steps)
+                beta = _get_beta(global_step, lambda_kl, kl_warmup_steps, kl_burnin_steps)
                 loss, l_diff, l_prior, l_rec = model.loss_vae(x, beta)
             elif two_stage and current_stage == 2:
                 loss, l_diff, l_prior, l_rec = model.loss_ddpm(x, lambda_kl)

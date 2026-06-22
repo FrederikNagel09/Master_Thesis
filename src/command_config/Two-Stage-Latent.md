@@ -1,11 +1,11 @@
 ###### Two-stage Approahc 1 ######
 
-python main.py \
-    --run_name Latent-Probabilistic-two-stage-fixed \
+CUDA_VISIBLE_DEVICES=1 python main.py \
+    --run_name Latent-Probabilistic-two-stage \
     --epochs 400 \
     --two_stage True \
-    --stage_one_epochs 40 \
-    --stage_two_epochs 360 \
+    --stage_one_epochs 150 \
+    --stage_two_epochs 250 \
     --batch_size 128 \
     --subset_frac 1.0 \
     --normalize False\
