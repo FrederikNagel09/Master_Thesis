@@ -111,7 +111,7 @@ class TransInrEncoder(nn.Module):
         update_strategy: str = "normalize",
         in_channels: int = 1,
         img_size: int = 28,
-        probabilistic: bool = False,
+        probabilistic: bool = True,
     ):
         super().__init__()
 
@@ -301,7 +301,6 @@ class TransInrEncoder(nn.Module):
             flat_mu_mods = self.encode_modulations(x, **kwargs)
             return flat_mu_mods
 
-        # VAE Path
         flat_mu, flat_logvar = self.encode_modulations(x, **kwargs)
 
         return flat_mu, flat_logvar

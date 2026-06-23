@@ -437,7 +437,7 @@ class WeightDiffusion(nn.Module):
         # 1. Predict the noise vector using your existing noise predictor network
         # For compatibility with your code, we pass theta_prime if required by your model.
         # If your noise_predictor only takes (theta_t, t_norm), keep it as below:
-        eps_pred = self.denoiser(theta_t0, t_norm_t0)
+        eps_pred = self.denoiser(theta_t0, t_norm_t0.unsqueeze(1))
 
         # 2. Extract the schedule constants for the very first step (t=0)
         # Assumes self.sqrt_alpha_cumprod, self.sigma, and self.beta are registered buffers

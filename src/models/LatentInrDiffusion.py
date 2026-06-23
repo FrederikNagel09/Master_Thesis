@@ -382,7 +382,7 @@ class LatentDiffusion(nn.Module):
 
         scaling = beta_t / (2 * alpha_t * (1.0 - alpha_bar_t))
 
-        unscaled_loss = mse.mean(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
+        unscaled_loss = mse.mean(dim=(-3, -2, -1))
 
         self.print_mse_low_and_high(t_norm, unscaled_loss, debug=debug)
 

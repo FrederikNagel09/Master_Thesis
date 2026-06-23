@@ -944,7 +944,6 @@ def _build_weight_diffusion(args, data_config: dict):
         update_strategy=encoder_update_strat,
         in_channels=channels,
         img_size=img_size,
-        probabilistic=args.probablistic,
     )
     weight_dim = encoder.modulation_dim
     encoder_params = print_encoder_stats(encoder)
@@ -1004,8 +1003,6 @@ def _build_weight_diffusion(args, data_config: dict):
         sigma_tilde_factor=args.sigma_tilde,
         data_dim=data_dim,
         img_size=img_size,
-        probablistic=args.probablistic,
-        lambda_kl=args.lambda_kl if hasattr(args, "lambda_kl") else 1.0,
         stop_gradient_flow=args.stop_gradient_flow,
     )
 
