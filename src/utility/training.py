@@ -265,7 +265,7 @@ def train(
         _save_checkpoint(model, optimizer, epoch, weights_dir)
         
         # ── Historical Snapshot ───────────────────────────────────────────
-        if epoch % 50 == 0:
+        if epoch % 50 == 0 and epoch != (start_epoch + epochs):
             snapshot_path = os.path.join(weights_dir, f"weights_epoch_{epoch}.pt")
             torch.save(model.state_dict(), snapshot_path)
         
