@@ -1,13 +1,8 @@
 python main.py \
     --run_name Latent-Probabilistic-one-stage \
-    --epochs 400 \
+    --epochs 450 \
     --batch_size 128 \
     --subset_frac 1.0 \
-    --normalize False\
-    --do_scaling False \
-    --do_latent_recon False \
-    --probablistic True\
-    --stop_gradient_flow False \
     --n_fid_samples 4096 \
     --model latent_inr_diffusion \
     --dataset mnist \
@@ -15,7 +10,6 @@ python main.py \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --log_every_n_steps 100 \
-    --lambda_kl 1.0 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
@@ -39,3 +33,39 @@ python main.py \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale
 
+
+
+python main.py \
+    --run_name Latent-Diffusion \
+    --epochs 5 \
+    --batch_size 128 \
+    --subset_frac 0.05 \
+    --n_fid_samples 16 \
+    --model latent_inr_diffusion \
+    --dataset mnist \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 1 \
+    --T 100 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --inr_hidden_dim 32 \
+    --inr_layers 3 \
+    --latent_dim 4 \
+    --latent_size 8 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 12\
+    --pred_d_model 32 \
+    --pred_n_heads 2 \
+    --pred_n_layers 2 \
+    --pred_d_ff 256 \
+    --pred_t_embed_dim 32 \
+    --dec_trans_dim 32 \
+    --dec_trans_n_head 2 \
+    --dec_trans_head_dim 8 \
+    --dec_trans_ff_dim 256 \
+    --dec_trans_enc_depth 2 \
+    --dec_trans_dec_depth 2 \
+    --dec_trans_n_groups 32 \
+    --dec_trans_update_strategy scale

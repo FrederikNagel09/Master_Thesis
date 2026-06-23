@@ -197,7 +197,7 @@ class LatentDiffusion(nn.Module):
 
                 x = x.to(next(self.parameters()).device)
 
-                z_raw = self.encode(x)
+                z_raw, _, _ = self.encode(x)
 
                 total_loss += self._l_rec(x, z_raw).mean().item()
                 n_batches += 1
