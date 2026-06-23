@@ -249,7 +249,8 @@ class LatentDiffusion(nn.Module):
                 if t == 0:
                     l_diff_sum += self._l_latent_rec(z_t, t_norm, z)  # (B,)
                 else:
-                    l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx, debug=False)  # (B,)
+                    loss, _ = self._l_diff(z_t, t_norm, epsilon, t_idx, debug=False)
+                    l_diff_sum += loss
 
                 pbar.update(1)
 

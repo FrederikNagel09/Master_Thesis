@@ -1,6 +1,6 @@
 python main.py \
-    --run_name latent-diffusion \
-    --epochs 450 \
+    --run_name latent-diffusion-2 \
+    --epochs 15 \
     --batch_size 128 \
     --subset_frac 1.0 \
     --n_fid_samples 4096 \
