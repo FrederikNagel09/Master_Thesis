@@ -254,7 +254,7 @@ class LatentDiffusion(nn.Module):
                 pbar.update(1)
 
             # Full ELBO per sample (negative, so lower is better during training)
-            elbo = l_diff_sum + l_entropy + l_rec  # (B,)
+            elbo = l_diff_sum - l_entropy + l_rec  # (B,)
             total_elbo += elbo.mean().item()
             n_batches += 1
 
@@ -447,7 +447,7 @@ class LatentDiffusion(nn.Module):
         sigma_0 = self.sigma[0]
         beta_0 = self.beta[0]
 
-        mu_theta = (z_t0 - (beta_0 / sigma_0) * eps_pred) / alpha_0
+        mu_theta = (z_t0 - sigma_0 * eps_pred) / alpha_0
 
         return F.mse_loss(mu_theta, z_clean_t0, reduction="none").mean(dim=[1, 2, 3]) / (2.0 * beta_0)
 
