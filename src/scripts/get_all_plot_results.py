@@ -17,10 +17,10 @@ python src/scripts/get_results.py \
 Usage
 -----
 python src/scripts/get_all_plot_results.py \
-    --vae_config_path src/train_results2/vae_testing/vae_testing_config.json \
-    --vae_checkpoint_path src/train_results2/vae_testing/vae_testing_checkpoint.pt \
-    --latent_config_paths src/train_results/Test-Latent-1/metadata/config.json src/train_results/Test-Latent-2/metadata/config.json src/train_results/Test-Latent-3/metadata/config.json\
-    --weight_config_paths src/train_results/Test-Weight-1/metadata/config.json src/train_results/Test-Weight-2/metadata/config.json src/train_results/Test-Weight-3/metadata/config.json\
+    --vae_config_path src/results/vae_testing_beta01/vae_testing_beta01_config.json \
+    --vae_checkpoint_path src/results/vae_testing_beta01/vae_testing_beta01_checkpoint.pt \
+    --latent_config_paths src/train_results/Latent-Diffusion-Deterministic/metadata/config.json src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json src/train_results/Latent-Probabilistic-two-stage/metadata/config.json\
+    --weight_config_paths src/train_results/Weight-Diffusion-Deterministic/metadata/config.json src/train_results/Weight-Diffusion-Probabilistic/metadata/config.json src/train_results/Weight-Diffusion-Probabilistic-twostage/metadata/config.json\
     --sample_scale 128
 
 python src/scripts/get_all_plot_results.py \
@@ -1129,9 +1129,9 @@ def main():
         epoch_reached=epoch_reached,
         save_path=os.path.join(output_dir, "vae_training_curves.png"),
         plot_every_n=1,
-        elbo_ylim=60.0,
-        recon_ylim=60.0,
-        kl_ylim=200.0,
+        elbo_ylim=30.0,
+        recon_ylim=30.0,
+        kl_ylim=120.0,
     )
 
     # Plot 2: Upscaled Sample Row
@@ -1207,9 +1207,9 @@ def main():
             model_type="ldm",
             save_path=os.path.join(output_dir, "latent_training_curves.png"),
             plot_every_n=1,
-            total_ylim=360,  # Modify these caps directly here
-            diff_ylim=1.0,
-            rec_ylim=360,
+            total_ylim=50,  # Modify these caps directly here
+            diff_ylim=0.1,
+            rec_ylim=50,
         )
         active_latent_sample_headlines = HEADLINES_LATENT_SAMPLES[: len(latent_configs)]
 
@@ -1292,9 +1292,9 @@ def main():
             model_type="weight_diffusion",
             save_path=os.path.join(output_dir, "weight_training_curves.png"),
             plot_every_n=1,
-            total_ylim=3500,  # Modify these caps directly here
-            diff_ylim=3.5,
-            rec_ylim=360,
+            total_ylim=1500,  # Modify these caps directly here
+            diff_ylim=1.5,
+            rec_ylim=50,
         )
         active_weight_sample_headlines = HEADLINES_WEIGHT_SAMPLES[: len(weight_configs)]
 

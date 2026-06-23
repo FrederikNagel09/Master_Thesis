@@ -16,11 +16,11 @@ image (NOT the upstream latent z) and analyzed directly in weight space:
 Usage
 -----
 python src/scripts/weight_space_analysis.py \
-    --vae_config_path src/results/vae_baseline/vae_baseline_config.json \
-    --vae_checkpoint_path src/results/vae_baseline/vae_baseline_checkpoint.pt \
-    --latent_config_paths src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
-    --weight_config_paths src/train_results/Weight-Diffusion-Deterministic/metadata/config.json \
-    --n_pca_samples 512
+    --vae_config_path src/results/vae_testing_beta01/vae_testing_beta01_config.json \
+    --vae_checkpoint_path src/results/vae_testing_beta01/vae_testing_beta01_checkpoint.pt \
+    --latent_config_paths src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json src/train_results/Latent-Probabilistic-two-stage/metadata/config.json\
+    --weight_config_paths src/train_results/Weight-Diffusion-Probabilistic/metadata/config.json \
+    --n_pca_samples 2048
 """  # noqa: E501
 
 from __future__ import annotations
@@ -257,7 +257,7 @@ def _draw_pca_subplot(
         n_classes = int(labels.max()) + 1
         scatter = ax.scatter(w_2d[:, 0], w_2d[:, 1], c=labels, cmap="tab10", vmin=0, vmax=n_classes - 1, s=8, alpha=0.85, linewidths=0)
     else:
-        ax.scatter(w_2d[:, 0], w_2d[:, 1], color="steelblue", s=8, alpha=0.6, linewidths=0)
+        ax.scatter(w_2d[:, 0], w_2d[:, 1], color="black", s=8, alpha=0.6, linewidths=0)
 
     if interp_path_2d is not None:
         linear_color = "darkorange"

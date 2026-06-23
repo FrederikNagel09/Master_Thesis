@@ -15,7 +15,7 @@ Usage
 CUDA_VISIBLE_DEVICES=1 python src/scripts/latent_space_analysis.py \
     --vae_config_path src/results/vae_testing_beta01/vae_testing_beta01_config.json \
     --vae_checkpoint_path src/results/vae_testing_beta01/vae_testing_beta01_checkpoint.pt \
-    --latent_config_paths src/train_results/Latent-Diffusion-Deterministic/metadata/config.json src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json src/train_results/Latent-Diffusion-Probabilistic-3212/metadata/config.json\
+    --latent_config_paths src/train_results/Latent-Diffusion-Deterministic/metadata/config.json src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json src/train_results/Latent-Probabilistic-two-stage/metadata/config.json\
     --n_pca_samples 2048 \
     --n_background_samples 2048 
 """  # noqa: E501
