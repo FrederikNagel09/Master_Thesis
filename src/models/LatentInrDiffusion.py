@@ -325,7 +325,7 @@ class LatentDiffusion(nn.Module):
         # --- Diffusion loss: only t>0 ---
         l_diff = torch.zeros(B, device=x.device)
         if mask_tdiff.any():
-            l_diff[mask_tdiff] = self._l_diff(z_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], t_idx[mask_tdiff])
+            l_diff[mask_tdiff], unscaled_loss = self._l_diff(z_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], t_idx[mask_tdiff])
         # --- Latent reconstruction loss: only t=0 ---
         l_latent_rec = torch.zeros(B, device=x.device)
         if mask_t0.any():
@@ -346,7 +346,7 @@ class LatentDiffusion(nn.Module):
 
         self.print_final_elbo_stats(x, t_idx, t_norm, z, z_t, epsilon)
 
-        return total.mean(), l_diff.mean(), l_entropy.mean(), l_rec.mean()
+        return total.mean(), unscaled_loss.mean(), l_entropy.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
     # Loss terms
@@ -390,7 +390,7 @@ class LatentDiffusion(nn.Module):
 
         self.print_debug_info(epsilon, eps_hat, mse, l_diff_loss)
 
-        return l_diff_loss
+        return l_diff_loss, unscaled_loss
 
     def _l_entropy(self, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -529,7 +529,7 @@ class LatentDiffusion(nn.Module):
             return z, snapshots
         return z
 
-    @torch.no_grad()
+
     def _decode_latent(self, z: torch.Tensor) -> torch.Tensor:
         """
         Decode latent feature map to pixel space via TransInr.

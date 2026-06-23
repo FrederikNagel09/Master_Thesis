@@ -24,15 +24,6 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--dataset", type=str, default="mnist", help="'mnist' | 'cifar10' | 'celeba'")
     p.add_argument("--device", type=str, default="cuda")
 
-    # ── two-stage training ────────────────────────────────────────────────────
-    p.add_argument("--two_stage", type=lambda x: x.lower() == "true", default=False)
-    p.add_argument("--stage_one_epochs", type=int, default=150)
-    p.add_argument("--stage_two_epochs", type=int, default=250)
-    p.add_argument("--stage1_plateau_window", type=int, default=40)
-    p.add_argument("--stage1_rel_threshold", type=float, default=0.02)
-    p.add_argument("--stage2_plateau_window", type=int, default=40)
-    p.add_argument("--stage2_rel_threshold", type=float, default=0.05)
-
     # ── Data ──────────────────────────────────────────────────────────────────
     p.add_argument("--data_root", type=str, default="data/")
     p.add_argument("--batch_size", type=int, default=128)
