@@ -437,7 +437,7 @@ class WeightDiffusion(nn.Module):
         # 1. Predict the noise vector using your existing noise predictor network
         # For compatibility with your code, we pass theta_prime if required by your model.
         # If your noise_predictor only takes (theta_t, t_norm), keep it as below:
-        eps_pred = self.noise_predictor(theta_t0, t_norm_t0)
+        eps_pred = self.denoiser(theta_t0, t_norm_t0)
 
         # 2. Extract the schedule constants for the very first step (t=0)
         # Assumes self.sqrt_alpha_cumprod, self.sigma, and self.beta are registered buffers
@@ -486,7 +486,7 @@ class WeightDiffusion(nn.Module):
 
         curr_theta = torch.randn(n_samples, weight_dim, device=device)
 
-        self.print_timesensitivity_check(weight_dim, debug)
+        self.print_timesensitivity_check(weight_dim, device, debug=debug)
 
         for t in tqdm(range(self.T - 1, -1, -1), desc="Sampling", total=self.T):
             t_norm = torch.full((n_samples,), t / (self.T - 1), device=device).unsqueeze(-1)
