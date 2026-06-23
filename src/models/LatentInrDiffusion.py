@@ -94,12 +94,6 @@ class LatentDiffusion(nn.Module):
         T: int = 1000,  # noqa: N803
         data_dim: int = 784,
         img_size: int = 28,
-        normalize: bool = True,
-        lambda_kl: float = 5e-3,
-        scaling: bool = True,
-        latent_recon: bool = True,
-        probabilistic: bool = True,
-        stop_gradient_flow: bool = True,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -115,15 +109,8 @@ class LatentDiffusion(nn.Module):
         self.beta_1 = beta_1
         self.beta_T = beta_T
         self.T = T
-        self._normalize = normalize
-        self.__do_scaling = scaling
-        self._do_latent_recon = latent_recon
-        self._probabilistic = probabilistic
-        self.stop_gradient_flow = stop_gradient_flow
 
         self.i = 0
-        self.latent_scaler = LatentScaler(latent_dim)
-        self.lambda_kl = lambda_kl
 
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
@@ -152,7 +139,7 @@ class LatentDiffusion(nn.Module):
     # -------------------------------------------------------------------------
     # Public interface
     # -------------------------------------------------------------------------
-    def loss(self, x: torch.Tensor, lambda_kl: float) -> tuple[torch.Tensor, ...]:
+    def loss(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """
         Compute the negative ELBO for a batch of images.
 
@@ -161,99 +148,7 @@ class LatentDiffusion(nn.Module):
         Returns:
             (total_loss, l_diff, l_prior, l_rec) — scalar means
         """
-        return self._negative_elbo(x, lambda_kl)
-
-    def loss_vae(self, x: torch.Tensor, beta: float) -> tuple[torch.Tensor, ...]:
-        """
-        Compute the negative ELBO for a batch of images.
-        """
-        return self._negative_elbo_vae(x, beta)
-
-    def loss_ddpm(self, x: torch.Tensor, lambda_kl: float | None = None) -> tuple[torch.Tensor, ...]:  # noqa: ARG002
-        """
-        Plain epsilon-prediction MSE loss for stage-2 (frozen-encoder) DDPM training.
-
-        Encoder/decoder are run under no_grad since they're frozen during this stage.
-        l_rec and l_prior are computed for logging/diagnostics only (e.g. confirming
-        the frozen encoder's reconstruction quality holds steady) — they contribute
-        zero gradient and are NOT included in total, so the logged total loss stays
-        a clean read on DDPM optimization progress rather than a constant offset.
-
-        Args:
-            x: (B, C, H, W) input images
-            lambda_kl: unused, accepted only to match the (model, x, lambda_kl) call
-                    signature shared with loss() in the training loop
-        Returns:
-            (total_loss, l_diff, l_prior, l_rec) — scalar means; l_prior and l_rec
-            are real (non-zero) diagnostic values but do not affect total or gradients
-        """
-        B = x.shape[0]  # noqa: N806
-        if x.dim() == 2:
-            channels = self.data_dim // (self.img_size * self.img_size)
-            x = x.view(B, channels, self.img_size, self.img_size)
-
-        ######### Encode (frozen, no grad) ##########
-        with torch.no_grad():
-            z_raw, mu, logvar = self.encode(x)
-            l_rec = self._l_rec(x, z_raw, debug=False)
-            l_prior = self._l_kl(mu, logvar)
-        z = z_raw  # normalization disabled (self._normalize is always False)
-
-        ######### Sample timesteps, apply forward noising ##########
-        t_idx = torch.randint(0, self.T, (B,), device=x.device)
-        t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)
-        z_t, epsilon = self._forward_process(z, t_idx)
-
-        ######### Plain epsilon-MSE (L_simple, unweighted) ##########
-        eps_hat = self.noise_predictor(z_t, t_norm)
-        l_diff = F.mse_loss(eps_hat, epsilon, reduction="none").mean(dim=(-3, -2, -1))  # (B,)
-
-        total = l_diff  # l_rec / l_prior excluded — logging only, see docstring
-
-        return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
-
-    def _negative_elbo_vae(self, x: torch.Tensor, beta: float) -> tuple[torch.Tensor, ...]:
-        """
-        Negative ELBO for the VAE-only stage (no diffusion loss).
-
-        Args:
-            x: (B, C, H, W) input images
-        Returns:
-            (total_loss, l_diff, l_prior, l_rec) — scalar means
-        """
-        """
-        Estimates L = l_diff + l_rec + l_prior.
-
-        Args:
-            x: (B, C, H, W)
-        Returns:
-            (total_loss, l_diff, l_prior, l_rec) — scalar means
-        """
-        ######### Input shape check ##########
-        B = x.shape[0]  # noqa: N806
-        if x.dim() == 2:
-            channels = self.data_dim // (self.img_size * self.img_size)
-            x = x.view(B, channels, self.img_size, self.img_size)
-
-        ######### Encode Image ##########
-        z, mu, logvar = self.encode(x)
-
-        ######### Compute diffusion loss terms ##########
-        l_rec = self._l_rec(x, z)
-        l_kl = self._l_kl(mu, logvar)
-
-        l_diff = torch.zeros_like(l_rec)
-        l_entropy = l_kl
-
-        total = l_rec + beta * l_kl
-
-        return total.mean(), l_diff.mean(), l_entropy.mean(), l_rec.mean()
-
-    def _l_kl(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        # KL(q(z|x) || N(0,I)), closed form
-        # Returns (B,) per-sample
-        kl = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
-        return kl.sum(dim=(-3, -2, -1))
+        return self._negative_elbo(x)
 
     @torch.no_grad()
     def sample(self, n_samples: int = 1, collect_snapshots: bool = False, debug: bool = True) -> torch.Tensor:
@@ -269,26 +164,16 @@ class LatentDiffusion(nn.Module):
         # Sample latents:
         if collect_snapshots:
             z, snapshots = self._sample_latent(n_samples, collect_snapshots=True, debug=debug)
-            if self._normalize:
-                z = self._denormalize_z(z)
+
             return self._decode_latent(z), snapshots
         else:
             z = self._sample_latent(n_samples, collect_snapshots=collect_snapshots, debug=debug)  # (B, latent_dim, H', W')
-            if self._normalize:
-                z = self._denormalize_z(z)
+
             return self._decode_latent(z)  # (B, data_dim)
 
     # -------------------------------------------------------------------------
-    # Normalization stuff
+    # Metric Computations
     # -------------------------------------------------------------------------
-
-    def _normalize_z(self, z: torch.Tensor) -> torch.Tensor:
-        """Standardize latents to approx N(0, I). Args: z (B, C, H', W'). Returns: same shape."""
-        return self.latent_scaler(z, reverse=False, training=self.training)
-
-    def _denormalize_z(self, z: torch.Tensor) -> torch.Tensor:
-        """Invert _normalize_z. Args: z (B, C, H', W'). Returns: same shape."""
-        return self.latent_scaler(z, reverse=True)
 
     def compute_rec_loss(self, val_loader: torch.utils.data.DataLoader) -> float:
         """
@@ -312,177 +197,12 @@ class LatentDiffusion(nn.Module):
 
                 x = x.to(next(self.parameters()).device)
 
-                mu, logvar = self.latent_encoder(x)
-                z_raw = mu if not self._probabilistic else self.latent_encoder.reparameterize(mu, logvar)
+                z_raw = self.encode(x)
 
                 total_loss += self._l_rec(x, z_raw).mean().item()
                 n_batches += 1
 
         return total_loss / n_batches
-
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        mu, logvar = self.latent_encoder(x)
-        if self._probabilistic:
-            z_raw = self.latent_encoder.reparameterize(mu, logvar)
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                std = torch.exp(0.5 * logvar)
-                print(f"==================== Probablistic Components {self.i}: ====================")
-                print(f"[Encoder] mu:     mean={mu.mean():.3f}, std={mu.std():.3f}, min={mu.min():.3f}, max={mu.max():.3f}")
-                print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
-                print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
-                print(
-                    f"theta mean={z_raw.mean():.4f}," f"std={z_raw.std():.4f}, min={z_raw.min():.4f}, max={z_raw.max():.4f}",
-                )
-                print("================================================================\n")
-        else:
-            z_raw = mu  # Use mean directly for deterministic latents (ablation)
-            if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-                print(f"theta mean={z_raw.mean():.4f}, std={z_raw.std():.4f}")
-                print(f"theta min={z_raw.min():.4f}, max={z_raw.max():.4f}")
-        return z_raw, mu, logvar
-
-    def get_reconstructions(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Get reconstructed images from the model for a batch of inputs.
-
-        Args:
-            x: (B, C, H, W) input images
-        Returns:
-            x_hat: (B, data_dim) reconstructed images in flattened form
-        """
-        z_raw, _, _ = self.encode(x)
-
-        x_recon = self._decode_latent(z_raw)
-
-        return x_recon
-
-    # -------------------------------------------------------------------------
-    # ELBO
-    # -------------------------------------------------------------------------
-    def _negative_elbo(self, x: torch.Tensor, lambda_kl: float) -> tuple[torch.Tensor, ...]:
-        """
-        Estimates L = l_diff + l_rec + l_prior.
-
-        Args:
-            x: (B, C, H, W)
-        Returns:
-            (total_loss, l_diff, l_prior, l_rec) — scalar means
-        """
-        ######### Input shape check ##########
-        B = x.shape[0]  # noqa: N806
-        if x.dim() == 2:
-            channels = self.data_dim // (self.img_size * self.img_size)
-            x = x.view(B, channels, self.img_size, self.img_size)
-
-        ######### Encode Image ##########
-        z_raw, _, logvar = self.encode(x)
-
-        ######### Normalize Latents ##########
-        z = self._normalize_z(z_raw) if self._normalize else z_raw
-
-        ######### Sample Time Steps ##########
-        t_idx = torch.randint(1, self.T, (B,), device=x.device)
-        t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
-
-        ######### Apply noise ##########
-        z = z.detach() if self.stop_gradient_flow else z
-
-        z_t, epsilon = self._forward_process(z, t_idx)
-
-        ######### Compute diffusion loss terms ##########
-        if self._do_latent_recon:
-            mask_t0 = t_idx == 0
-            mask_tdiff = ~mask_t0
-
-            # --- Diffusion loss: only t>0 ---
-            l_diff = torch.zeros(B, device=x.device)
-            if mask_tdiff.any():
-                l_diff[mask_tdiff] = self._l_diff(z_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], t_idx[mask_tdiff])
-            # --- Latent reconstruction loss: only t=0 ---
-            l_latent_rec = torch.zeros(B, device=x.device)
-            if mask_t0.any():
-                l_latent_rec[mask_t0] = self._l_latent_rec(z_t[mask_t0], t_norm[mask_t0], z[mask_t0])
-        else:
-            l_diff = self._l_diff(z_t, t_norm, epsilon, t_idx)
-            l_latent_rec = torch.zeros_like(l_diff)
-
-        ######### Compute image reconstruction and entropy loss ##########
-        l_entropy = self._l_entropy(logvar) if self._probabilistic else torch.zeros_like(l_diff)
-
-        l_rec = self._l_rec(x, z_raw)
-
-        if self.__do_scaling:
-            total = (self.T - 1) * (l_diff + l_latent_rec) + lambda_kl * l_entropy + l_rec
-        else:
-            scaling = self.T - 1
-            # ramp scaling up from 0 to 1 over the first 50000 steps determined by self.i
-            if self.i < 50000:
-                scaling *= self.i / 50000
-            total = scaling * l_diff - lambda_kl * l_entropy + l_rec
-
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
-            print("############# Negative ELBO: #################")
-            print("data x shape:", x.shape)
-            print("time indices (t_idx):", t_idx.shape, "min/max:", t_idx.min(), t_idx.max())
-            print("normed time (t_norm):", t_norm.shape, "min/max:", t_norm.min(), t_norm.max())
-            print("z shape:", z.shape)
-            print("z.min():", z.min(), "\nz.max():", z.max(), "\nz.mean():", z.mean(), "\nz.std():", z.std())
-            print("z_t shape:", z_t.shape)
-            print("z_t.min():", z_t.min(), "\nz_t.max():", z_t.max(), "\nz_t.mean():", z_t.mean(), "\nz_t.std():", z_t.std())
-            print("epsilon shape:", epsilon.shape)
-            print(
-                "epsilon.min():",
-                epsilon.min(),
-                "\nepsilon.max():",
-                epsilon.max(),
-                "\nepsilon.mean():",
-                epsilon.mean(),
-                "\nepsilon.std():",
-                epsilon.std(),
-            )
-            print("###############################################\n")
-
-            # Prints forwars process statistics for the first batch only, at specific time steps
-            if self.i % 10 == 0:
-                print("\n######### Forward Process Statistics: #########")
-                # 1. Define the steps we want to see
-                t_steps = [
-                    self.T - 1,
-                    self.T * 0.9,
-                    self.T * 0.8,
-                    self.T * 0.7,
-                    self.T * 0.6,
-                    self.T * 0.5,
-                    self.T * 0.4,
-                    self.T * 0.3,
-                    self.T * 0.2,
-                    self.T * 0.1,
-                    0,
-                ]
-
-                # 2. Convert to a long tensor on the correct device
-                t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=z.device)
-
-                for t in t_idx_debug:
-                    # Use .item() for the index but keep the tensor for schedule lookup
-                    idx = t.item()
-
-                    # 3. Retrieve schedule parameters for this specific step
-                    # We use [idx] to get the scalar, then unsqueeze to handle broadcasting
-                    alpha_t = self.sqrt_alpha_cumprod[idx]
-                    sigma_t = self.sigma[idx]
-
-                    # 4. Generate the noisy sample (Forward Process)
-                    epsilon_t = torch.randn_like(z)
-                    # Note: z is (Batch, Dim), alpha_t is scalar
-                    z_t = alpha_t * z + sigma_t * epsilon_t
-
-                    print(f"t={idx:3d}/{self.T}: mean={z_t.mean():.4f}, std={z_t.std():.4f}")
-
-                print("###############################################\n")
-        self.i += 1
-
-        return total.mean(), l_diff.mean(), l_entropy.mean(), l_rec.mean()
 
     @torch.no_grad()
     def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
@@ -513,12 +233,11 @@ class LatentDiffusion(nn.Module):
 
             # Encode once per batch
             mu, logvar = self.latent_encoder(x)
-            z_raw = self.latent_encoder.reparameterize(mu, logvar) if self._probabilistic else mu
-            z = self._normalize_z(z_raw) if self._normalize else z_raw
+            z = self.latent_encoder.reparameterize(mu, logvar)
 
             # l_rec and l_entropy computed once per batch
-            l_rec = self._l_rec(x, z_raw, debug=False)  # (B,)
-            l_entropy = self._l_entropy(logvar) if self._probabilistic else torch.zeros(B, device=device)  # (B,)
+            l_rec = self._l_rec(x, z, debug=False)  # (B,)
+            l_entropy = self._l_entropy(logvar)
 
             # Sum l_diff over all t
             l_diff_sum = torch.zeros(B, device=device)  # (B,)
@@ -527,7 +246,7 @@ class LatentDiffusion(nn.Module):
                 t_norm = torch.full((B, 1), t / (self.T - 1), device=device)
                 z_t, epsilon = self._forward_process(z, t_idx)
 
-                if t == 0 and self._do_latent_recon:
+                if t == 0:
                     l_diff_sum += self._l_latent_rec(z_t, t_norm, z)  # (B,)
                 else:
                     l_diff_sum += self._l_diff(z_t, t_norm, epsilon, t_idx, debug=False)  # (B,)
@@ -542,6 +261,92 @@ class LatentDiffusion(nn.Module):
         pbar.close()
         self.train()
         return total_elbo / n_batches
+
+    # -------------------------------------------------------------------------
+    # Helper Functions
+    # ------------------------------------------------------------------------
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        mu, logvar = self.latent_encoder(x)
+
+        z_raw = self.latent_encoder.reparameterize(mu, logvar)
+
+        self.print_encoded_stats(logvar, mu, z_raw)
+
+        return z_raw, mu, logvar
+
+    def get_reconstructions(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Get reconstructed images from the model for a batch of inputs.
+
+        Args:
+            x: (B, C, H, W) input images
+        Returns:
+            x_hat: (B, data_dim) reconstructed images in flattened form
+        """
+        z_raw, _, _ = self.encode(x)
+
+        x_recon = self._decode_latent(z_raw)
+
+        return x_recon
+
+    # -------------------------------------------------------------------------
+    # ELBO
+    # -------------------------------------------------------------------------
+    def _negative_elbo(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """
+        Estimates L = l_diff + l_rec + l_prior.
+
+        Args:
+            x: (B, C, H, W)
+        Returns:
+            (total_loss, l_diff, l_prior, l_rec) — scalar means
+        """
+        ######### Input shape check ##########
+        B = x.shape[0]  # noqa: N806
+        if x.dim() == 2:
+            channels = self.data_dim // (self.img_size * self.img_size)
+            x = x.view(B, channels, self.img_size, self.img_size)
+
+        ######### Encode Image ##########
+        z, _, logvar = self.encode(x)
+
+        ######### Sample Time Steps ##########
+        t_idx = torch.randint(0, self.T, (B,), device=x.device)
+        t_norm = t_idx.float().unsqueeze(-1) / (self.T - 1)  # (B, 1)
+
+        ######### Forward Process ##########
+        z_t, epsilon = self._forward_process(z, t_idx)
+
+        ######### Compute diffusion loss terms ##########
+        mask_t0 = t_idx == 0
+        mask_tdiff = ~mask_t0
+
+        # --- Diffusion loss: only t>0 ---
+        l_diff = torch.zeros(B, device=x.device)
+        if mask_tdiff.any():
+            l_diff[mask_tdiff] = self._l_diff(z_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], t_idx[mask_tdiff])
+        # --- Latent reconstruction loss: only t=0 ---
+        l_latent_rec = torch.zeros(B, device=x.device)
+        if mask_t0.any():
+            l_latent_rec[mask_t0] = self._l_latent_rec(z_t[mask_t0], t_norm[mask_t0], z[mask_t0])
+
+        ######### Compute Reconstruction loss terms ##########
+        l_rec = self._l_rec(x, z)
+
+        ######### Compute entropy loss ##########
+        l_entropy = self._l_entropy(logvar)
+
+        ########## Total Loss ##########
+        scale = self.T - 2
+        total = l_rec - l_entropy + scale * l_diff + l_latent_rec
+
+        if GLOBAL_DEBUG_BOOL:
+            self.print_masking_debug(t_idx, l_diff, l_latent_rec, mask_t0, mask_tdiff)
+
+        self.print_final_elbo_stats(x, t_idx, t_norm, z, z_t, epsilon)
+
+        return total.mean(), l_diff.mean(), l_entropy.mean(), l_rec.mean()
 
     # -------------------------------------------------------------------------
     # Loss terms
@@ -579,70 +384,11 @@ class LatentDiffusion(nn.Module):
 
         unscaled_loss = mse.mean(dim=(-3, -2, -1))  # Sum over C, H, W to get (B,)
 
-        # Bin MSE by timestep to see where the model fails
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
-            t_flat = t_norm.flatten()
-            low_t_mask = t_flat < 0.2  # t in [0, 0.2]
-            high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
-            if low_t_mask.any():
-                print(f"MSE @ low  t (<0.2): {unscaled_loss[low_t_mask].mean():.4f}")
-            if high_t_mask.any():
-                print(f"MSE @ high t (>0.8): {unscaled_loss[high_t_mask].mean():.4f}")
+        self.print_mse_low_and_high(t_norm, unscaled_loss, debug=debug)
 
-        if self.__do_scaling:  # noqa: SIM108
-            # 4. Scale the per-sample loss
-            l_diff_loss = scaling * unscaled_loss
-        else:
-            l_diff_loss = unscaled_loss
+        l_diff_loss = scaling * unscaled_loss
 
-        # Debug logs updated to match the spatial reality
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
-            print("############# Diffusion Loss: #################")
-            print("epsilon shape:", epsilon.shape)
-            print(
-                "epsilon.min():",
-                epsilon.min(),
-                "\nepsilon.max():",
-                epsilon.max(),
-                "\nepsilon.mean():",
-                epsilon.mean(),
-                "\nepsilon.std():",
-                epsilon.std(),
-            )
-            print("eps_hat shape:", eps_hat.shape)
-            print(
-                "eps_hat.min():",
-                eps_hat.min(),
-                "\neps_hat.max():",
-                eps_hat.max(),
-                "\neps_hat.mean():",
-                eps_hat.mean(),
-                "\neps_hat.std():",
-                eps_hat.std(),
-            )
-            print("MSE shape:", mse.shape)
-            print(
-                "MSE.min():",
-                mse.min(),
-                "\nMSE.max():",
-                mse.max(),
-                "\nMSE.mean():",
-                mse.mean(),
-                "\nMSE.std():",
-                mse.std(),
-            )
-            print("l_diff_loss shape:", l_diff_loss.shape)
-            print(
-                "l_diff_loss.min():",
-                l_diff_loss.min(),
-                "\nl_diff_loss.max():",
-                l_diff_loss.max(),
-                "\nl_diff_loss.mean():",
-                l_diff_loss.mean(),
-                "\nl_diff_loss.std():",
-                l_diff_loss.std(),
-            )
-            print("###############################################\n")
+        self.print_debug_info(epsilon, eps_hat, mse, l_diff_loss)
 
         return l_diff_loss
 
@@ -655,10 +401,10 @@ class LatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample negative entropy
         """
-        # Use .mean(dim=-1) to average across all latent dimensions cleanly.
-        # Invert the sign to negative so that minimizing this term maximizes true entropy.
+
         entropy_per_dim = 0.5 * (1.0 + torch.log(torch.as_tensor(2.0 * math.pi, device=logvar.device)) + logvar)
-        return entropy_per_dim.mean(dim=(-3, -2, -1))  # (B,) — sum over latent dims, return positive entropy
+
+        return entropy_per_dim.mean(dim=(-3, -2, -1))
 
     def _l_rec(self, x: torch.Tensor, z: torch.Tensor, debug: bool = True) -> torch.Tensor:
         """
@@ -670,28 +416,11 @@ class LatentDiffusion(nn.Module):
         Returns:
             (B,) per-sample MSE
         """
-        x_hat = self.decoder(z, self.coord_grid)
-        x_hat = x_hat.reshape(x_hat.shape[0], -1)
+        x_hat = self._decode_latent(z)
+
         x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
 
-        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
-            print("############# Reconstruction Loss: #################")
-            print("x_flat shape:", x_flat.shape)
-            print(
-                "x_flat.min():",
-                x_flat.min(),
-                "\nx_flat.max():",
-                x_flat.max(),
-                "\nx_flat.mean():",
-                x_flat.mean(),
-                "\nx_flat.std():",
-                x_flat.std(),
-            )
-            print("x_hat shape:", x_hat.shape)
-            print(
-                "x_hat.min():", x_hat.min(), "\nx_hat.max():", x_hat.max(), "\nx_hat.mean():", x_hat.mean(), "\nx_hat.std():", x_hat.std()
-            )
-            print("###############################################\n")
+        self.print_l_rec_stats(x_flat, x_hat, debug=debug)
 
         return 0.5 * ((x_flat - x_hat) ** 2).sum(dim=-1)
 
@@ -794,16 +523,7 @@ class LatentDiffusion(nn.Module):
             if collect_snapshots and t in T_values:
                 snapshots[t] = z.detach().cpu().numpy().flatten()
 
-            # Print statistics every 100 steps for debugging
-            if debug and GLOBAL_DEBUG_BOOL and (t % 100 == 0 or t == 0):
-                print("################## Sampling: ##############################")
-                print(f"Sampling step {t}/{self.T}:")
-                print(
-                    f"predicted noise (eps_hat) stats: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}",
-                    f"min={eps_hat.min():.4f}, max={eps_hat.max():.4f}",
-                )
-                print(f"z stats: mean={z.mean():.4f}, std={z.std():.4f}", f"min={z.min():.4f}, max={z.max():.4f}")
-                print("###########################################################\n")
+            self.print_sampling_stats(t, eps_hat, z, debug=debug)
 
         if collect_snapshots:
             return z, snapshots
@@ -819,6 +539,238 @@ class LatentDiffusion(nn.Module):
         Returns:
             pixels: (B, data_dim)
         """
-        # TransInr expects (B, C, H, W) and returns (B, C_out, H, W)
+
         x_hat = self.decoder(z, self.coord_grid)  # (B, C_out, H, W)
         return x_hat.reshape(x_hat.shape[0], -1)  # (B, data_dim)
+
+    # ------------------------------------------------------------------------
+    # Debugging and Statistics Printing Functions
+    # ------------------------------------------------------------------------
+
+    def print_encoded_stats(self, logvar: torch.Tensor, mu: torch.Tensor, z_raw: torch.Tensor) -> None:
+        """
+        Print statistics of the encoded latent representation for debugging.
+
+        Args:
+            logvar: (B, latent_dim) log variance of the encoded latent variables
+            mu: (B, latent_dim) mean of the encoded latent variables
+            z_raw: (B, latent_dim) raw encoded latent variables
+        """
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            std = torch.exp(0.5 * logvar)
+            print(f"==================== Probablistic Components {self.i}: ====================")
+            print(f"[Encoder] mu:     mean={mu.mean():.3f}, std={mu.std():.3f}, min={mu.min():.3f}, max={mu.max():.3f}")
+            print(f"[Encoder] logvar: mean={logvar.mean():.3f}, std={logvar.std():.3f}, min={logvar.min():.3f}, max={logvar.max():.3f}")
+            print(f"[Encoder] std:    mean={std.mean():.3f}, std={std.std():.3f}, min={std.min():.3f}, max={std.max():.3f}")
+            print(
+                f"theta mean={z_raw.mean():.4f}," f"std={z_raw.std():.4f}, min={z_raw.min():.4f}, max={z_raw.max():.4f}",
+            )
+            print("================================================================\n")
+
+    def print_final_elbo_stats(
+        self, x: torch.Tensor, t_idx: torch.Tensor, t_norm: torch.Tensor, z: torch.Tensor, z_t: torch.Tensor, epsilon: torch.Tensor
+    ) -> None:
+        """
+        Print statistics of the final ELBO computation for debugging.
+        """
+
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold:
+            print("############# Negative ELBO: #################")
+            print("data x shape:", x.shape)
+            print("time indices (t_idx):", t_idx.shape, "min/max:", t_idx.min(), t_idx.max())
+            print("normed time (t_norm):", t_norm.shape, "min/max:", t_norm.min(), t_norm.max())
+            print("z shape:", z.shape)
+            print("z.min():", z.min(), "\nz.max():", z.max(), "\nz.mean():", z.mean(), "\nz.std():", z.std())
+            print("z_t shape:", z_t.shape)
+            print("z_t.min():", z_t.min(), "\nz_t.max():", z_t.max(), "\nz_t.mean():", z_t.mean(), "\nz_t.std():", z_t.std())
+            print("epsilon shape:", epsilon.shape)
+            print(
+                "epsilon.min():",
+                epsilon.min(),
+                "\nepsilon.max():",
+                epsilon.max(),
+                "\nepsilon.mean():",
+                epsilon.mean(),
+                "\nepsilon.std():",
+                epsilon.std(),
+            )
+            print("###############################################\n")
+
+            # Prints forwars process statistics for the first batch only, at specific time steps
+            if self.i % 10 == 0:
+                print("\n######### Forward Process Statistics: #########")
+                # 1. Define the steps we want to see
+                t_steps = [
+                    self.T - 1,
+                    self.T * 0.9,
+                    self.T * 0.8,
+                    self.T * 0.7,
+                    self.T * 0.6,
+                    self.T * 0.5,
+                    self.T * 0.4,
+                    self.T * 0.3,
+                    self.T * 0.2,
+                    self.T * 0.1,
+                    0,
+                ]
+
+                # 2. Convert to a long tensor on the correct device
+                t_idx_debug = torch.tensor(t_steps, dtype=torch.long, device=z.device)
+
+                for t in t_idx_debug:
+                    # Use .item() for the index but keep the tensor for schedule lookup
+                    idx = t.item()
+
+                    # 3. Retrieve schedule parameters for this specific step
+                    # We use [idx] to get the scalar, then unsqueeze to handle broadcasting
+                    alpha_t = self.sqrt_alpha_cumprod[idx]
+                    sigma_t = self.sigma[idx]
+
+                    # 4. Generate the noisy sample (Forward Process)
+                    epsilon_t = torch.randn_like(z)
+                    # Note: z is (Batch, Dim), alpha_t is scalar
+                    z_t = alpha_t * z + sigma_t * epsilon_t
+
+                    print(f"t={idx:3d}/{self.T}: mean={z_t.mean():.4f}, std={z_t.std():.4f}")
+
+                print("###############################################\n")
+        self.i += 1
+
+    def print_mse_low_and_high(self, t_norm, unscaled_loss, debug: bool = True) -> None:
+        # Bin MSE by timestep to see where the model fails
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
+            t_flat = t_norm.flatten()
+            low_t_mask = t_flat < 0.2  # t in [0, 0.2]
+            high_t_mask = t_flat > 0.8  # t in [0.8, 1.0]
+            if low_t_mask.any():
+                print(f"MSE @ low  t (<0.2): {unscaled_loss[low_t_mask].mean():.4f}")
+            if high_t_mask.any():
+                print(f"MSE @ high t (>0.8): {unscaled_loss[high_t_mask].mean():.4f}")
+
+    def print_debug_info(self, epsilon, eps_hat, mse, l_diff_loss, debug: bool = True) -> None:
+        # Debug logs updated to match the spatial reality
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
+            print("############# Diffusion Loss: #################")
+            print("epsilon shape:", epsilon.shape)
+            print(
+                "epsilon.min():",
+                epsilon.min(),
+                "\nepsilon.max():",
+                epsilon.max(),
+                "\nepsilon.mean():",
+                epsilon.mean(),
+                "\nepsilon.std():",
+                epsilon.std(),
+            )
+            print("eps_hat shape:", eps_hat.shape)
+            print(
+                "eps_hat.min():",
+                eps_hat.min(),
+                "\neps_hat.max():",
+                eps_hat.max(),
+                "\neps_hat.mean():",
+                eps_hat.mean(),
+                "\neps_hat.std():",
+                eps_hat.std(),
+            )
+            print("MSE shape:", mse.shape)
+            print(
+                "MSE.min():",
+                mse.min(),
+                "\nMSE.max():",
+                mse.max(),
+                "\nMSE.mean():",
+                mse.mean(),
+                "\nMSE.std():",
+                mse.std(),
+            )
+            print("l_diff_loss shape:", l_diff_loss.shape)
+            print(
+                "l_diff_loss.min():",
+                l_diff_loss.min(),
+                "\nl_diff_loss.max():",
+                l_diff_loss.max(),
+                "\nl_diff_loss.mean():",
+                l_diff_loss.mean(),
+                "\nl_diff_loss.std():",
+                l_diff_loss.std(),
+            )
+            print("###############################################\n")
+
+    def print_l_rec_stats(self, x_flat, x_hat, debug: bool = True) -> None:
+        if GLOBAL_DEBUG_BOOL and random.random() < probability_threshold and debug:
+            print("############# Reconstruction Loss: #################")
+            print("x_flat shape:", x_flat.shape)
+            print(
+                "x_flat.min():",
+                x_flat.min(),
+                "\nx_flat.max():",
+                x_flat.max(),
+                "\nx_flat.mean():",
+                x_flat.mean(),
+                "\nx_flat.std():",
+                x_flat.std(),
+            )
+            print("x_hat shape:", x_hat.shape)
+            print(
+                "x_hat.min():", x_hat.min(), "\nx_hat.max():", x_hat.max(), "\nx_hat.mean():", x_hat.mean(), "\nx_hat.std():", x_hat.std()
+            )
+            print("###############################################\n")
+
+    def print_sampling_stats(self, t, eps_hat, z, debug: bool = True) -> None:
+        # Print statistics every 100 steps for debugging
+        if debug and GLOBAL_DEBUG_BOOL and (t % 100 == 0 or t == 0):
+            print("################## Sampling: ##############################")
+            print(f"Sampling step {t}/{self.T}:")
+            print(
+                f"predicted noise (eps_hat) stats: mean={eps_hat.mean():.4f}, std={eps_hat.std():.4f}",
+                f"min={eps_hat.min():.4f}, max={eps_hat.max():.4f}",
+            )
+            print(f"z stats: mean={z.mean():.4f}, std={z.std():.4f}", f"min={z.min():.4f}, max={z.max():.4f}")
+            print("###########################################################\n")
+
+    def print_masking_debug(
+        self,
+        t_idx: torch.Tensor,
+        l_diff: torch.Tensor,
+        l_latent_rec: torch.Tensor,
+        mask_t0: torch.Tensor,
+        mask_tdiff: torch.Tensor,
+    ) -> None:
+        """
+        Verify t-sampling coverage and masking correctness.
+
+        Args:
+            t_idx:       (B,) sampled timestep indices
+            l_diff:      (B,) diffusion loss per sample
+            l_latent_rec:(B,) latent-rec loss per sample
+            mask_t0:     (B,) bool — True where t==0
+            mask_tdiff:  (B,) bool — True where t>0
+        Returns:
+            None — prints only
+        """
+        n_t0 = mask_t0.sum().item()
+        n_tdiff = mask_tdiff.sum().item()
+        B = t_idx.shape[0]  # noqa: N806
+
+        print("\n========== Masking Debug ==========")
+        print(f"Batch size:        {B}")
+        print(f"t=0  samples:      {n_t0}  ({100*n_t0/B:.1f}%,  expected ~{100/self.T:.1f}%)")
+        print(f"t>0  samples:      {n_tdiff} ({100*n_tdiff/B:.1f}%, expected ~{100*(self.T-1)/self.T:.1f}%)")
+        print(f"t_idx min/max:     {t_idx.min().item()} / {t_idx.max().item()}")
+        print(f"t_idx covers 0:    {(t_idx == 0).any().item()}")
+        print(f"mask_t0 | mask_tdiff covers all: {(mask_t0 | mask_tdiff).all().item()}")
+        print(f"masks overlap (should be False):  {(mask_t0 & mask_tdiff).any().item()}")
+
+        # Verify loss routing — each term should be active only on its mask
+        l_diff_on_t0 = l_diff[mask_t0].abs().sum().item() if n_t0 else 0.0
+        l_lrec_on_tdiff = l_latent_rec[mask_tdiff].abs().sum().item() if n_tdiff else 0.0
+
+        print(f"\nl_diff sum on t=0 slots (should be 0):   {l_diff_on_t0:.6f}")
+        print(f"l_latent_rec sum on t>0 slots (should be 0): {l_lrec_on_tdiff:.6f}")
+
+        if n_t0 > 0:
+            print(f"\nl_latent_rec on t=0: mean={l_latent_rec[mask_t0].mean():.4f}")
+        if n_tdiff > 0:
+            print(f"l_diff      on t>0: mean={l_diff[mask_tdiff].mean():.4f}")
+        print("===================================")
