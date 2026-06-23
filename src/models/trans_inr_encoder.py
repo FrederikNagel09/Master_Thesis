@@ -163,9 +163,9 @@ class TransInrEncoder(nn.Module):
         # Cleaner Probabilistic MLP targeting modulation space directly
         if self.probabilistic:
             self.logvar_mlp = nn.Sequential(
-                nn.Linear(dim, dim),
+                nn.Linear(dim, dim // 2),
                 nn.GELU(),
-                nn.Linear(dim, self._modulation_dim),
+                nn.Linear(dim // 2, self._modulation_dim),
             )
             nn.init.zeros_(self.logvar_mlp[2].weight)
             nn.init.constant_(self.logvar_mlp[2].bias, -4.0)

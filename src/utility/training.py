@@ -263,7 +263,12 @@ def train(
                 model.train()
 
         _save_checkpoint(model, optimizer, epoch, weights_dir)
-
+        
+        # ── Historical Snapshot ───────────────────────────────────────────
+        if epoch % 50 == 0:
+            snapshot_path = os.path.join(weights_dir, f"weights_epoch_{epoch}.pt")
+            torch.save(model.state_dict(), snapshot_path)
+        
         if epoch_callback is not None:
             epoch_callback(history)
 

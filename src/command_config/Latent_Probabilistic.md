@@ -1,5 +1,5 @@
 python main.py \
-    --run_name Latent-Probabilistic-one-stage \
+    --run_name latent-diffusion \
     --epochs 450 \
     --batch_size 128 \
     --subset_frac 1.0 \
@@ -9,7 +9,7 @@ python main.py \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 100 \
+    --log_every_n_steps 200 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \

@@ -423,43 +423,28 @@ class WeightDiffusion(nn.Module):
         t_norm_t0: torch.Tensor,
         theta_clean_t0: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Computes the t=0 latent weight reconstruction loss: -log p_θ(theta_0 | theta_1).
-        Predicts epsilon at t=0, recovers denoiser mean, returns MSE / (2 * beta_0).
 
-        Args:
-            theta_t0:       (B0, latent_dim) — noisy latents where t=0
-            t_norm_t0:      (B0, 1)          — normalized time (all zeros)
-            theta_clean_t0: (B0, latent_dim) — corresponding clean latents
-        Returns:
-            (B0,) per-sample losses
-        """
-        # 1. Predict the noise vector using your existing noise predictor network
-        # For compatibility with your code, we pass theta_prime if required by your model.
-        # If your noise_predictor only takes (theta_t, t_norm), keep it as below:
-        eps_pred = self.denoiser(theta_t0, t_norm_t0.unsqueeze(1))
+        # 1. Predict v using the noise predictor
+        v_pred = self.denoiser(theta_t0, t_norm_t0.unsqueeze(1))
 
-        # 2. Extract the schedule constants for the very first step (t=0)
-        # Assumes self.sqrt_alpha_cumprod, self.sigma, and self.beta are registered buffers
+        # 2. Extract the schedule constants for t=0
         alpha_0 = self.sqrt_alpha_cumprod[0]
         sigma_0 = self.sigma[0]
         beta_0 = self.beta[0]
 
-        # 3. Analytically recover the predicted denoised mean (mu_theta)
-        mu_theta = (theta_t0 - sigma_0 * eps_pred) / alpha_0
+        # 3. Analytically recover x_0 (mu_theta) using the v-prediction formula
+        mu_theta = alpha_0 * theta_t0 - sigma_0 * v_pred
 
-        # 4. Compute unweighted MSE loss across all latent dimensions
-        # Reduces across all dimensions except the batch dimension -> shape (B0,)
+        # 4. Compute unweighted MSE loss
         dim_axes = list(range(1, theta_t0.dim()))
         mse = F.mse_loss(mu_theta, theta_clean_t0, reduction="none").mean(dim=dim_axes)
 
-        # 5. Scale by the theoretical variance coefficient 1 / (2 * beta_0)
+        # 5. Scale by variance
         return mse / (2.0 * beta_0)
 
     # -------------------------------------------------------------------------
     # Sampling Helpers:
     # -------------------------------------------------------------------------
-    @torch.no_grad()
     def decode_weights(self, weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
         return self._inr_decode(weights, coords)
 
