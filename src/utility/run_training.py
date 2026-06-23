@@ -42,7 +42,7 @@ from src.utility.general import (
 )
 from src.utility.model_builders import build_model
 from src.utility.plotting import (
-    plot_final_samples,  # noqa: F401
+    plot_final_samples,
     plot_forward_trajectory_progression,
     plot_fphi_progression,
     plot_fphi_weight_histograms,
@@ -162,7 +162,7 @@ def run_training(
         drop_last=True,
         num_workers=getattr(args, "num_workers", 0),
     )
-    data_loader_val = torch.utils.data.DataLoader(  # noqa: F841
+    data_loader_val = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
@@ -177,13 +177,6 @@ def run_training(
 
     # ── 3. Optimiser & optional resume ───────────────────────────────────────
     print("\n[ 3 / 4 ]  Setting up optimiser …")
-    if False:
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=args.lr,
-            weight_decay=getattr(args, "weight_decay", 0.0),
-        )
-
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=getattr(args, "weight_decay", 0.0))
 
     start_epoch = 0
@@ -395,15 +388,6 @@ def run_training(
             ),
         ),
         data_config=data_config,
-        deactivate_progress_bar=args.deactivate_progress_bar,
-        freeze_encoder=args.freeze_encoder if hasattr(args, "freeze_encoder") else None,
-        two_stage=args.two_stage if hasattr(args, "two_stage") else False,
-        stage_one_epochs=args.stage_one_epochs,
-        stage_two_epochs=args.stage_two_epochs,
-        stage1_plateau_window=args.stage1_plateau_window,
-        stage1_rel_threshold=args.stage1_rel_threshold,
-        stage2_plateau_window=args.stage2_plateau_window,
-        stage2_rel_threshold=args.stage2_rel_threshold,
     )
 
     print("\n  Training complete...")
