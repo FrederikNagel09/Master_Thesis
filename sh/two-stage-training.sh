@@ -12,6 +12,7 @@
 #BSUB -B                                   # Send email when job begins
 
 # Activate virtual environment
+# bsub < sh/two-stage-training.sh
 source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---

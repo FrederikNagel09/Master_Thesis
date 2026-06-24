@@ -34,8 +34,8 @@ python src/scripts/two-stage-training.py \
     --run_name two_stage_fixed \
     --mode fixed \
     --ldm_config src/train_results/latent-diffusion-1/metadata/config.json \
-    --total_epochs 450 \
-    --vae_epochs 150 \
+    --total_epochs 15 \
+    --vae_epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -651,18 +651,15 @@ def save_ldm_weights(
         "latent_enc_hidden_dim", "dec_trans_dim", "dec_trans_n_head",
         "dec_trans_head_dim", "dec_trans_ff_dim", "dec_trans_enc_depth",
         "dec_trans_dec_depth", "dec_trans_n_groups", "dec_trans_update_strategy",
-        "inr_hidden_dim", "inr_layers",
+        "inr_hidden_dim", "inr_layers","pred_d_model", "pred_n_heads", "pred_n_layers", "pred_d_ff",
+        "pred_t_embed_dim", "noise_predictor_dropout",
     ]
     config = {k: hparams[k] for k in arch_keys}
     config["run_name"]          = run_name
     config["T"]                 = args.T
     config["beta_1"]            = args.beta_1
     config["beta_T"]            = args.beta_T
-    config["pred_d_model"]      = args.pred_d_model
-    config["pred_n_heads"]      = args.pred_n_heads
-    config["pred_n_layers"]     = args.pred_n_layers
-    config["pred_d_ff"]         = args.pred_d_ff
-    config["pred_t_embed_dim"]  = args.pred_t_embed_dim
+    
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
