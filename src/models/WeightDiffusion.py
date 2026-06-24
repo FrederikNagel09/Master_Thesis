@@ -252,7 +252,7 @@ class WeightDiffusion(nn.Module):
         batch_size = x.shape[0]
 
         # 1. FIXED: Sample t ~ Uniform{0, ..., T-1} to include t=0
-        t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
+        t_idx = torch.randint(1, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
 
         theta_prime, _, logvar = self.encode(x)
@@ -262,23 +262,26 @@ class WeightDiffusion(nn.Module):
         # Forward Process (works for all t >= 0)
         theta_t, epsilon = self._forward_process(theta_prime, t_idx)
 
-        # 2. Split batch via masks for diffusion vs. weight reconstruction
-        mask_t0 = t_idx == 0
-        mask_tdiff = ~mask_t0
+        if False:
+            # 2. Split batch via masks for diffusion vs. weight reconstruction
+            mask_t0 = t_idx == 0
+            mask_tdiff = ~mask_t0
 
-        # Initialize loss arrays per sample
-        l_diff = torch.zeros(batch_size, device=x.device)
-        l_weight_rec = torch.zeros(batch_size, device=x.device)
+            # Initialize loss arrays per sample
+            l_diff = torch.zeros(batch_size, device=x.device)
+            l_weight_rec = torch.zeros(batch_size, device=x.device)
 
-        # Compute Diffusion Loss Terms only where t > 0
-        if mask_tdiff.any():
-            l_diff[mask_tdiff] = self._l_diff(
-                theta_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], theta_prime[mask_tdiff], t_idx[mask_tdiff]
-            )
+            # Compute Diffusion Loss Terms only where t > 0
+            if mask_tdiff.any():
+                l_diff[mask_tdiff] = self._l_diff(
+                    theta_t[mask_tdiff], t_norm[mask_tdiff], epsilon[mask_tdiff], theta_prime[mask_tdiff], t_idx[mask_tdiff]
+                )
 
-        # 3. Compute Weight Reconstruction Loss only where t == 0
-        if mask_t0.any():
-            l_weight_rec[mask_t0] = self._l_weight_rec(theta_t[mask_t0], t_norm[mask_t0], theta_prime[mask_t0])
+            # 3. Compute Weight Reconstruction Loss only where t == 0
+            if mask_t0.any():
+                l_weight_rec[mask_t0] = self._l_weight_rec(theta_t[mask_t0], t_norm[mask_t0], theta_prime[mask_t0])
+        else:
+            l_diff = self._l_diff(theta_t, t_norm, epsilon, theta_prime, t_idx)
 
         # Compute VAE Reconstruction Loss (Pixel/Data space)
         theta = self.weight_encoder.decode_modulations(theta_prime_raw)
@@ -288,8 +291,12 @@ class WeightDiffusion(nn.Module):
         l_prior = self._l_entropy(logvar)
 
         # 4. Total Loss Aggregation
-        scale = self.T - 2  # Continuous interval weight for t > 0 steps
-        total = scale * l_diff + l_weight_rec + l_rec - l_prior
+        if False:
+            scale = self.T - 2  # Continuous interval weight for t > 0 steps
+            total = scale * l_diff + l_weight_rec + l_rec - l_prior
+        else:
+            scale = self.T - 1  # Continuous interval weight for t > 0 steps
+            total = scale * l_diff + l_rec - l_prior
 
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
@@ -446,6 +453,7 @@ class WeightDiffusion(nn.Module):
     # -------------------------------------------------------------------------
     # Sampling Helpers:
     # -------------------------------------------------------------------------
+    @torch.no_grad()
     def decode_weights(self, weights: torch.Tensor, coords: torch.Tensor | None = None) -> torch.Tensor:
         return self._inr_decode(weights, coords)
 
