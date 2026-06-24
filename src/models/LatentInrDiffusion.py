@@ -339,13 +339,21 @@ class LatentDiffusion(nn.Module):
         l_entropy = self._l_entropy(logvar)
 
         ########## Total Loss ##########
-        scale = self.T - 2
-        total = l_rec - l_entropy + scale * l_diff + l_latent_rec
+        # slowely ramp up the diffusion loss weight over the first 1000 iterations
+        if self.i < 10000:
+            scale = self.i / 10000.0
+        else:
+            scale = 1.0
+        
+        diff_weight = scale * (self.T - 2)
+
+        total = l_rec - l_entropy + diff_weight * l_diff + l_latent_rec
 
         if GLOBAL_DEBUG_BOOL:
             self.print_masking_debug(t_idx, l_diff, l_latent_rec, mask_t0, mask_tdiff)
 
         self.print_final_elbo_stats(x, t_idx, t_norm, z, z_t, epsilon)
+        self.i += 1
 
         return total.mean(), unscaled_loss.mean(), l_entropy.mean(), l_rec.mean()
 
@@ -387,7 +395,7 @@ class LatentDiffusion(nn.Module):
 
         self.print_mse_low_and_high(t_norm, unscaled_loss, debug=debug)
 
-        l_diff_loss = scaling * unscaled_loss
+        l_diff_loss = unscaled_loss
 
         self.print_debug_info(epsilon, eps_hat, mse, l_diff_loss)
 
@@ -635,7 +643,6 @@ class LatentDiffusion(nn.Module):
                     print(f"t={idx:3d}/{self.T}: mean={z_t.mean():.4f}, std={z_t.std():.4f}")
 
                 print("###############################################\n")
-        self.i += 1
 
     def print_mse_low_and_high(self, t_norm, unscaled_loss, debug: bool = True) -> None:
         # Bin MSE by timestep to see where the model fails
