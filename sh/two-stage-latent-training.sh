@@ -12,11 +12,11 @@
 #BSUB -B                                   # Send email when job begins
 
 # Activate virtual environment
-# bsub < sh/two-stage-training.sh
+# bsub < sh/two-stage-latent-training.sh
 source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
-python /zhome/66/4/156534/Master_Thesis/src/scripts/two-stage-training.py\
+python /zhome/66/4/156534/Master_Thesis/src/scripts/two-stage-latent-training.py\
     --run_name latent_two_stage_fixed \
     --mode fixed \
     --ldm_config src/train_results/latent-diffusion-1/metadata/config.json \

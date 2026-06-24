@@ -256,6 +256,7 @@ class WeightDiffusion(nn.Module):
         t_norm = t_idx.float() / (self.T - 1)
 
         theta_prime, _, logvar = self.encode(x)
+        theta_prime_raw = theta_prime
         theta_prime = theta_prime.detach() if self.stop_gradient_flow else theta_prime
 
         # Forward Process (works for all t >= 0)
@@ -280,7 +281,7 @@ class WeightDiffusion(nn.Module):
             l_weight_rec[mask_t0] = self._l_weight_rec(theta_t[mask_t0], t_norm[mask_t0], theta_prime[mask_t0])
 
         # Compute VAE Reconstruction Loss (Pixel/Data space)
-        theta = self.weight_encoder.decode_modulations(theta_prime)
+        theta = self.weight_encoder.decode_modulations(theta_prime_raw)
         l_rec = self._l_rec(x, theta)
 
         # Compute Prior Loss (KL/Entropy)

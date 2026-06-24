@@ -1,9 +1,9 @@
 python main.py \
-    --run_name weight-diffusion \
-    --epochs 450 \
+    --run_name weight-diffusion-TEST \
+    --epochs 40 \
     --batch_size 128 \
     --subset_frac 1.0 \
-    --stop_gradient_flow False \
+    --stop_gradient_flow True \
     --n_fid_samples 4096 \
     --model weight_inr_diffusion\
     --dataset mnist \
