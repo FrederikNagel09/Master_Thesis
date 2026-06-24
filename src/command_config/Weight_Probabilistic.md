@@ -1,6 +1,6 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name weight-diffusion-TEST4 \
-    --epochs 15 \
+    --run_name weight-diffusion-TEST5 \
+    --epochs 10 \
     --batch_size 128 \
     --subset_frac 1.0 \
     --stop_gradient_flow True \

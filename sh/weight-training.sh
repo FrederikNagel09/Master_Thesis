@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J weight-diffusion-detach      # Job name
-#BSUB -q gpuv100                          # Queue to submit the job to
+#BSUB -J weight-diffusion-oldversion2      # Job name
+#BSUB -q gpua10                          # Queue to submit the job to
 #BSUB -W 1440                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 8 cores
 #BSUB -R "rusage[mem=2GB]"                 # Request 2 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/weight-diffusion-detach.out                        # Standard output redirection
-#BSUB -e src/outputs/weight-diffusion-detach.err                        # Standard error redirection
+#BSUB -o src/outputs/weight-diffusion-oldversion2.out                        # Standard output redirection
+#BSUB -e src/outputs/weight-diffusion-oldversion2.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -17,7 +17,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
-    --run_name weight-diffusion-detach \
+    --run_name weight-diffusion-oldversion2 \
     --epochs 450 \
     --batch_size 128 \
     --subset_frac 1.0 \
