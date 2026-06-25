@@ -2181,6 +2181,10 @@ def plot_forward_trajectory_progression(
 
         z, _, _ = model.encode(x)
 
+        # if model has a self.normalize apply normalization to z
+        if hasattr(model, "normalize") and model.normalize:
+            z = model.scaler(z, reverse=False) if model.normalize else z
+
         raw_arrays = []
         for t in T_values_sorted:
             theta_t = z if t == 0 else model._forward_process(z, torch.tensor([t], device=z.device))[0]

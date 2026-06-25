@@ -30,17 +30,17 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 
 """
 Fixed-budget mode:
-python src/scripts/two_stage_weight_diffusion_training.py \
+python src/scripts/two-stage-weight-training.py \
     --run_name wd_two_stage_fixed \
     --mode fixed \
-    --wd_config src/train_results/weight-Diffusion/metadata/config.json \
+    --wd_config src/train_results/weight-diffusion-TEST/metadata/config.json \
     --total_epochs 300 \
-    --vae_epochs 100 \
+    --vae_epochs 150 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 0.01 \
+    --lambda_kl_max 0.1 \
     --kl_warmup_frac 0.4 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -49,7 +49,7 @@ python src/scripts/two_stage_weight_diffusion_training.py \
     --fid_batch_size 64
 
 Convergence mode:
-python src/scripts/two_stage_weight_diffusion_training.py \
+python src/scripts/two-stage-weight-training.py \
     --run_name wd_two_stage_convergence \
     --mode convergence \
     --wd_config src/train_results/weight-Diffusion/metadata/config.json \
@@ -57,7 +57,7 @@ python src/scripts/two_stage_weight_diffusion_training.py \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 0.01 \
+    --lambda_kl_max 0.1 \
     --kl_warmup_frac 0.4 \
     --vae_check_every 5 \
     --vae_patience 10 \
@@ -69,8 +69,8 @@ python src/scripts/two_stage_weight_diffusion_training.py \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 0.02 \
-    --n_fid_samples 1024 \
-    --fid_batch_size 64
+    --n_fid_samples 4096 \
+    --fid_batch_size 1024
 """
 
 

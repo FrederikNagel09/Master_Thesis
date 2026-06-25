@@ -1,10 +1,11 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name weight-diffusion-TEST5 \
-    --epochs 10 \
+    --run_name weight-diffusion-TEST \
+    --epochs 5 \
     --batch_size 128 \
     --subset_frac 1.0 \
     --stop_gradient_flow True \
-    --n_fid_samples 4096 \
+    --normalize True \
+    --n_fid_samples 16 \
     --model weight_inr_diffusion\
     --dataset mnist \
     --lr 1e-4 \
@@ -32,7 +33,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --noise_predictor_n_head 8 \
     --noise_predictor_head_dim 32 \
     --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
+    --noise_predictor_depth 8 \
     --noise_predictor_dropout 0.1 \
     --noise_predictor_chunk_size 16 \
     --noise_predictor_t_embed_dim 128

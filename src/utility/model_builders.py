@@ -1005,6 +1005,7 @@ def _build_weight_diffusion(args, data_config: dict):
         data_dim=data_dim,
         img_size=img_size,
         stop_gradient_flow=args.stop_gradient_flow,
+        normalize=args.normalize,
     )
 
     total_params = sum(p.numel() for p in model.parameters())

@@ -115,6 +115,7 @@ class WeightDiffusion(nn.Module):
         data_dim: int = 784,
         img_size: int = 28,
         stop_gradient_flow: bool = True,
+        normalize: bool = True,
     ):
         super().__init__()
         # Initialize model components and noise schedule buffers
@@ -135,7 +136,10 @@ class WeightDiffusion(nn.Module):
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
         alpha_cumprod = alpha.cumprod(dim=0)
-
+        
+        self.normalize = normalize
+        if self.normalize:
+            self.scaler = ParamNormalizer(WeightEncoder.modulation_dim, momentum=0.01, eps=1e-6)
         self.i = 0
 
         self.register_buffer("beta", beta)
@@ -252,11 +256,13 @@ class WeightDiffusion(nn.Module):
         batch_size = x.shape[0]
 
         # 1. FIXED: Sample t ~ Uniform{0, ..., T-1} to include t=0
-        t_idx = torch.randint(1, self.T, (batch_size,), device=x.device)
+        t_idx = torch.randint(0, self.T, (batch_size,), device=x.device)
         t_norm = t_idx.float() / (self.T - 1)
 
-        theta_prime, _, logvar = self.encode(x)
-        theta_prime_raw = theta_prime
+        theta_prime_raw, _, logvar = self.encode(x)
+        
+        theta_prime = theta_prime = self.scaler(theta_prime_raw, reverse=False) if self.normalize else theta_prime_raw
+
         theta_prime = theta_prime.detach() if self.stop_gradient_flow else theta_prime
 
         # Forward Process (works for all t >= 0)
@@ -295,7 +301,7 @@ class WeightDiffusion(nn.Module):
             scale = self.T - 2  # Continuous interval weight for t > 0 steps
             total = scale * l_diff + l_weight_rec + l_rec - l_prior
         else:
-            scale = self.T - 1  # Continuous interval weight for t > 0 steps
+            scale = (self.T - 1)  # Continuous interval weight for t > 0 steps
             total = scale * l_diff + l_rec - l_prior
 
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
@@ -509,6 +515,9 @@ class WeightDiffusion(nn.Module):
                 snapshots[t] = curr_theta.detach().cpu().numpy().flatten()
 
             self.print_sampling_stats(v_hat, x0_hat, curr_theta, t, debug=True)
+
+        if self.normalize:
+            curr_theta = self.scaler(curr_theta, reverse=True, training=False)
 
         if collect_snapshots:
             return curr_theta, snapshots

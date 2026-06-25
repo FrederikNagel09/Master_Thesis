@@ -5,7 +5,7 @@ Generates final samples and computes FID + ELBO for a single model.
 Usage
 -----
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/latent-diffusion/metadata/config.json \
+    --config_path src/train_results/latent-diffusion-ramp/metadata/config.json \
     --n_fid_samples 4096
 """
 
