@@ -197,13 +197,19 @@ class TransInr(nn.Module):
         if coord.dim() == 3:  # (H, W, 2)
             coord = einops.repeat(coord, "h w d -> b h w d", b=B)
         elif coord.dim() == 4:  # already batched (B, H, W, 2) — pass through
+            if coord.shape[0] != B:  # 3D: (D, H, W, 3) — not yet batched
+                coord = einops.repeat(coord, "d h w c -> b d h w c", b=B)
+            # else: already batched (B, H, W, 2) — pass through
+        elif coord.dim() == 5:  # already batched 3D: (B, D, H, W, 3)
             pass
 
         pred = self.inr(coord)  # (B, H, W, C_out)
 
-        # Rearrange to (B, C_out, H, W)
-        if pred.dim() == 4:
+        # Rearrange to (B, C_out, ...)
+        if pred.dim() == 4:  # 2D: (B, H, W, C) -> (B, C, H, W)
             pred = pred.permute(0, 3, 1, 2).contiguous()
+        elif pred.dim() == 5:  # 3D: (B, D, H, W, C) -> (B, C, D, H, W)
+            pred = pred.permute(0, 4, 1, 2, 3).contiguous()
 
         return pred
 
@@ -211,7 +217,7 @@ class TransInr(nn.Module):
 
     def get_last_layer(self):
         return self.inr.get_last_layer()
-    
+
     def forward_with_weights(self, data, coord=None, **kwargs):
         """
         Mirrors forward(), but also returns the flattened modulated INR weight

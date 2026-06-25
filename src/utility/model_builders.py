@@ -14,6 +14,7 @@ Supported model names (args.model):
 import torch
 import torch.nn as nn
 
+from src.models.encoder_3D import Conv3DEncoder
 from src.models.LatentEncoder import ResNetLatentEncoder
 from src.models.LatentNoisePredictor import LatentTransformerNoisePredictor
 from src.models.NDM_INR import (
@@ -1082,23 +1083,35 @@ def _build_latent_diffusion(args, data_config: dict):
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
+    is_3d = data_config.get("is_3d", False)  # <-- new flag
 
-    # ── Shared latent space contract ──────────────────────────────────────────
-    # These three values are passed to BOTH LatentEncoder and LatentTokenizer
-    # inside TransInr — they must stay in sync.
     latent_dim = getattr(args, "latent_dim", 32)
-    latent_size = getattr(args, "latent_size", 14)  # int → (H', W')
-    patch_size = getattr(args, "latent_patch_size", 2)  # LatentTokenizer patch
-
+    latent_size = getattr(args, "latent_size", 14)
+    patch_size = getattr(args, "latent_patch_size", 2)
     latent_size_tuple = (latent_size, latent_size) if isinstance(latent_size, int) else latent_size
 
-    # ── LatentEncoder ─────────────────────────────────────────────────────────
-    latent_encoder = ResNetLatentEncoder(
-        in_channels=channels,
-        latent_dim=latent_dim,
-        latent_size=latent_size_tuple,
-        hidden_dim=getattr(args, "latent_enc_hidden_dim", 512),
-    )
+    # ── Encoder: 3D or 2D ────────────────────────────────────────────────────
+    if is_3d:
+        from src.models.encoder_3D import Conv3DEncoder
+
+        latent_encoder = Conv3DEncoder(
+            in_channels=channels,
+            dim_z=latent_dim,
+            base_channels=getattr(args, "latent_enc_hidden_dim", 64),
+            dropout=getattr(args, "dropout", 0.0),
+        )
+    else:
+        latent_encoder = ResNetLatentEncoder(
+            in_channels=channels,
+            latent_dim=latent_dim,
+            latent_size=latent_size_tuple,
+            hidden_dim=getattr(args, "latent_enc_hidden_dim", 512),
+        )
+
+    # ── INR: 3D uses sigmoid output and 3D coords ────────────────────────────
+    inr_in_dim = 3 if is_3d else 2
+    inr_out_act = "sigmoid" if is_3d else "tanh"
+    data_shape = (img_size, img_size, img_size) if is_3d else (img_size, img_size)
 
     # ── TransInr decoder ──────────────────────────────────────────────────────
     dec_dim = getattr(args, "dec_trans_dim", 256)
@@ -1128,10 +1141,11 @@ def _build_latent_diffusion(args, data_config: dict):
         "target": "src.models.trans_inr_helpers.SIREN",
         "params": {
             "depth": inr_layers,
-            "in_dim": 2,
+            "in_dim": inr_in_dim,  # 2 or 3
             "out_dim": channels,
             "hidden_dim": inr_hidden,
             "out_bias": 0.5,
+            "out_activation": inr_out_act,  # "tanh" or "sigmoid"
         },
     }
     transformer_cfg = {
@@ -1149,7 +1163,7 @@ def _build_latent_diffusion(args, data_config: dict):
     decoder = TransInr(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
-        data_shape=(img_size, img_size),
+        data_shape=data_shape,  # (32,32) or (32,32,32)
         n_groups=dec_n_groups,
         transformer=transformer_cfg,
         update_strategy=dec_update,
@@ -1168,7 +1182,7 @@ def _build_latent_diffusion(args, data_config: dict):
         t_embed_dim=getattr(args, "pred_t_embed_dim", 128),
     )
     # ── Coordinate grid ───────────────────────────────────────────────────────
-    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))  # (H, W, 2)
+    coord_grid = make_coord_grid(data_shape, (-1, 1))
 
     # ── Assemble ──────────────────────────────────────────────────────────────
     model = LatentDiffusion(
@@ -1342,37 +1356,46 @@ def _print_noise_predictor_info(predictor: LatentTransformerNoisePredictor) -> i
     return total
 
 
-def _print_latent_encoder_info(encoder: ResNetLatentEncoder) -> int:
-    """
-    Prints a parameter count summary for a ResNetLatentEncoder.
-    Args:
-        encoder : instantiated ResNetLatentEncoder
-    Returns:
-        total : total parameter count (int)
-    """
-    stem_params = sum(p.numel() for p in encoder.stem.parameters())
-    layer1_params = sum(p.numel() for p in encoder.layer1.parameters())
-    layer2_params = sum(p.numel() for p in encoder.layer2.parameters())
-    layer3_params = sum(p.numel() for p in encoder.layer3.parameters())
-    layer4_params = sum(p.numel() for p in encoder.layer4.parameters())
-    backbone_params = layer1_params + layer2_params + layer3_params + layer4_params
-    upsample_mu = sum(p.numel() for p in encoder.upsample_mu.parameters())
-    upsample_logvar = sum(p.numel() for p in encoder.upsample_logvar.parameters())
-    upsample_params = upsample_mu + upsample_logvar
-    total = sum(p.numel() for p in encoder.parameters())
+def _print_latent_encoder_info(encoder: nn.Module) -> int:
+    """Prints a parameter count summary for a latent encoder (2D or 3D).
 
+    Args:
+        encoder: ResNetLatentEncoder or Conv3DEncoder instance.
+    Returns:
+        total: Total parameter count.
+    """
+    total = sum(p.numel() for p in encoder.parameters())
     print("############## Latent Encoder Summary: #############")
-    print(f"Stem                   : {stem_params:>12,}")
-    print(f"ResNet backbone        : {backbone_params:>12,}")
-    print(f"  layer1               : {layer1_params:>12,}")
-    print(f"  layer2               : {layer2_params:>12,}")
-    print(f"  layer3               : {layer3_params:>12,}")
-    print(f"  layer4               : {layer4_params:>12,}")
-    print(f"Learnable upsample     : {upsample_params:>12,}")
+
+    if isinstance(encoder, Conv3DEncoder):
+        encoder_params = sum(p.numel() for p in encoder.encoder.parameters())
+        head_params = sum(p.numel() for p in encoder.output_head.parameters())
+        print("Type                   : Conv3DEncoder (3D)")
+        print(f"Conv encoder stack     : {encoder_params:>12,}")
+        print(f"Output head (μ/logσ²)  : {head_params:>12,}")  # noqa: RUF001
+
+    else:  # ResNetLatentEncoder
+        stem_params = sum(p.numel() for p in encoder.stem.parameters())
+        layer1_params = sum(p.numel() for p in encoder.layer1.parameters())
+        layer2_params = sum(p.numel() for p in encoder.layer2.parameters())
+        layer3_params = sum(p.numel() for p in encoder.layer3.parameters())
+        layer4_params = sum(p.numel() for p in encoder.layer4.parameters())
+        backbone_params = layer1_params + layer2_params + layer3_params + layer4_params
+        upsample_mu = sum(p.numel() for p in encoder.upsample_mu.parameters())
+        upsample_logvar = sum(p.numel() for p in encoder.upsample_logvar.parameters())
+        upsample_params = upsample_mu + upsample_logvar
+        print("Type                   : ResNetLatentEncoder (2D)")
+        print(f"Stem                   : {stem_params:>12,}")
+        print(f"ResNet backbone        : {backbone_params:>12,}")
+        print(f"  layer1               : {layer1_params:>12,}")
+        print(f"  layer2               : {layer2_params:>12,}")
+        print(f"  layer3               : {layer3_params:>12,}")
+        print(f"  layer4               : {layer4_params:>12,}")
+        print(f"Learnable upsample     : {upsample_params:>12,}")
+
     print("-------------------------------------------------------------")
     print(f"Total                  : {total:>12,}")
     print("-------------------------------------------------------------")
-
     return total
 
 

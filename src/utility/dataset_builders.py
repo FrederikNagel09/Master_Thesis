@@ -15,6 +15,8 @@ Supported dataset names (args.dataset):
     "celeba"    - 64x64 RGB
 """
 
+import os
+
 import torch
 from torch.utils.data import Dataset, Subset, random_split
 from torchvision import datasets, transforms
@@ -58,6 +60,8 @@ def build_dataset(
         dataset, data_config = _build_cifar10(data_root)
     elif name == "celeba":
         dataset, data_config = _build_celeba(data_root)
+    elif name == "shapenet_voxels":
+        dataset, data_config = _build_shapenet_voxels(data_root)
     else:
         raise ValueError(f"Unknown dataset '{dataset_name}'. Choose from: 'mnist', 'cifar10', 'celeba'.")
 
@@ -135,6 +139,51 @@ def _build_celeba(data_root: str) -> tuple[Dataset, dict]:
     dataset = datasets.CelebA(data_root, split="train", download=True, transform=transform)
     data_config = {"channels": channels, "img_size": img_size, "data_dim": channels * img_size**2}
     return dataset, data_config
+
+
+def _build_shapenet_voxels(data_root: str) -> tuple[Dataset, dict]:
+    """Load ShapeNet voxel grids from a directory of .pt files.
+
+    Args:
+        data_root: Root directory containing the shapenet_voxels/ folder.
+    Returns:
+        dataset: Dataset yielding (voxel_tensor, 0) tuples.
+        data_config: Dict with channels, img_size, data_dim keys.
+    """
+    voxel_dir = os.path.join(data_root, "shapenet_voxels")
+    files = sorted([os.path.join(voxel_dir, f) for f in os.listdir(voxel_dir) if f.endswith(".pt")])
+
+    grid_size, channels = 32, 1
+    data_config = {
+        "channels": channels,
+        "img_size": grid_size,
+        "data_dim": channels * grid_size**3,  # 3D, not 2D
+        "is_3d": True,
+    }
+
+    dataset = ShapeNetVoxelDataset(files)
+    return dataset, data_config
+
+
+class ShapeNetVoxelDataset(Dataset):
+    """Dataset wrapping a list of .pt voxel grid files.
+
+    Args:
+        file_paths: List of paths to .pt files, each a (32, 32, 32) tensor.
+    Returns:
+        Tuple of (voxel_tensor, dummy_label) where voxel_tensor is (1, 32, 32, 32).
+    """
+
+    def __init__(self, file_paths: list[str]) -> None:
+        self.file_paths = file_paths
+
+    def __len__(self) -> int:
+        return len(self.file_paths)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
+        voxels = torch.load(self.file_paths[idx], map_location="cpu").float()
+        # Add channel dim to match convention: (1, 32, 32, 32)
+        return voxels.unsqueeze(0), 0
 
 
 if __name__ == "__main__":

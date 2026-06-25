@@ -253,6 +253,7 @@ class LatentTransformerNoisePredictor(nn.Module):
         x = z.permute(0, 2, 3, 1).reshape(B, H * W, C)
 
         # Project features and add fixed geographic spatial coordinates
+        print(f"Positional embedding shape: {self.pos_embed.shape}, x shape: {x.shape}")
         x = self.token_embed(x) + self.pos_embed
 
         # Compute global continuous time vectors

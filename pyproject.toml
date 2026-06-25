@@ -20,6 +20,8 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "pytorch-fid>=0.3.0",
     "einops>=0.8.2",
+    "mcubes>=0.1.6",
+    "scikit-image>=0.26.0",
 ]
 
 [tool.ruff]

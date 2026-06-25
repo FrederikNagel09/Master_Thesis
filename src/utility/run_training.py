@@ -52,7 +52,6 @@ from src.utility.plotting import (
     plot_training,
     plot_val_elbo_progression,  # noqa: F401
     plot_weight_profile_progression,  # noqa: F401
-    plot_ztrans_histogram,
 )
 from src.utility.training import train
 
@@ -193,6 +192,7 @@ def run_training(
 
     def _sample_fn(model, step, device, batch=None):
         epoch = step // len(data_loader_train)
+
         plot_sample_progression(
             model,
             args.model,
@@ -203,6 +203,7 @@ def run_training(
             filename=progression_filename,
             collect_snapshots=True,
         )
+
         if batch is not None:
             if args.model in ("ndm"):
                 plot_fphi_progression(
@@ -215,47 +216,6 @@ def run_training(
                     filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}",
                     model_name=args.model,
                 )
-            elif args.model == "latent_ndm_inr_diffusion":
-                plot_ztrans_histogram(
-                    model=model,
-                    batch=batch,
-                    epoch=epoch,
-                    run_dir=run_dir,
-                    device=device,
-                    filename=f"ztrans_histogram_ep{start_epoch + 1}-{end_epoch}",
-                )
-                plot_fphi_progression(
-                    model,
-                    batch,
-                    epoch,
-                    run_dir,
-                    device,
-                    data_config,
-                    filename=f"fphi_progression_ep{start_epoch + 1}-{end_epoch}",
-                    model_name=args.model,
-                )
-                plot_reconstruction_progression(
-                    model,
-                    batch,
-                    epoch,
-                    run_dir,
-                    device,
-                    data_config,
-                    filename=f"reconstruction_progression_ep{start_epoch + 1}-{end_epoch}",
-                    model_name=args.model,
-                )
-                plot_forward_trajectory_progression(
-                    model=model,
-                    batch=batch,
-                    epoch=epoch,
-                    run_dir=run_dir,
-                    device=device,
-                    data_config=data_config,
-                    filename=f"Forward_noising_progression_ep{start_epoch + 1}-{end_epoch}",
-                    model_name=args.model,
-                    normalize=args.normalize,
-                )
-
             elif args.model in ("latent_inr_diffusion"):
                 plot_reconstruction_progression(
                     model,
@@ -392,9 +352,9 @@ def run_training(
 
     print("\n  Training complete...")
     print("  Generating final sample grid …")
-    #plot_final_samples(
-        #model, args.model, end_epoch, run_dir, device, data_config, n_fid_samples=args.n_fid_samples, val_loader=data_loader_val
-    #)
+    plot_final_samples(
+        model, args.model, end_epoch, run_dir, device, data_config, n_fid_samples=args.n_fid_samples, val_loader=data_loader_val
+    )
     print("Final sample grid saved to training directory.")
 
     # ── 5. Save ───────────────────────────────────────────────────────────────

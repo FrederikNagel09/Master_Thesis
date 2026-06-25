@@ -125,10 +125,23 @@ class LatentTokenizer(nn.Module):
 def batched_linear_mm(x, wb):
     """
     x  : (B, N, D1)
-    wb : (B, D1+1, D2)  — last row is the bias
+    wb : (B, D1+1, D2) OR (1, D1+1, D2) — last row is the bias
     """
-    one = torch.ones(*x.shape[:-1], 1, device=x.device)
-    return torch.matmul(torch.cat([x, one], dim=-1), wb)
+    # 1. Ensure x has the correct batch dimension
+    B = x.shape[0]  # noqa: N806
+
+    # 2. Create bias vector
+    one = torch.ones(B, x.shape[1], 1, device=x.device)
+    x_cat = torch.cat([x, one], dim=-1)  # (B, N, D1+1)
+
+    # 3. Ensure wb is (B, D1+1, D2)
+    # If wb is (D1+1, D2), add batch dim: (1, D1+1, D2)
+    if wb.dim() == 2:
+        wb = wb.unsqueeze(0)
+
+    # 4. Perform batch matrix multiplication
+    # (B, N, D1+1) @ (B, D1+1, D2) -> (B, N, D2)
+    return torch.matmul(x_cat, wb)
 
 
 # ---------------------------------------------------------------------------
@@ -137,10 +150,11 @@ def batched_linear_mm(x, wb):
 
 
 class SIREN(nn.Module):
-    def __init__(self, depth, in_dim, out_dim, hidden_dim, out_bias=0, omega=30.0):
+    def __init__(self, depth, in_dim, out_dim, hidden_dim, out_bias=0, omega=30.0, out_activation="tanh"):
         super().__init__()
         self.omega = omega
         self.depth = depth
+        self.out_activation = out_activation  # "tanh" or "sigmoid"
         self.param_shapes = dict()  # noqa: C408
 
         last_dim = in_dim
@@ -177,11 +191,9 @@ class SIREN(nn.Module):
     def forward(self, x):
         B, query_shape = x.shape[0], x.shape[1:-1]  # noqa: N806
         x = x.view(B, -1, x.shape[-1])
-
         for i in range(self.depth):
             x = batched_linear_mm(x, self.params[f"wb{i}"])
-            x = self.siren_activation(x) if i < self.depth - 1 else torch.tanh(x)
-
+            x = self.siren_activation(x) if i < self.depth - 1 else torch.sigmoid(x) if self.out_activation == "sigmoid" else torch.tanh(x)
         x = x.view(B, *query_shape, -1)
         return x
 

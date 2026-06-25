@@ -69,3 +69,41 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale
+
+
+
+
+python main.py \
+    --run_name Latent-Diffusion-new \
+    --epochs 5 \
+    --batch_size 64 \
+    --subset_frac 0.05 \
+    --n_fid_samples 16 \
+    --model latent_inr_diffusion \
+    --dataset shapenet_voxels \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 1 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --inr_hidden_dim 32 \
+    --inr_layers 3 \
+    --latent_dim 8 \
+    --latent_size 8 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 8\
+    --pred_d_model 32 \
+    --pred_n_heads 2 \
+    --pred_n_layers 2 \
+    --pred_d_ff 128 \
+    --pred_t_embed_dim 32 \
+    --dec_trans_dim 32 \
+    --dec_trans_n_head 2 \
+    --dec_trans_head_dim 8 \
+    --dec_trans_ff_dim 128 \
+    --dec_trans_enc_depth 1 \
+    --dec_trans_dec_depth 1 \
+    --dec_trans_n_groups 32 \
+    --dec_trans_update_strategy scale

@@ -25,14 +25,96 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import torch
+
+# =============================================================================
+# Helpers
+# =============================================================================
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from skimage.measure import marching_cubes
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
 from src.configs.train_plot_config import _COLORS, _LABELS
 
-# =============================================================================
-# Helpers
-# =============================================================================
+VOXEL_THRESHOLD = 0.5
+# Slight per-sample camera rotation so each mesh is seen from a different angle
+_AZIM_OFFSETS = [-30, -15, 0, 15, 30, 45]
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _voxels_to_mesh(voxels: np.ndarray, threshold: float = VOXEL_THRESHOLD) -> tuple[np.ndarray, np.ndarray] | None:
+    """Run marching cubes on a (D, H, W) voxel array.
+
+    Args:
+        voxels:    (D, H, W) float numpy array.
+        threshold: Surface extraction threshold.
+    Returns:
+        (vertices, triangles) or None if no surface found.
+    """
+    volume = np.pad(voxels, 1, mode="constant", constant_values=0)
+    try:
+        verts, faces, _, _ = marching_cubes(volume, level=threshold)
+        return verts, faces
+    except ValueError:
+        # marching_cubes raises if no surface exists at this threshold
+        return None
+
+
+def _render_mesh_on_ax(
+    ax: plt.Axes,
+    voxels: np.ndarray,
+    title: str = "",
+    azim: float = 0.0,
+    elev: float = 25.0,
+) -> None:
+    """Render a voxel grid as a 3D mesh on a matplotlib 3D axis.
+
+    Args:
+        ax:     Matplotlib 3D axis.
+        voxels: (D, H, W) float numpy array.
+        title:  Optional subplot title.
+        azim:   Camera azimuth angle in degrees.
+        elev:   Camera elevation angle in degrees.
+    Returns:
+        None
+    """
+    result = _voxels_to_mesh(voxels)
+    if result is not None:
+        verts, faces = result
+        mesh = Poly3DCollection(verts[faces], alpha=0.75, edgecolor=None)
+        mesh.set_facecolor([0.5, 0.7, 1.0])
+        ax.add_collection3d(mesh)
+        scale = verts.flatten()
+        ax.auto_scale_xyz(scale, scale, scale)
+    else:
+        # Empty grid — draw a wireframe cube as placeholder
+        ax.text(0.5, 0.5, 0.5, "empty", ha="center", va="center", transform=ax.transAxes, fontsize=7, color="#aaaaaa")
+
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_axis_off()
+    if title:
+        ax.set_title(title, fontsize=7)
+
+
+def _samples_to_voxel_grids(
+    raw_samples: torch.Tensor,
+    channels: int,
+    grid_size: int,
+) -> np.ndarray:
+    """Reshape flat sample tensor to per-sample voxel grids.
+
+    Args:
+        raw_samples: (B, data_dim) float tensor from model.sample().
+        channels:    Number of channels (1 for ShapeNet).
+        grid_size:   Spatial size of voxel grid (32).
+    Returns:
+        (B, D, H, W) numpy array — channel dim squeezed out.
+    """
+    B = raw_samples.shape[0]  # noqa: N806
+    grids = raw_samples.view(B, channels, grid_size, grid_size, grid_size)
+    return grids[:, 0].cpu().numpy()  # (B, D, H, W)
 
 
 def _smooth(values: list[float], n_points: int) -> tuple[list[float], list[float]]:
@@ -167,24 +249,25 @@ def _model_to_grid(
     data_config: dict,
     collect_snapshots: bool = False,
     debug: bool = True,
-) -> tuple[np.ndarray, dict[int, np.ndarray] | None]:
-    """
-    Draw n_samples from model and return rendered grid + optional denoising snapshots.
+) -> tuple[np.ndarray, dict | None]:
+    """Draw n_samples from model and return rendered grid + optional snapshots.
+
     Args:
-        model:              Trained model.
-        model_type:         Model type string.
-        n_samples:          Number of samples to draw.
-        device:             Device string.
-        data_config:        Dict with 'channels', 'img_size', 'data_dim'.
-        collect_snapshots:  If True, collect weight snapshots at T-values (NDM transinr only).
+        model:             Trained model.
+        model_type:        Model type string.
+        n_samples:         Number of samples to draw.
+        device:            Device string.
+        data_config:       Dict with 'channels', 'img_size', 'data_dim', optionally 'is_3d'.
+        collect_snapshots: If True, collect weight snapshots (NDM transinr only).
+        debug:             Passed through to model.sample().
     Returns:
-        grid:      (n_samples, H, W) or (n_samples, H, W, C) numpy array in [0, 1].
+        grid:      2D: (n_samples, H, W) or (n_samples, H, W, C) numpy array in [0,1].
+                   3D: (n_samples, D, H, W) numpy array of raw voxel grids.
         snapshots: {t_value: flat np.ndarray} or None if not collected.
     """
-    import torch
-
     channels = data_config["channels"]
     img_size = data_config["img_size"]
+    is_3d = data_config.get("is_3d", False)
     snapshots = None
 
     model.eval()
@@ -211,13 +294,21 @@ def _model_to_grid(
             else:
                 raw_samples = model.sample(n_samples, debug=debug)
 
+            if is_3d:
+                # Return raw voxel grids — rendering happens in the plot functions
+                grid = _samples_to_voxel_grids(raw_samples, channels, img_size)
+                model.train()
+                return grid, snapshots
+
             samples = (raw_samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+
         else:
             raise ValueError(f"Unknown model_type '{model_type}' for sampling.")
 
     samples = samples.cpu().numpy()
     grid = samples[:, 0, :, :] if channels == 1 else samples.transpose(0, 2, 3, 1)
 
+    model.train()
     return grid, snapshots
 
 
@@ -405,34 +496,32 @@ def plot_sample_progression(
     filename: str = "sample_progression",
     collect_snapshots: bool = False,
 ) -> None:
-    """
-    Append a row of 6 samples to the training progression figure and save to
-    <run_dir>/sample_progression.png, overwriting each call.
-    Always renders 5 rows — empty rows shown as blank until filled.
-    Args:
-        model:              Trained model, already on device.
-        model_type:         One of "ndm", "inr_vae", "ndm_inr", "ndm_temporal_transinr".
-        epoch:              Current epoch, used as the row label.
-        run_dir:            Run results directory.
-        device:             Device string.
-        data_config:        Dict with "channels", "img_size", "data_dim".
-        filename:           Base filename for outputs.
-        collect_snapshots:  If True, also plot denoising trajectory histograms.
-        normalize:          If True, normalize the samples before plotting.
-    Returns: None
-    """
-    import json
+    """Append a row of samples to the progression figure, saved to <run_dir>/<filename>.png.
 
+    Renders 2D samples with imshow, 3D samples as marching-cubes meshes.
+    Always renders 5 rows — empty rows shown as blank until filled.
+
+    Args:
+        model:             Trained model, already on device.
+        model_type:        Model type string.
+        epoch:             Current epoch, used as the row label.
+        run_dir:           Run results directory.
+        device:            Device string.
+        data_config:       Dict with 'channels', 'img_size', 'data_dim', optionally 'is_3d'.
+        filename:          Base filename for outputs.
+        collect_snapshots: If True, also plot denoising trajectory histograms.
+    Returns:
+        None
+    """
     os.makedirs(run_dir, exist_ok=True)
 
     N_ROWS_TOTAL = 5  # noqa: N806
     n_cols = 6
     channels = data_config["channels"]
+    is_3d = data_config.get("is_3d", False)
 
-    # ── Draw new row of samples ───────────────────────────────────────────────
     new_row, snapshots = _model_to_grid(model, model_type, n_cols, device, data_config, collect_snapshots)
 
-    # ── Load existing rows from disk if available ─────────────────────────────
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
     meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
@@ -448,27 +537,23 @@ def plot_sample_progression(
         all_rows = new_row[None]
         all_epochs = [epoch]
 
-    # ── Persist updated rows ──────────────────────────────────────────────────
     np.save(rows_path, all_rows)
     with open(meta_path, "w") as f:
         json.dump({"epochs": all_epochs}, f)
 
-    # ── Pad to always have N_ROWS_TOTAL rows ──────────────────────────────────
     n_existing = len(all_epochs)
     blank_shape = (n_cols, *new_row.shape[1:])
     blank = np.ones(blank_shape)
     padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
     padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
 
-    # ── Build figure ──────────────────────────────────────────────────────────
     label_width = 0.5
-    img_inches = 1.2
+    img_inches = 1.8 if is_3d else 1.2  # meshes need a bit more room
     row_gap = 0.15
     title_pad = 0.35
 
     fig_w = label_width + n_cols * img_inches
     fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
-
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
@@ -479,12 +564,21 @@ def plot_sample_progression(
             width = img_inches / fig_w
             height = img_inches / fig_h
 
-            ax = fig.add_axes([left, bottom, width, height])
-            if channels == 1:
-                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            if is_3d:
+                ax = fig.add_axes([left, bottom, width, height], projection="3d")
+                # row_samples is (n_cols, D, H, W); blank is all-ones → skip mesh
+                is_blank = np.all(row_samples[c] == 1.0)
+                if not is_blank:
+                    _render_mesh_on_ax(ax, row_samples[c], azim=_AZIM_OFFSETS[c])
+                else:
+                    ax.set_axis_off()
             else:
-                ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
-            ax.axis("off")
+                ax = fig.add_axes([left, bottom, width, height])
+                if channels == 1:
+                    ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                else:
+                    ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
+                ax.axis("off")
 
         fig.text(
             (label_width * 0.5) / fig_w,
@@ -497,24 +591,19 @@ def plot_sample_progression(
         )
 
     fig.suptitle("Sample Progression", fontsize=11, fontweight="bold", y=0.99)
-
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    # ── Plot denoising trajectory if snapshots were collected ─────────────────
     if collect_snapshots and snapshots is not None:
-        # Dynamically derive the denoising filename to match the segment suffix of this run
         denoising_filename = filename.replace("sample_progression", "Reverse_denoising_progression")
         if denoising_filename == filename:
-            # Fallback guard just in case a custom filename without 'sample_progression' was passed
             denoising_filename = f"Reverse_denoising_progression_{filename}"
-
         plot_denoising_trajectory_progression(
             snapshots=snapshots,
             epoch=epoch,
             run_dir=run_dir,
-            filename=denoising_filename,  # <── Pass the new segment name here!
+            filename=denoising_filename,
         )
 
 
@@ -1172,30 +1261,23 @@ def plot_reconstruction_progression(
     filename: str = "reconstruction_progression",
     model_name: str = "",
 ) -> None:
+    """Append a row of originals + reconstructions to the progression figure.
+
+    Renders 2D data with imshow, 3D data as marching-cubes meshes side-by-side.
+    Always renders 5 rows — empty rows shown as blank until filled.
+
+    Args:
+        model:       Model already on device.
+        batch:       Current training batch — list/tuple where batch[0] is the data tensor.
+        epoch:       Current epoch, used as the row label.
+        run_dir:     Run results directory.
+        device:      Device string.
+        data_config: Dict with 'channels', 'img_size', 'data_dim', optionally 'is_3d'.
+        filename:    Base name for the saved png and metadata files.
+        model_name:  Model variant name string.
+    Returns:
+        None
     """
-    Append a row of 6 reconstructions to the progression figure and save to
-    <run_dir>/<filename>.png, overwriting each call.
-
-    Always renders 5 rows — empty rows are shown as blank until filled.
-    Each row is labelled with its epoch on the left. Left half shows originals,
-    right half shows reconstructions.
-
-    Reconstruction pipeline (mirrors _l_rec):
-        w = F_phi(x, t=0)
-        x_recon = INR(coords, w)
-
-    Parameters
-    ----------
-    model       : NeuralDiffusionModelINR, already on device.
-    batch       : Current training batch — list/tuple where batch[0] is images.
-    epoch       : Current epoch, used as the row label.
-    run_dir     : Run results directory.
-    device      : Device string.
-    data_config : Dict with "channels", "img_size", "data_dim".
-    filename    : Base name for the saved png and metadata files.
-    """
-    import json
-
     os.makedirs(run_dir, exist_ok=True)
 
     N_ROWS_TOTAL = 5  # noqa: N806
@@ -1203,98 +1285,126 @@ def plot_reconstruction_progression(
     n_pairs = n_cols // 2
     channels = data_config["channels"]
     img_size = data_config["img_size"]
+    is_3d = data_config.get("is_3d", False)
 
-    # ── Get images from batch ─────────────────────────────────────────────────
-    x = batch[0][:n_pairs].to(device)  # (3, data_dim)
+    x = batch[0][:n_pairs].to(device)
 
-    # ── Reconstruct via encoder(t=0) → INR decode ────────────────────────────
     model.eval()
-
     if model_name in ("latent_inr_diffusion", "weight_inr_diffusion", "weight_inr_ndm_diffusion"):
         with torch.no_grad():
-            if x.dim() == 2:
-                channels = x.shape[1] // (model.img_size * model.img_size)
-                x = x.view(x.shape[0], channels, model.img_size, model.img_size)
-
-            x_recon = model.get_reconstructions(x)  # (3, C, H, W)
-
+            if is_3d:
+                # x arrives as (B, 1, D, H, W) from the dataloader
+                if x.dim() == 4:  # (B, D, H, W) — add channel
+                    x = x.unsqueeze(1)
+            else:
+                if x.dim() == 2:
+                    x = x.view(x.shape[0], channels, img_size, img_size)
+            x_recon = model.get_reconstructions(x)  # same shape as x
     else:
         with torch.no_grad():
             if hasattr(model, "F_phi"):
                 t0_norm = torch.zeros(x.shape[0], 1, device=device)
-                weights = model.F_phi(x, t0_norm)  # temporal encoder
+                weights = model.F_phi(x, t0_norm)
             elif hasattr(model, "W") and hasattr(model.W, "inflate"):
-                # TransInrEncoder expects spatial (B, C, H, W)
                 x_spatial = x.view(x.shape[0], channels, img_size, img_size)
-                weights = model.weight_encoder(x_spatial)  # ← spatial reshape
+                weights = model.weight_encoder(x_spatial)
             else:
                 t0_norm = torch.zeros(x.shape[0], device=device)
-                weights = model.weight_encoder(x)  # static MLP/CNN encoder
-
-            x_recon = model._inr_decode(weights)  # (3, data_dim)
-
+                weights = model.weight_encoder(x)
+            x_recon = model._inr_decode(weights)
     model.train()
 
-    def _to_img(tensor_1d):
-        """Flat tensor → numpy HxW or HxWxC in [0,1]."""
-        img = tensor_1d.cpu().numpy().reshape(channels, img_size, img_size)
-        if channels == 1:
-            return img[0]
-        return img.transpose(1, 2, 0)
+    # ── Convert to plottable format ───────────────────────────────────────────
+    if is_3d:
+        # Both x and x_recon are (B, 1, D, H, W) — squeeze channel for marching cubes
+        orig_grids = x.squeeze(1).detach().cpu().numpy()  # (n_pairs, D, H, W)
+        recon_grids = x_recon.squeeze(1).detach().cpu().numpy()  # (n_pairs, D, H, W)
+        new_row_data = {  # noqa: F841
+            "orig": orig_grids,
+            "recon": recon_grids,
+        }
+    else:
 
-    # ── Build new row: [orig_0, orig_1, orig_2, recon_0, recon_1, recon_2] ────
-    originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]  # [-1,1] → [0,1]
-    recons = [(x_recon[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]  # already [0,1]
-    new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)  # (6, H, W[,C])
+        def _to_img(t: torch.Tensor) -> np.ndarray:
+            """Flat/spatial tensor → numpy HxW or HxWxC in [0,1]."""
+            img = t.cpu().numpy().reshape(channels, img_size, img_size)
+            return img[0] if channels == 1 else img.transpose(1, 2, 0)
 
-    # ── Load existing rows from disk if available ─────────────────────────────
+        originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
+        recons = [(x_recon[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
+        new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)  # (6, H, W[,C])
+
+    # ── Persist rows ──────────────────────────────────────────────────────────
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
     meta_path = os.path.join(metadata_dir, f"{filename}_meta.json")
-    rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
 
-    if os.path.exists(meta_path) and os.path.exists(rows_path):
-        with open(meta_path) as f:
-            meta = json.load(f)
-        existing_rows = np.load(rows_path)
-        all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
-        all_epochs = meta["epochs"] + [epoch]
+    if is_3d:
+        # Store 3D grids in a single .npz per epoch; track filenames in JSON
+        npz_path = os.path.join(metadata_dir, f"{filename}_ep{epoch}.npz")
+        np.savez_compressed(npz_path, orig=orig_grids, recon=recon_grids)
+
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+            meta["epochs"].append(epoch)
+            meta["npz_paths"].append(npz_path)
+        else:
+            meta = {"epochs": [epoch], "npz_paths": [npz_path]}
+        with open(meta_path, "w") as f:
+            json.dump(meta, f)
+
+        all_epochs = meta["epochs"]
+        all_npz = meta["npz_paths"]
     else:
-        all_rows = new_row[None]
-        all_epochs = [epoch]
-
-    # ── Persist updated rows ──────────────────────────────────────────────────
-    np.save(rows_path, all_rows)
-    with open(meta_path, "w") as f:
-        json.dump({"epochs": all_epochs}, f)
-
-    # ── Pad to always have N_ROWS_TOTAL rows ──────────────────────────────────
-    n_existing = len(all_epochs)
-    blank_shape = (n_cols, *new_row.shape[1:])
-    blank = np.ones(blank_shape)
-    padded_rows = list(all_rows) + [blank] * (N_ROWS_TOTAL - n_existing)
-    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - n_existing)
+        rows_path = os.path.join(metadata_dir, f"{filename}_rows.npy")
+        if os.path.exists(meta_path) and os.path.exists(rows_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+            existing_rows = np.load(rows_path)
+            all_rows = np.concatenate([existing_rows, new_row[None]], axis=0)
+            all_epochs = meta["epochs"] + [epoch]
+        else:
+            all_rows = new_row[None]
+            all_epochs = [epoch]
+        np.save(rows_path, all_rows)
+        with open(meta_path, "w") as f:
+            json.dump({"epochs": all_epochs}, f)
 
     # ── Build figure ──────────────────────────────────────────────────────────
     label_width = 0.5
-    img_inches = 1.2
+    img_inches = 1.8 if is_3d else 1.2
     row_gap = 0.15
     title_pad = 0.35
-    divider_gap = 0.08  # extra horizontal gap between originals and recons
+    divider_gap = 0.08
 
     fig_w = label_width + n_cols * img_inches + divider_gap
     fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
-
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
-    # Column header labels (only drawn once, above the axes area)
+    # Column headers
     for c, header in enumerate(["", "Originals", "", "", "Reconstructions", ""]):
         extra = divider_gap if c >= n_pairs else 0.0
         cx = (label_width + (c + 0.5) * img_inches + extra) / fig_w
         fig.text(cx, 1.0 - (title_pad * 0.7 / fig_h), header, ha="center", va="center", fontsize=7, color="#555555")
 
-    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+    # Pad epochs to N_ROWS_TOTAL
+    padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - len(all_epochs))
+
+    for r, ep in enumerate(padded_epochs):
+        # Load this row's data
+        if is_3d:
+            if r < len(all_npz):
+                npz = np.load(all_npz[r])
+                row_orig = npz["orig"]  # (n_pairs, D, H, W)
+                row_recon = npz["recon"]
+                row_is_blank = False
+            else:
+                row_is_blank = True
+        else:
+            row_is_blank = r >= len(all_epochs)
+
         for c in range(n_cols):
             extra = divider_gap if c >= n_pairs else 0.0
             left = (label_width + c * img_inches + extra) / fig_w
@@ -1302,14 +1412,24 @@ def plot_reconstruction_progression(
             width = img_inches / fig_w
             height = img_inches / fig_h
 
-            ax = fig.add_axes([left, bottom, width, height])
-            if channels == 1:
-                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            if is_3d:
+                ax = fig.add_axes([left, bottom, width, height], projection="3d")
+                if not row_is_blank:
+                    pair_idx = c % n_pairs
+                    voxels = row_orig[pair_idx] if c < n_pairs else row_recon[pair_idx]
+                    _render_mesh_on_ax(ax, voxels, azim=_AZIM_OFFSETS[c])
+                else:
+                    ax.set_axis_off()
             else:
-                ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
-            ax.axis("off")
+                ax = fig.add_axes([left, bottom, width, height])
+                if not row_is_blank:
+                    row_samples = all_rows[r]
+                    if channels == 1:
+                        ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                    else:
+                        ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
+                ax.axis("off")
 
-        # Epoch label on the left
         fig.text(
             (label_width * 0.5) / fig_w,
             1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
@@ -1320,7 +1440,7 @@ def plot_reconstruction_progression(
             color="#333333",
         )
 
-    # Vertical divider line between originals and reconstructions
+    # Vertical divider between originals and reconstructions
     divider_x = (label_width + n_pairs * img_inches + divider_gap * 0.5) / fig_w
     fig.add_artist(
         plt.Line2D(
