@@ -2060,6 +2060,10 @@ def plot_forward_trajectory_progression(
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)
 
         z, _, _ = model.encode(x)
+        
+        # if model has a self.normalize apply normalization to z
+        if hasattr(model, "normalize") and model.normalize:
+            z = model.scaler(z, reverse=False) if model.normalize else z
 
         raw_arrays = []
         for t in T_values_sorted:
