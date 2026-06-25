@@ -49,27 +49,48 @@ python src/scripts/two-stage-training.py \
     --fid_batch_size 32
 
 Convergence mode (version 2):
-python src/scripts/two_stage_ldm_training.py \
+python src/scripts/two-stage-latent-training.py \
     --run_name two_stage_convergence \
     --mode convergence \
-    --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
+    --ldm_config src/train_results/latent-diffusion-4/metadata/config.json \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 1.0 \
+    --lambda_kl_max 0.1 \
     --kl_warmup_frac 0.4 \
     --vae_check_every 5 \
     --vae_patience 10 \
     --vae_delta 1e-4 \
     --ddpm_check_every 5 \
-    --ddpm_patience 20 \
-    --ddpm_delta 1e-4 \
+    --ddpm_patience 30 \
+    --ddpm_delta 7e-5 \
     --ddpm_max_epochs 2000 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 0.02 \
     --n_fid_samples 1024 \
+    --fid_batch_size 64
+
+Skip-VAE mode (re-run DDPM only, VAE files left untouched):
+python src/scripts/two-stage-latent-training.py \
+    --run_name two_stage_convergence \
+    --mode convergence \
+    --skip_vae \
+    --vae_weights src/results/two_stage_convergence/two_stage_convergence_vae_weights.pt \
+    --ldm_config src/train_results/latent-diffusion-4/metadata/config.json \
+    --batch_size 128 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --ddpm_check_every 5 \
+    --ddpm_patience 30 \
+    --ddpm_delta 5e-5 \
+    --ddpm_max_epochs 2000 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 0.02 \
+    --n_fid_samples 128 \
     --fid_batch_size 64
 """
 
@@ -94,6 +115,12 @@ def parse_args() -> argparse.Namespace:
         "--mode", type=str, required=True, choices=["fixed", "convergence"],
         help="'fixed': explicit epoch counts; 'convergence': early-stop both stages",
     )
+
+    # Skip-VAE: load pre-trained VAE weights and go straight to DDPM
+    p.add_argument("--skip_vae",    action="store_true", default=False,
+                   help="Skip VAE training and load pre-trained weights instead")
+    p.add_argument("--vae_weights", type=str, default=None,
+                   help="Path to _vae_weights.pt (required when --skip_vae is set)")
 
     # Shared training
     p.add_argument("--batch_size",    type=int,   default=128)
@@ -432,6 +459,43 @@ def build_vae(
     return VAEWrapper(encoder, decoder, img_size, device).to(device)
 
 
+def load_pretrained_vae(
+    weights_path: str,
+    hparams: dict,
+    channels: int,
+    img_size: int,
+    device: torch.device,
+) -> VAEWrapper:
+    """
+    Build a VAEWrapper and load pre-trained encoder/decoder weights from disk.
+
+    Args:
+        weights_path (str):          path to _vae_weights.pt
+        hparams      (dict):         LDM arch hparams (for model construction)
+        channels     (int):          image channels
+        img_size     (int):          spatial image size
+        device       (torch.device): target device
+    Returns:
+        VAEWrapper: model with loaded weights on device, in eval mode
+    """
+    if not os.path.exists(weights_path):
+        raise FileNotFoundError(f"VAE weights not found at: {weights_path}")
+
+    vae = build_vae(hparams, channels, img_size, device)
+    ckpt = torch.load(weights_path, map_location=device)
+
+    # Prefer individual encoder/decoder state dicts; fall back to full VAE state dict
+    if "encoder_state_dict" in ckpt and "decoder_state_dict" in ckpt:
+        vae.latent_encoder.load_state_dict(ckpt["encoder_state_dict"])
+        vae.decoder.load_state_dict(ckpt["decoder_state_dict"])
+    else:
+        vae.load_state_dict(ckpt["vae_state_dict"])
+
+    vae.eval()
+    print(f"  Loaded pre-trained VAE weights from: {weights_path}")
+    return vae
+
+
 def build_ldm(
     hparams: dict,
     args: argparse.Namespace,
@@ -651,15 +715,15 @@ def save_ldm_weights(
         "latent_enc_hidden_dim", "dec_trans_dim", "dec_trans_n_head",
         "dec_trans_head_dim", "dec_trans_ff_dim", "dec_trans_enc_depth",
         "dec_trans_dec_depth", "dec_trans_n_groups", "dec_trans_update_strategy",
-        "inr_hidden_dim", "inr_layers","pred_d_model", "pred_n_heads", "pred_n_layers", "pred_d_ff",
+        "inr_hidden_dim", "inr_layers", "pred_d_model", "pred_n_heads", "pred_n_layers", "pred_d_ff",
         "pred_t_embed_dim", "noise_predictor_dropout",
     ]
     config = {k: hparams[k] for k in arch_keys}
-    config["run_name"]          = run_name
-    config["T"]                 = args.T
-    config["beta_1"]            = args.beta_1
-    config["beta_T"]            = args.beta_T
-    
+    config["run_name"] = run_name
+    config["T"]        = args.T
+    config["beta_1"]   = args.beta_1
+    config["beta_T"]   = args.beta_T
+
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
@@ -801,10 +865,9 @@ def _build_val_noise_cache(
         device      (torch.device): target device
         seed        (int):          RNG seed for reproducibility
     Returns:
-        list of (x_batch, t_batch, noise_batch) tuples, all on CPU
-              x_batch    : (B, C, H, W)
-              t_batch    : (B,)  int64 in [0, T-1]
-              noise_batch: (B, latent_dim, latent_H, latent_W)
+        list of (x_batch, t_batch) tuples, all on CPU
+              x_batch : (B, C, H, W)
+              t_batch : (B,)  int64 in [0, T-1]
     """
     rng = torch.Generator()
     rng.manual_seed(seed)
@@ -1200,7 +1263,7 @@ def train_ddpm(
         max(1, int(f * max_epochs)) for f in args.fid_fractions
     )
     # Skip the first 25% — too early to be meaningful
-    warmup_cutoff  = int(0.25 * max_epochs)
+    warmup_cutoff    = int(0.25 * max_epochs)
     fid_check_epochs = {e for e in fid_check_epochs if e > warmup_cutoff}
 
     progress = tqdm(total=max_epochs * steps_per_epoch, desc="DDPM Training", unit="step")
@@ -1285,7 +1348,7 @@ def train_ddpm(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_final_eval(
-    vae: VAEWrapper,
+    vae: "VAEWrapper | None",
     ldm: TwoStageLDM,
     hparams: dict,
     val_loader: DataLoader,
@@ -1295,32 +1358,34 @@ def compute_final_eval(
     device: torch.device,
     vae_epochs: int,
     ddpm_epochs: int,
+    skip_vae_eval: bool = False,
 ) -> None:
     """
-    Compute and save final eval metrics for both VAE and LDM.
+    Compute and save final eval metrics for VAE and/or LDM.
+    When skip_vae_eval is True, only the LDM eval runs; VAE results
+    are assumed to already exist in the results folder from a prior run.
 
     Args:
-        vae         (VAEWrapper):         trained VAE
-        ldm         (TwoStageLDM):        trained LDM
-        hparams     (dict):               LDM arch hparams
-        val_loader  (DataLoader):         validation data loader
-        data_config (dict):               dataset config
-        args        (argparse.Namespace): CLI args
-        results_dir (str):                output directory
-        device      (torch.device):       target device
-        vae_epochs  (int):                VAE epochs trained
-        ddpm_epochs (int):                DDPM epochs trained
+        vae           (VAEWrapper | None):  trained VAE, or None if skipped
+        ldm           (TwoStageLDM):        trained LDM
+        hparams       (dict):               LDM arch hparams
+        val_loader    (DataLoader):         validation data loader
+        data_config   (dict):               dataset config
+        args          (argparse.Namespace): CLI args
+        results_dir   (str):                output directory
+        device        (torch.device):       target device
+        vae_epochs    (int):                VAE epochs trained (0 if skipped)
+        ddpm_epochs   (int):                DDPM epochs trained
+        skip_vae_eval (bool):               if True, skip VAE eval entirely
     Returns:
         None
     """
-    import numpy as np
+    import torchvision.utils as vutils
 
     channels     = data_config["channels"]
     img_size     = data_config["img_size"]
     dataset_name = data_config.get("dataset", "mnist").lower()
     is_mnist     = dataset_name == "mnist"
-    latent_dim   = hparams["latent_dim"]
-    latent_size  = hparams["latent_size"]
 
     inception = _get_inception(device)
     if is_mnist:
@@ -1332,60 +1397,75 @@ def compute_final_eval(
         _, real_inception_feats, _ = _load_or_compute_real_features(None, inception, device)
         classifier = None
 
-    # ── VAE eval ─────────────────────────────────────────────────────────────
-    print("\n--- VAE Final Eval ---")
-    vae.eval()
-    # Generate samples by sampling z ~ N(0,I) and decoding
-    print(f"  Generating {args.n_fid_samples} VAE samples …")
-    all_vae_samples = []
-    remaining = args.n_fid_samples
-    with torch.no_grad():
-        while remaining > 0:
-            n = min(args.fid_batch_size, remaining)
-            z = torch.randn(n, latent_dim, latent_size, latent_size, device=device)
-            imgs = (vae._decode_latent(z) * 0.5 + 0.5).clamp(0, 1)
-            all_vae_samples.append(imgs.cpu())
-            remaining -= n
-    vae_tensor = torch.cat(all_vae_samples, dim=0)
+    # ── VAE eval (skipped when reusing a pre-trained VAE) ────────────────────
+    vae_recon_mse     = None
+    vae_mnist_fid     = None
+    vae_inception_fid = None
 
-    vae_mnist_fid = None
-    if is_mnist:
-        gen_mnist_feats, gen_preds_vae = _mnist_features(vae_tensor, classifier, device)
-        vae_mnist_fid = float(_fid(real_mnist_feats, gen_mnist_feats))
+    if not skip_vae_eval:
+        print("\n--- VAE Final Eval ---")
+        vae.eval()
+        latent_dim  = hparams["latent_dim"]
+        latent_size = hparams["latent_size"]
+
+        print(f"  Generating {args.n_fid_samples} VAE samples …")
+        all_vae_samples = []
+        remaining = args.n_fid_samples
+        with torch.no_grad():
+            while remaining > 0:
+                n = min(args.fid_batch_size, remaining)
+                z = torch.randn(n, latent_dim, latent_size, latent_size, device=device)
+                imgs = (vae._decode_latent(z) * 0.5 + 0.5).clamp(0, 1)
+                all_vae_samples.append(imgs.cpu())
+                remaining -= n
+        vae_tensor = torch.cat(all_vae_samples, dim=0)
+
+        if is_mnist:
+            gen_mnist_feats, _ = _mnist_features(vae_tensor, classifier, device)
+            vae_mnist_fid = float(_fid(real_mnist_feats, gen_mnist_feats))
+
+        gen_vae_inception = _inception_features(vae_tensor, inception, device)
+        vae_inception_fid = float(_fid(real_inception_feats, gen_vae_inception))
+
+        # Reconstruction MSE on val set
+        total_mse, n_seen = 0.0, 0
+        with torch.no_grad():
+            for batch in val_loader:
+                x = batch[0].to(device)
+                if x.dim() == 2:
+                    x = x.view(x.shape[0], channels, img_size, img_size)
+                x_recon, _, _ = vae(x)
+                x_flat     = x.reshape(x.shape[0], -1).clamp(-1, 1)
+                x_hat_flat = x_recon.reshape(x.shape[0], -1)
+                total_mse += ((x_flat - x_hat_flat) ** 2).sum(dim=-1).sum().item()
+                n_seen    += x.shape[0]
+        vae_recon_mse = total_mse / n_seen
+
+        vutils.save_image(
+            vae_tensor[:64],
+            os.path.join(results_dir, f"{args.run_name}_vae_samples_8x8.png"),
+            nrow=8, padding=2,
+        )
     else:
-        gen_preds_vae = None
-
-    gen_vae_inception = _inception_features(vae_tensor, inception, device)
-    vae_inception_fid = float(_fid(real_inception_feats, gen_vae_inception))
-
-    # VAE reconstruction MSE
-    total_mse, n_seen = 0.0, 0
-    with torch.no_grad():
-        for batch in val_loader:
-            x = batch[0].to(device)
-            if x.dim() == 2:
-                x = x.view(x.shape[0], channels, img_size, img_size)
-            x_recon, _, _ = vae(x)
-            x_flat     = x.reshape(x.shape[0], -1).clamp(-1, 1)
-            x_hat_flat = x_recon.reshape(x.shape[0], -1)
-            total_mse += ((x_flat - x_hat_flat) ** 2).sum(dim=-1).sum().item()
-            n_seen    += x.shape[0]
-    vae_recon_mse = total_mse / n_seen
+        print("\n--- VAE Final Eval SKIPPED (pre-trained VAE reused) ---")
 
     # ── LDM eval ─────────────────────────────────────────────────────────────
     print("\n--- LDM Final Eval ---")
     ldm_fid = compute_fid(ldm, data_config, args.n_fid_samples, args.fid_batch_size, device)
 
-    # ── Print ─────────────────────────────────────────────────────────────────
+    # ── Print summary ─────────────────────────────────────────────────────────
     print(f"\n{'=' * 50}")
     print(f"  Final Eval Summary — {args.run_name}")
     print(f"{'=' * 50}")
-    print(f"  VAE epochs trained   : {vae_epochs}")
+    if skip_vae_eval:
+        print(f"  VAE eval             : skipped (pre-trained)")
+    else:
+        print(f"  VAE epochs trained   : {vae_epochs}")
+        print(f"  VAE recon MSE        : {vae_recon_mse:.6f}")
+        if vae_mnist_fid is not None:
+            print(f"  VAE MNIST FID        : {vae_mnist_fid:.2f}")
+        print(f"  VAE Inception FID    : {vae_inception_fid:.2f}")
     print(f"  DDPM epochs trained  : {ddpm_epochs}")
-    print(f"  VAE recon MSE        : {vae_recon_mse:.6f}")
-    if vae_mnist_fid is not None:
-        print(f"  VAE MNIST FID        : {vae_mnist_fid:.2f}")
-    print(f"  VAE Inception FID    : {vae_inception_fid:.2f}")
     print(f"  LDM Inception FID    : {ldm_fid:.2f}")
     print(f"{'=' * 50}\n")
 
@@ -1404,16 +1484,7 @@ def compute_final_eval(
         json.dump(metrics, f, indent=2)
     print(f"  Eval metrics saved → {metrics_path}")
 
-    # ── Sample grids ──────────────────────────────────────────────────────────
-    import torchvision.utils as vutils
-
-    for tag, sample_tensor in [("vae", vae_tensor), ]:
-        vutils.save_image(
-            sample_tensor[:64],
-            os.path.join(results_dir, f"{args.run_name}_{tag}_samples_8x8.png"),
-            nrow=8, padding=2,
-        )
-
+    # LDM sample grid
     ldm.eval()
     with torch.no_grad():
         ldm_samples = (ldm.p_sample_loop(64) * 0.5 + 0.5).clamp(0, 1)
@@ -1425,18 +1496,55 @@ def compute_final_eval(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# RESULTS FOLDER HELPERS
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Files produced exclusively by Stage 2 — safe to delete on a DDPM-only re-run
+_DDPM_ONLY_FILES = [
+    "_ldm_checkpoint.pt",
+    "_ldm_weights.pt",
+    "_ldm_config.json",
+    "_ddpm_training_curves.png",
+    "_eval_metrics.json",
+    "_ldm_samples_8x8.png",
+]
+
+
+def _clear_ddpm_files(results_dir: str, run_name: str) -> None:
+    """
+    Delete only Stage-2 output files, leaving VAE files intact.
+
+    Args:
+        results_dir (str): results directory
+        run_name    (str): run identifier prefix
+    Returns:
+        None
+    """
+    for suffix in _DDPM_ONLY_FILES:
+        path = os.path.join(results_dir, f"{run_name}{suffix}")
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"  Removed stale DDPM file: {path}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────────────────────────────────────
 
 def run_training(args: argparse.Namespace) -> None:
     """
     Orchestrate two-stage training: VAE → DDPM, then final eval.
+    When --skip_vae is set, loads a pre-trained VAE and runs only Stage 2.
 
     Args:
         args (argparse.Namespace): parsed CLI arguments
     Returns:
         None
     """
+    # Validate skip-VAE args early so we fail fast
+    if args.skip_vae and not args.vae_weights:
+        raise ValueError("--vae_weights must be provided when --skip_vae is set.")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "mps")
     print(f"--- Two-Stage LDM Training: {args.run_name} | mode={args.mode} ---")
 
@@ -1449,27 +1557,45 @@ def run_training(args: argparse.Namespace) -> None:
         subset_frac=args.subset_frac,
         single_class=False,
     )
-    dataloader = DataLoader(dataset,     batch_size=args.batch_size, shuffle=True, drop_last=True)
+    dataloader = DataLoader(dataset,     batch_size=args.batch_size, shuffle=True,  drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
     channels = data_config["channels"]
     img_size = data_config["img_size"]
 
     results_dir = os.path.join(args.results_dir, args.run_name)
-    if os.path.exists(results_dir):
-        import shutil
-        shutil.rmtree(results_dir)
-    os.makedirs(results_dir, exist_ok=True)
+
+    if args.skip_vae:
+        # Folder must already exist from the prior VAE run; only wipe DDPM files
+        if not os.path.exists(results_dir):
+            raise FileNotFoundError(
+                f"Results directory '{results_dir}' not found. "
+                "Run full training first before using --skip_vae."
+            )
+        print(f"  --skip_vae: clearing stale DDPM outputs from {results_dir}")
+        _clear_ddpm_files(results_dir, args.run_name)
+    else:
+        # Full run: wipe and recreate the entire results folder
+        if os.path.exists(results_dir):
+            import shutil
+            shutil.rmtree(results_dir)
+        os.makedirs(results_dir, exist_ok=True)
 
     # ── Stage 1: VAE ──────────────────────────────────────────────────────────
-    vae = train_vae(
-        args, hparams, dataloader, val_loader,
-        channels, img_size, results_dir, device,
-    )
-    # How many VAE epochs were actually run (may differ from args.vae_epochs in convergence mode)
-    vae_ckpt_path = os.path.join(results_dir, f"{args.run_name}_vae_checkpoint.pt")
-    vae_ckpt      = torch.load(vae_ckpt_path, map_location=device)
-    vae_epochs_done = vae_ckpt["epoch"]
+    if args.skip_vae:
+        print("\n" + "=" * 60)
+        print("  STAGE 1 — VAE TRAINING SKIPPED (loading pre-trained weights)")
+        print("=" * 60)
+        vae = load_pretrained_vae(args.vae_weights, hparams, channels, img_size, device)
+        vae_epochs_done = 0
+    else:
+        vae = train_vae(
+            args, hparams, dataloader, val_loader,
+            channels, img_size, results_dir, device,
+        )
+        vae_ckpt_path   = os.path.join(results_dir, f"{args.run_name}_vae_checkpoint.pt")
+        vae_ckpt        = torch.load(vae_ckpt_path, map_location=device)
+        vae_epochs_done = vae_ckpt["epoch"]
 
     # ── Stage 2: DDPM ─────────────────────────────────────────────────────────
     ldm = train_ddpm(
@@ -1478,14 +1604,23 @@ def run_training(args: argparse.Namespace) -> None:
         vae_epochs_done=vae_epochs_done,
     )
 
-    ldm_ckpt_path = os.path.join(results_dir, f"{args.run_name}_ldm_checkpoint.pt")
-    ldm_ckpt      = torch.load(ldm_ckpt_path, map_location=device)
+    ldm_ckpt_path    = os.path.join(results_dir, f"{args.run_name}_ldm_checkpoint.pt")
+    ldm_ckpt         = torch.load(ldm_ckpt_path, map_location=device)
     ddpm_epochs_done = ldm_ckpt["epoch"]
 
     # ── Final eval ────────────────────────────────────────────────────────────
     compute_final_eval(
-        vae, ldm, hparams, val_loader, data_config, args,
-        results_dir, device, vae_epochs_done, ddpm_epochs_done,
+        vae=vae if not args.skip_vae else None,
+        ldm=ldm,
+        hparams=hparams,
+        val_loader=val_loader,
+        data_config=data_config,
+        args=args,
+        results_dir=results_dir,
+        device=device,
+        vae_epochs=vae_epochs_done,
+        ddpm_epochs=ddpm_epochs_done,
+        skip_vae_eval=args.skip_vae,
     )
 
 

@@ -19,7 +19,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 python /zhome/66/4/156534/Master_Thesis/src/scripts/two-stage-latent-training.py\
     --run_name two_stage_convergence \
     --mode convergence \
-    --ldm_config src/train_results/latent-diffusion-1/metadata/config.json \
+    --ldm_config src/train_results/latent-diffusion-4/metadata/config.json \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -30,8 +30,8 @@ python /zhome/66/4/156534/Master_Thesis/src/scripts/two-stage-latent-training.py
     --vae_patience 10 \
     --vae_delta 1e-4 \
     --ddpm_check_every 5 \
-    --ddpm_patience 20 \
-    --ddpm_delta 1e-4 \
+    --ddpm_patience 30 \
+    --ddpm_delta 7e-5 \
     --ddpm_max_epochs 2000 \
     --T 1000 \
     --beta_1 1e-4 \
