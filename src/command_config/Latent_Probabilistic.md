@@ -73,11 +73,11 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
 
 
 
-python main.py \
-    --run_name Latent-Diffusion-new \
-    --epochs 5 \
+CUDA_VISIBLE_DEVICES=1 python main.py \
+    --run_name latent-probability-3D-data \
+    --epochs 100 \
     --batch_size 64 \
-    --subset_frac 0.05 \
+    --subset_frac 1.0 \
     --n_fid_samples 16 \
     --model latent_inr_diffusion \
     --dataset shapenet_voxels \
@@ -88,22 +88,22 @@ python main.py \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
-    --inr_hidden_dim 32 \
+    --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --latent_dim 8 \
+    --latent_dim 32 \
     --latent_size 8 \
-    --latent_patch_size 2 \
-    --latent_enc_hidden_dim 8\
-    --pred_d_model 32 \
-    --pred_n_heads 2 \
-    --pred_n_layers 2 \
-    --pred_d_ff 128 \
-    --pred_t_embed_dim 32 \
-    --dec_trans_dim 32 \
-    --dec_trans_n_head 2 \
-    --dec_trans_head_dim 8 \
-    --dec_trans_ff_dim 128 \
-    --dec_trans_enc_depth 1 \
-    --dec_trans_dec_depth 1 \
+    --latent_patch_size 1 \
+    --latent_enc_hidden_dim 64\
+    --pred_d_model 128 \
+    --pred_n_heads 8 \
+    --pred_n_layers 6 \
+    --pred_d_ff 1024 \
+    --pred_t_embed_dim 128 \
+    --dec_trans_dim 128 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 32 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 4 \
+    --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale

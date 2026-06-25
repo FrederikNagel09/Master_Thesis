@@ -1316,10 +1316,12 @@ def plot_reconstruction_progression(
 
     # ── Convert to plottable format ───────────────────────────────────────────
     if is_3d:
-        # Both x and x_recon are (B, 1, D, H, W) — squeeze channel for marching cubes
-        orig_grids = x.squeeze(1).detach().cpu().numpy()  # (n_pairs, D, H, W)
-        recon_grids = x_recon.squeeze(1).detach().cpu().numpy()  # (n_pairs, D, H, W)
-        new_row_data = {  # noqa: F841
+        # Use the same conversion logic as the sampler
+        orig_grids = _samples_to_voxel_grids(x, channels, img_size)
+        recon_grids = _samples_to_voxel_grids(x_recon, channels, img_size)
+        
+        # Now these are ready to be saved as the 'correct' format
+        new_row_data = { 
             "orig": orig_grids,
             "recon": recon_grids,
         }
