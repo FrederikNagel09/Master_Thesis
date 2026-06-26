@@ -1,9 +1,9 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name latent-diffusion-4 \
-    --epochs 15 \
+    --run_name TESTING-latent-diffusion-MNIST \
+    --epochs 5 \
     --batch_size 128 \
-    --subset_frac 1.0 \
-    --n_fid_samples 4096 \
+    --subset_frac 0.1 \
+    --n_fid_samples 128 \
     --model latent_inr_diffusion \
     --dataset mnist \
     --lr 1e-4 \
@@ -34,51 +34,12 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --dec_trans_update_strategy scale
 
 
-
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name Latent-Diffusion-new \
-    --epochs 15 \
-    --batch_size 128 \
-    --subset_frac 1.0 \
-    --n_fid_samples 16 \
-    --model latent_inr_diffusion \
-    --dataset mnist \
-    --lr 1e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --log_every_n_steps 1 \
-    --T 1000 \
-    --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --inr_hidden_dim 128 \
-    --inr_layers 3 \
-    --latent_dim 16 \
-    --latent_size 16 \
-    --latent_patch_size 2 \
-    --latent_enc_hidden_dim 20\
-    --pred_d_model 128 \
-    --pred_n_heads 8 \
-    --pred_n_layers 6 \
-    --pred_d_ff 1024 \
-    --pred_t_embed_dim 128 \
-    --dec_trans_dim 128 \
-    --dec_trans_n_head 8 \
-    --dec_trans_head_dim 32 \
-    --dec_trans_ff_dim 1024 \
-    --dec_trans_enc_depth 4 \
-    --dec_trans_dec_depth 4 \
-    --dec_trans_n_groups 32 \
-    --dec_trans_update_strategy scale
-
-
-
-
-CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name latent-probability-3D-data \
-    --epochs 10 \
+    --run_name TESTING-latent-diffusion-VOXEL \
+    --epochs 5 \
     --batch_size 64 \
-    --subset_frac 0.1 \
-    --n_fid_samples 16 \
+    --subset_frac 0.2 \
+    --n_fid_samples 128 \
     --model latent_inr_diffusion \
     --dataset shapenet_voxels \
     --lr 1e-4 \
@@ -90,20 +51,20 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 3 \
-    --latent_dim 8 \
+    --latent_dim 64 \
     --latent_size 8 \
-    --latent_patch_size 1 \
-    --latent_enc_hidden_dim 16\
-    --pred_d_model 64 \
-    --pred_n_heads 4 \
-    --pred_n_layers 3 \
-    --pred_d_ff 256 \
-    --pred_t_embed_dim 64 \
-    --dec_trans_dim 64 \
-    --dec_trans_n_head 4 \
-    --dec_trans_head_dim 8 \
-    --dec_trans_ff_dim 256 \
-    --dec_trans_enc_depth 2 \
-    --dec_trans_dec_depth 2 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 32\
+    --pred_d_model 128 \
+    --pred_n_heads 8 \
+    --pred_n_layers 6 \
+    --pred_d_ff 1024 \
+    --pred_t_embed_dim 128 \
+    --dec_trans_dim 128 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 32 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 4 \
+    --dec_trans_dec_depth 4 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale

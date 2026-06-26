@@ -346,10 +346,10 @@ class WeightDiffusion(nn.Module):
             batch_size = x.shape[0]
 
             # --------- 1. Input Shape Flattening ---------
-            x_flat = x.reshape(batch_size, -1) if x.dim() > 2 else x
+            #x_flat = x.reshape(batch_size, -1) if x.dim() > 2 else x
 
             # --------- 2. Encode Once Per Batch ---------
-            mean, logvar = self.weight_encoder(x_flat)
+            mean, logvar = self.weight_encoder(x)
             theta_prime = self.weight_encoder._reparameterize(mean, logvar)
             l_prior = self._l_entropy(logvar)  # (B,)
 
@@ -360,7 +360,7 @@ class WeightDiffusion(nn.Module):
 
             # --------- 4. Compute Non-Diffusion Core Losses ---------
             theta = self.weight_encoder.decode_modulations(theta_prime)
-            l_rec = self._l_rec(x_flat, theta, debug=False)  # (B,)
+            l_rec = self._l_rec(x, theta, debug=False)  # (B,)
 
             # --------- 5. Integrate Diffusion Loss Over All T ---------
             l_diff_sum = torch.zeros(batch_size, device=device)  # (B,)
@@ -584,7 +584,8 @@ class WeightDiffusion(nn.Module):
 
         # Coordinate grid
         if coords is None:  # noqa: SIM108
-            coord = self.trans_coord.unsqueeze(0).expand(B, -1, -1, -1)  # (B, H, W, 2)
+            expand_dims = [B] + [-1] * (self.trans_coord.dim())
+            coord = self.trans_coord.unsqueeze(0).expand(*expand_dims)
         else:
             coord = coords
 

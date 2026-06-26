@@ -444,6 +444,8 @@ def train_vae(
             with torch.no_grad():
                 for batch in val_loader:
                     x = batch[0].to(device)
+                    if not is_3d and x.dim() == 2:
+                        x = x.view(x.shape[0], channels, img_size, img_size)
                     x_recon, mu, logvar = model(x)
                     x_hat_flat = x_recon.reshape(x_recon.shape[0], -1)
                     x_flat = x.reshape(x.shape[0], -1)
@@ -599,7 +601,7 @@ def train_ddpm(
         print(f"  [DDPM epoch {epoch}] Train MSE: {epoch_loss:.5f}")
 
         if epoch % args.ddpm_check_every == 0:
-            val_loss = compute_ddpm_val_loss(ldm, val_cache, device)
+            val_loss = compute_ddpm_val_loss(ldm, val_cache, device, channels=channels, img_size=img_size, is_3d=is_3d)
             history["val_loss"].append(val_loss)
             history["val_epochs"].append(epoch)
             print(f"  [DDPM val @ epoch {epoch}] Val MSE: {val_loss:.5f}")

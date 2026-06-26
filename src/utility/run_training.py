@@ -200,7 +200,7 @@ def run_training(
 
     def _sample_fn(model, step, device, batch=None):
         epoch = step // len(data_loader_train)
-
+        
         plot_sample_progression(
             model,
             args.model,
@@ -211,7 +211,7 @@ def run_training(
             filename=progression_filename,
             collect_snapshots=True,
         )
-
+        
         if batch is not None:
             if args.model in ("ndm"):
                 plot_fphi_progression(
@@ -225,6 +225,7 @@ def run_training(
                     model_name=args.model,
                 )
             elif args.model in ("latent_inr_diffusion"):
+                
                 plot_reconstruction_progression(
                     model,
                     batch,
@@ -366,9 +367,9 @@ def run_training(
 
     print("\n  Training complete...")
     print("  Generating final sample grid …")
-    # plot_final_samples(
-    # model, args.model, end_epoch, run_dir, device, data_config, n_fid_samples=args.n_fid_samples, val_loader=data_loader_val
-    # )
+    plot_final_samples(
+        model, args.model, end_epoch, run_dir, device, data_config, n_fid_samples=args.n_fid_samples, val_loader=data_loader_val
+    )
     print("Final sample grid saved to training directory.")
 
     # ── 5. Save ───────────────────────────────────────────────────────────────

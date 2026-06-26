@@ -34,7 +34,7 @@ def build_encoder_decoder(
     )
 
     if is_3d:
-        from models.latent_diffusion.modules.LatentEncoder3D import Conv3DEncoder
+        from src.models.latent_diffusion.modules.LatentEncoder3D import Conv3DEncoder
 
         encoder = Conv3DEncoder(
             in_channels=channels,

@@ -388,11 +388,16 @@ def plot_final_samples(
     )
     from src.utility.metrics_util import _fid
 
+    import json
+    import torch
+    from src.utility.voxel_metrics import compute_mmd_cov
+
     os.makedirs(run_dir, exist_ok=True)
+    is_3d = data_config.get("is_3d", False)
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
 
     dataset = data_config.get("dataset", "mnist").lower()
-    channels = data_config["channels"]
-    img_size = data_config["img_size"]  # noqa: F841
     is_mnist = dataset == "mnist"
 
     # ── Grid samples (for display) ────────────────────────────────────────────
@@ -401,58 +406,78 @@ def plot_final_samples(
         model, model_type, n_side * n_side, device, data_config, debug=debug
     )
 
-    # ── FID samples ───────────────────────────────────────────────────────────
-    print(f"  Computing FID ({n_fid_samples} samples) …")
-    fid_batch_size = 1024
-    fid_batches = []
+    # ── Metrics (FID for 2D, MMD/COV for 3D) ───────────────────────────────────
+    if is_3d:
+        print(f"  Generating {n_fid_samples} 3D samples for MMD/COV …")
+        all_samples = []
+        for start in range(0, n_fid_samples, 64):
+            batch_n = min(64, n_fid_samples - start)
+            batch, _ = _model_to_grid(model, model_type, batch_n, device, data_config, debug=debug)
+            all_samples.append(torch.from_numpy(batch))
+        
+        generated = torch.cat(all_samples, dim=0) # (N, D, H, W)
+        
+        # Get reference set from val_loader
+        ref_batches = []
+        for batch in val_loader:
+            ref_batches.append(batch[0])
 
-    for start in range(0, n_fid_samples, fid_batch_size):
-        print(
-            f"    Sampling FID batch {start} to {min(start + fid_batch_size, n_fid_samples)} …"
-        )
-        batch_n = min(fid_batch_size, n_fid_samples - start)
-        batch, _ = _model_to_grid(
-            model, model_type, batch_n, device, data_config, debug=debug
-        )
-        fid_batches.append(batch)
-
-    fid_grid = np.concatenate(
-        fid_batches, axis=0
-    )  # (n_fid_samples, H, W) or (n_fid_samples, H, W, C)
-
-    # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1]
-    if channels == 1:
-        fid_tensor = torch.from_numpy(fid_grid).unsqueeze(1).float()
+        reference = torch.cat(ref_batches, dim=0)
+        
+        mmd, cov = compute_mmd_cov(generated, reference)
+        print(f"  MMD: {mmd:.4f} | COV: {cov:.4f}")
     else:
-        fid_tensor = torch.from_numpy(fid_grid).permute(0, 3, 1, 2).float()
+        print(f"  Computing FID ({n_fid_samples} samples) …")
+        fid_batch_size = 1024
+        fid_batches = []
 
-    inception = _get_inception(device)
+        for start in range(0, n_fid_samples, fid_batch_size):
+            print(
+                f"    Sampling FID batch {start} to {min(start + fid_batch_size, n_fid_samples)} …"
+            )
+            batch_n = min(fid_batch_size, n_fid_samples - start)
+            batch, _ = _model_to_grid(
+                model, model_type, batch_n, device, data_config, debug=debug
+            )
+            fid_batches.append(batch)
 
-    if is_mnist:
-        classifier = _load_classifier(device)
-        real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(
-            classifier, inception, device
-        )
-        gen_mnist_feats, gen_preds = _mnist_features(fid_tensor, classifier, device)
-        mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
-    else:
-        raise NotImplementedError(
-            "CIFAR-10 real Inception features cache not yet wired into plot_final_samples. "
-            "Add a CIFAR-10 equivalent of _load_or_compute_real_features."
-        )
+        fid_grid = np.concatenate(
+            fid_batches, axis=0
+        )  # (n_fid_samples, H, W) or (n_fid_samples, H, W, C)
 
-    gen_inception_feats = _inception_features(fid_tensor, inception, device)
-    inception_fid = _fid(real_inception_feats, gen_inception_feats)
+        # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1]
+        if channels == 1:
+            fid_tensor = torch.from_numpy(fid_grid).unsqueeze(1).float()
+        else:
+            fid_tensor = torch.from_numpy(fid_grid).permute(0, 3, 1, 2).float()
 
-    # ── Uniformity (normalized entropy of predicted class distribution) ───────
-    print("  Computing class uniformity …")
-    predicted_classes = torch.from_numpy(gen_preds)
-    n_classes = 10
-    class_counts = torch.bincount(predicted_classes, minlength=n_classes).float()
-    class_probs = class_counts / class_counts.sum()
-    entropy = -(class_probs * (class_probs + 1e-8).log()).sum()
-    uniformity_score = float(entropy / np.log(n_classes))
-    class_breakdown = {str(i): int(class_counts[i].item()) for i in range(n_classes)}
+        inception = _get_inception(device)
+
+        if is_mnist:
+            classifier = _load_classifier(device)
+            real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(
+                classifier, inception, device
+            )
+            gen_mnist_feats, gen_preds = _mnist_features(fid_tensor, classifier, device)
+            mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
+        else:
+            raise NotImplementedError(
+                "CIFAR-10 real Inception features cache not yet wired into plot_final_samples. "
+                "Add a CIFAR-10 equivalent of _load_or_compute_real_features."
+            )
+
+        gen_inception_feats = _inception_features(fid_tensor, inception, device)
+        inception_fid = _fid(real_inception_feats, gen_inception_feats)
+
+        # ── Uniformity (normalized entropy of predicted class distribution) ───────
+        print("  Computing class uniformity …")
+        predicted_classes = torch.from_numpy(gen_preds)
+        n_classes = 10
+        class_counts = torch.bincount(predicted_classes, minlength=n_classes).float()
+        class_probs = class_counts / class_counts.sum()
+        entropy = -(class_probs * (class_probs + 1e-8).log()).sum()
+        uniformity_score = float(entropy / np.log(n_classes))
+        class_breakdown = {str(i): int(class_counts[i].item()) for i in range(n_classes)}
 
     # ── Reconstruction loss (optional) ────────────────────────────────────────
     rec_loss = None
@@ -466,51 +491,47 @@ def plot_final_samples(
         print("  Computing full ELBO over validation set …")
         elbo_val = model.compute_full_elbo(val_loader)
 
-    # ── Print summary ─────────────────────────────────────────────────────────
-    print(f"\n{'=' * 45}")
-    print(f"  Eval Summary  —  epoch {epoch}")
-    print(f"{'=' * 45}")
-    print(
-        f"  Rec Loss      : {rec_loss:.4f}"
-        if rec_loss is not None
-        else "  Rec Loss      : None"
-    )
-    print(
-        f"  ELBO          : {elbo_val:.4f}"
-        if elbo_val is not None
-        else "  ELBO          : None"
-    )
-    print(f"  MNIST FID     : {mnist_fid:.2f}")
-    print(f"  Inception FID : {inception_fid:.2f}")
-    print(f"  Uniformity    : {uniformity_score:.4f}  (0=collapsed, 1=uniform)")
-    print(f"{'=' * 45}\n")
+    if is_3d:
+        metrics = {
+            "epoch": epoch,
+            "rec_loss": rec_loss,
+            "elbo": elbo_val,
+            "mmd": float(mmd),
+            "cov": float(cov),
+        }
+    else:
+        metrics = {
+            "epoch": epoch,
+            "rec_loss": rec_loss,
+            "elbo": elbo_val,
+            "mnist_fid": mnist_fid,
+            "inception_fid": inception_fid,
+            "uniformity_score": uniformity_score,
+            "class_breakdown": class_breakdown,
+        }
 
-    # ── Save metrics JSON ─────────────────────────────────────────────────────
-    metrics = {
-        "epoch": epoch,
-        "rec_loss": rec_loss,
-        "elbo": elbo_val,
-        "mnist_fid": mnist_fid,
-        "inception_fid": inception_fid,
-        "uniformity_score": uniformity_score,
-        "class_breakdown": class_breakdown,
-    }
     metrics_path = os.path.join(run_dir, f"eval_metrics_ep{epoch}.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"  Metrics saved → {metrics_path}")
 
     # ── Main grid figure (no text) ────────────────────────────────────────────
-    fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5))
-    for i, ax in enumerate(axes.flatten()):
-        if channels == 1:
-            ax.imshow(grid[i], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
-        else:
-            ax.imshow(grid[i], vmin=0, vmax=1, interpolation="nearest")
-        ax.axis("off")
+    if is_3d:
+        fig = plt.figure(figsize=(n_side * 2, n_side * 2))
+        for i in range(n_side * n_side):
+            ax = fig.add_subplot(n_side, n_side, i + 1, projection='3d')
+            _render_mesh_on_ax(ax, grid[i], azim=45) # Or logic to vary azim
+            ax.set_axis_off()
+    else:
+        fig, axes = plt.subplots(n_side, n_side, figsize=(n_side * 1.5, n_side * 1.5))
+        for i, ax in enumerate(axes.flatten()):
+            ax.imshow(grid[i] if channels != 1 else grid[i], cmap="gray", vmin=0, vmax=1)
+            ax.axis("off")
+
+
     plt.subplots_adjust(hspace=0.02, wspace=0.02)
     save_path = os.path.join(run_dir, f"final_samples_ep{epoch}.png")
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    fig.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"  Final samples saved → {save_path}")
 
@@ -520,24 +541,33 @@ def plot_final_samples(
     row_sizes = [10, 8, 6]
     row_names = ["10", "8", "6"]
     offset = 0
-    for n_row, name in zip(row_sizes, row_names):  # noqa: B905
+    for n_row, name in zip(row_sizes, row_names):
         indices = all_indices[offset : offset + n_row]
         offset += n_row
 
-        fig, axes = plt.subplots(1, n_row, figsize=(n_row * 1.5, 1.5))
-        for ax, idx in zip(axes, indices):  # noqa: B905
-            if channels == 1:
-                ax.imshow(
-                    grid[idx], cmap="gray", vmin=0, vmax=1, interpolation="nearest"
-                )
+        # Adjust figsize for 3D if needed
+        w_factor = 1.8 if is_3d else 1.5
+        fig = plt.figure(figsize=(n_row * w_factor, w_factor))
+        
+        for i, idx in enumerate(indices):
+            if is_3d:
+                # Add 3D subplot for each item in the row
+                ax = fig.add_subplot(1, n_row, i + 1, projection='3d')
+                _render_mesh_on_ax(ax, grid[idx], azim=45)
+                ax.set_axis_off()
             else:
-                ax.imshow(grid[idx], vmin=0, vmax=1, interpolation="nearest")
-            ax.axis("off")
-        plt.subplots_adjust(hspace=0.02, wspace=0.02)
+                # Keep your existing 2D logic
+                ax = fig.add_subplot(1, n_row, i + 1)
+                if channels == 1:
+                    ax.imshow(grid[idx], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                else:
+                    ax.imshow(grid[idx], vmin=0, vmax=1, interpolation="nearest")
+                ax.axis("off")
+        
+        plt.subplots_adjust(wspace=0.05, hspace=0.05)
         row_path = os.path.join(run_dir, f"samples_row{name}_ep{epoch}.png")
         fig.savefig(row_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
-        print(f"  Row-{name} samples saved → {row_path}")
 
 
 def plot_sample_progression(

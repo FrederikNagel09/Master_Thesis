@@ -205,6 +205,8 @@ def compute_final_eval(
         with torch.no_grad():
             for batch in val_loader:
                 x = batch[0].to(device)
+                if not is_3d and x.dim() == 2:
+                    x = x.view(x.shape[0], channels, img_size, img_size)
                 x_recon, _, _ = vae(x)
                 x_flat = x.reshape(x.shape[0], -1)
                 x_hat_flat = x_recon.reshape(x.shape[0], -1)
@@ -372,6 +374,9 @@ def compute_ddpm_val_loss(
     val_cache: list[tuple[torch.Tensor, torch.Tensor]],
     device: torch.device,
     noise_seed: int = 42,
+    channels: int = 1,
+    img_size: int = 28,
+    is_3d: bool = False,
 ) -> float:
     """
     Compute MSE between predicted and actual noise on the validation set.
@@ -394,7 +399,11 @@ def compute_ddpm_val_loss(
     for x_cpu, t_cpu in val_cache:
         x = x_cpu.to(device)
         t = t_cpu.to(device)
-
+        if not is_3d and x.dim() == 2:
+            print(f"  Reshaping x from {x.shape} to (B, C, H, W) for 2D data.")
+            print(f"  Channels: {channels}, Image Size: {img_size}")
+            x = x.view(x.shape[0], channels, img_size, img_size)
+            print(f"  New shape: {x.shape}")
         mu, logvar = ldm.latent_encoder(x)
         z0 = ldm.latent_encoder.reparameterize(mu, logvar)
 
