@@ -50,7 +50,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 
-warnings.filterwarnings("ignore", message="The operator 'aten::im2col' is not currently supported on the MPS backend")
+warnings.filterwarnings(
+    "ignore",
+    message="The operator 'aten::im2col' is not currently supported on the MPS backend",
+)
 
 
 HEADLINES_VAE = ["(a) Originals", "(b) VAE-INR Reconstructions"]
@@ -71,9 +74,17 @@ HEADLINES_WEIGHT = [
 
 HEADLINE_VAE_SAMPLES = "VAE-INR Samples"
 
-HEADLINES_LATENT_SAMPLES = ["(a) Latent Deterministic Samples", "(b) Latent Probabilistic Samples", "(c) Latent Two-Stage Samples"]
+HEADLINES_LATENT_SAMPLES = [
+    "(a) Latent Deterministic Samples",
+    "(b) Latent Probabilistic Samples",
+    "(c) Latent Two-Stage Samples",
+]
 
-HEADLINES_WEIGHT_SAMPLES = ["(a) Weight Deterministic Samples", "(b) Weight Probabilistic Samples", "(c) Weight Two-Stage Samples"]
+HEADLINES_WEIGHT_SAMPLES = [
+    "(a) Weight Deterministic Samples",
+    "(b) Weight Probabilistic Samples",
+    "(c) Weight Two-Stage Samples",
+]
 
 NAMES = ["Deterministic", "Probabilistic", "Two-Stage"]
 
@@ -117,7 +128,9 @@ def plot_vae_sample_grid(
 
     for p_idx in range(3):
         # Inner 5x5 grid space layout
-        inner_gs = gridspec.GridSpecFromSubplotSpec(GRID_SIDE, GRID_SIDE, subplot_spec=outer_gs[p_idx], wspace=0.0, hspace=0.0)
+        inner_gs = gridspec.GridSpecFromSubplotSpec(
+            GRID_SIDE, GRID_SIDE, subplot_spec=outer_gs[p_idx], wspace=0.0, hspace=0.0
+        )
 
         for idx in range(N_GRID):
             r = idx // GRID_SIDE
@@ -126,15 +139,46 @@ def plot_vae_sample_grid(
             img = panel_imgs[p_idx][idx]
 
             if channels == 1:
-                ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+                ax.imshow(
+                    img,
+                    cmap="gray",
+                    vmin=0,
+                    vmax=1,
+                    interpolation="nearest",
+                    aspect="auto",
+                )
             else:
                 ax.imshow(img, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
             ax.axis("off")
 
     # Centered headline labels adjusted snugly beneath the 5x5 blocks
-    fig.text(0.24, 0.08, f"{base_res}x{base_res}", ha="center", va="center", fontsize=11, fontweight="bold")
-    fig.text(0.515, 0.08, f"{input_scale}x{input_scale}", ha="center", va="center", fontsize=11, fontweight="bold")
-    fig.text(0.79, 0.08, f"{input_scale*2}x{input_scale*2}", ha="center", va="center", fontsize=11, fontweight="bold")
+    fig.text(
+        0.24,
+        0.08,
+        f"{base_res}x{base_res}",
+        ha="center",
+        va="center",
+        fontsize=11,
+        fontweight="bold",
+    )
+    fig.text(
+        0.515,
+        0.08,
+        f"{input_scale}x{input_scale}",
+        ha="center",
+        va="center",
+        fontsize=11,
+        fontweight="bold",
+    )
+    fig.text(
+        0.79,
+        0.08,
+        f"{input_scale*2}x{input_scale*2}",
+        ha="center",
+        va="center",
+        fontsize=11,
+        fontweight="bold",
+    )
 
     fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.0)
     plt.close(fig)
@@ -172,7 +216,9 @@ def plot_multi_sample_grid(
     outer_gs = gridspec.GridSpec(1, 3, figure=fig, wspace=0.18)
 
     for p_idx in range(3):
-        inner_gs = gridspec.GridSpecFromSubplotSpec(GRID_SIDE, GRID_SIDE, subplot_spec=outer_gs[p_idx], wspace=0.0, hspace=0.0)
+        inner_gs = gridspec.GridSpecFromSubplotSpec(
+            GRID_SIDE, GRID_SIDE, subplot_spec=outer_gs[p_idx], wspace=0.0, hspace=0.0
+        )
 
         for idx in range(N_GRID):
             r = idx // GRID_SIDE
@@ -181,14 +227,45 @@ def plot_multi_sample_grid(
             img = panel_imgs[p_idx][idx]
 
             if channels == 1:
-                ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+                ax.imshow(
+                    img,
+                    cmap="gray",
+                    vmin=0,
+                    vmax=1,
+                    interpolation="nearest",
+                    aspect="auto",
+                )
             else:
                 ax.imshow(img, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
             ax.axis("off")
 
-    fig.text(0.24, 0.08, f"{base_res}x{base_res}", ha="center", va="center", fontsize=11, fontweight="bold")
-    fig.text(0.515, 0.08, f"{input_scale}x{input_scale}", ha="center", va="center", fontsize=11, fontweight="bold")
-    fig.text(0.79, 0.08, f"{input_scale*2}x{input_scale*2}", ha="center", va="center", fontsize=11, fontweight="bold")
+    fig.text(
+        0.24,
+        0.08,
+        f"{base_res}x{base_res}",
+        ha="center",
+        va="center",
+        fontsize=11,
+        fontweight="bold",
+    )
+    fig.text(
+        0.515,
+        0.08,
+        f"{input_scale}x{input_scale}",
+        ha="center",
+        va="center",
+        fontsize=11,
+        fontweight="bold",
+    )
+    fig.text(
+        0.79,
+        0.08,
+        f"{input_scale*2}x{input_scale*2}",
+        ha="center",
+        va="center",
+        fontsize=11,
+        fontweight="bold",
+    )
 
     fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.0)
     plt.close(fig)
@@ -236,7 +313,9 @@ def plot_multi_training_curves(
 
         all_plotted_values = []
 
-        for idx, (cfg, history) in enumerate(zip(configs, loaded_histories, strict=False)):
+        for idx, (cfg, history) in enumerate(
+            zip(configs, loaded_histories, strict=False)
+        ):
             if history is None:
                 continue
 
@@ -248,7 +327,13 @@ def plot_multi_training_curves(
                 plot_steps = steps[::plot_every_n]
                 downsampled_data = data[::plot_every_n]
 
-                ax.plot(plot_steps, downsampled_data, label=run_label, linewidth=1.0, alpha=0.85)
+                ax.plot(
+                    plot_steps,
+                    downsampled_data,
+                    label=run_label,
+                    linewidth=1.0,
+                    alpha=0.85,
+                )
                 all_plotted_values.extend(downsampled_data)
 
         # Calculate dynamic y-axis minimum if data exists
@@ -292,18 +377,38 @@ def plot_multi_sample_rows(
     N_SAMPLES = 10  # noqa: N806
     n_variants = len(models)
 
-    fig, axes = plt.subplots(n_variants, N_SAMPLES, figsize=(N_SAMPLES * 1.5, n_variants * 1.5), gridspec_kw={"wspace": 0.0})
+    fig, axes = plt.subplots(
+        n_variants,
+        N_SAMPLES,
+        figsize=(N_SAMPLES * 1.5, n_variants * 1.5),
+        gridspec_kw={"wspace": 0.0},
+    )
     if n_variants == 1:
         axes = np.expand_dims(axes, axis=0)
 
     for r_idx, (model, cfg) in enumerate(zip(models, configs, strict=False)):
-        images = sample_at_scale(model, model_type, N_SAMPLES, scale, device, channels, cfg.get("hparams", cfg))
+        images = sample_at_scale(
+            model,
+            model_type,
+            N_SAMPLES,
+            scale,
+            device,
+            channels,
+            cfg.get("hparams", cfg),
+        )
 
         for c_idx in range(N_SAMPLES):
             ax = axes[r_idx, c_idx]
             img = images[c_idx]
             if channels == 1:
-                ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+                ax.imshow(
+                    img,
+                    cmap="gray",
+                    vmin=0,
+                    vmax=1,
+                    interpolation="nearest",
+                    aspect="auto",
+                )
             else:
                 ax.imshow(img, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
             ax.axis("off")
@@ -319,7 +424,15 @@ def plot_multi_sample_rows(
     # Place text blocks using manual configurations
     for i in range(n_variants):
         y_pos = MANUAL_Y_POSITIONS[i]
-        fig.text(0.5, y_pos, headlines[i], ha="center", va="center", fontsize=10, fontweight="bold")
+        fig.text(
+            0.5,
+            y_pos,
+            headlines[i],
+            ha="center",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+        )
 
     plt.subplots_adjust(hspace=0.4)  # Leave a slight vertical gap for the text lines
     fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.0)
@@ -336,7 +449,9 @@ def plot_multi_recon_vs_interp(
     scale: int,
     device: str,
     channels: int,
-    headlines: list[str],  # Input required: [Headline 1, Headline 2, Headline 3, Headline 4]
+    headlines: list[
+        str
+    ],  # Input required: [Headline 1, Headline 2, Headline 3, Headline 4]
     save_path: str,
 ) -> None:
     """
@@ -368,12 +483,19 @@ def plot_multi_recon_vs_interp(
     x = x.to(device)
 
     # Shared Bilinear Base
-    originals_up = F.interpolate(x.cpu().float(), size=(scale, scale), mode="bilinear", align_corners=False)
+    originals_up = F.interpolate(
+        x.cpu().float(), size=(scale, scale), mode="bilinear", align_corners=False
+    )
     originals_up = (originals_up * 0.5 + 0.5).clamp(0, 1)
     originals_up = _to_numpy_images(originals_up, channels)
 
     # ── Figure Layout & Tightness ──
-    fig, axes = plt.subplots(total_rows, N_IMAGES, figsize=(N_IMAGES * 1.5, total_rows * 1.6 + 0.4), gridspec_kw={"wspace": 0.0})
+    fig, axes = plt.subplots(
+        total_rows,
+        N_IMAGES,
+        figsize=(N_IMAGES * 1.5, total_rows * 1.6 + 0.4),
+        gridspec_kw={"wspace": 0.0},
+    )
     if total_rows == 1:
         axes = np.expand_dims(axes, axis=0)  # Safety reshape
 
@@ -381,9 +503,22 @@ def plot_multi_recon_vs_interp(
     for col in range(N_IMAGES):
         ax = axes[0, col]
         if channels == 1:
-            ax.imshow(originals_up[col], cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+            ax.imshow(
+                originals_up[col],
+                cmap="gray",
+                vmin=0,
+                vmax=1,
+                interpolation="nearest",
+                aspect="auto",
+            )
         else:
-            ax.imshow(originals_up[col], vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+            ax.imshow(
+                originals_up[col],
+                vmin=0,
+                vmax=1,
+                interpolation="nearest",
+                aspect="auto",
+            )
         ax.axis("off")
 
     # Render Subsequent Rows: Model Variants
@@ -392,9 +527,18 @@ def plot_multi_recon_vs_interp(
         for col in range(N_IMAGES):
             ax = axes[r_idx + 1, col]
             if channels == 1:
-                ax.imshow(recons[col], cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+                ax.imshow(
+                    recons[col],
+                    cmap="gray",
+                    vmin=0,
+                    vmax=1,
+                    interpolation="nearest",
+                    aspect="auto",
+                )
             else:
-                ax.imshow(recons[col], vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+                ax.imshow(
+                    recons[col], vmin=0, vmax=1, interpolation="nearest", aspect="auto"
+                )
             ax.axis("off")
 
     # ── MANUAL HEADLINE Y-COORDINATES ─────────────────────────────────────────
@@ -407,16 +551,34 @@ def plot_multi_recon_vs_interp(
     # ───────────────────────────────────────────────────────────────────────────
 
     # Render Row 1 Headline (Bilinear)
-    fig.text(0.5, MANUAL_Y_POSITIONS[0], headlines[0], ha="center", va="center", fontsize=10, fontweight="bold")
+    fig.text(
+        0.5,
+        MANUAL_Y_POSITIONS[0],
+        headlines[0],
+        ha="center",
+        va="center",
+        fontsize=10,
+        fontweight="bold",
+    )
 
     # Render Model Rows Headlines
     for i in range(n_variants):
         headline_idx = i + 1
         y_pos = MANUAL_Y_POSITIONS[headline_idx]
-        fig.text(0.5, y_pos, headlines[headline_idx], ha="center", va="center", fontsize=10, fontweight="bold")
+        fig.text(
+            0.5,
+            y_pos,
+            headlines[headline_idx],
+            ha="center",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+        )
 
     plt.subplots_adjust(hspace=0.5)  # Vertical gap remains for readability
-    fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.0)  # pad_inches removes fig-level borders
+    fig.savefig(
+        save_path, dpi=150, bbox_inches="tight", pad_inches=0.0
+    )  # pad_inches removes fig-level borders
     plt.close(fig)
     print(f"  Tight multi-variant comparison plot saved → {save_path}")
 
@@ -436,13 +598,18 @@ def plot_vae_training_curves(
     The y-axis minimum dynamically adjusts to the lowest value in history per panel.
     """
     if epoch_reached <= 0 or len(history.get("elbo", [])) == 0:
-        print("  [Warning] History empty or epoch_reached is 0. Skipping training curves.")
+        print(
+            "  [Warning] History empty or epoch_reached is 0. Skipping training curves."
+        )
         return
 
     steps_per_epoch = len(history["elbo"]) // epoch_reached
     max_ticks = 10
     tick_step = max(1, epoch_reached // max_ticks)
-    tick_positions = [i * steps_per_epoch // plot_every_n for i in range(0, epoch_reached + 1, tick_step)]
+    tick_positions = [
+        i * steps_per_epoch // plot_every_n
+        for i in range(0, epoch_reached + 1, tick_step)
+    ]
     tick_labels = [str(i) for i in range(0, epoch_reached + 1, tick_step)]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
@@ -458,7 +625,9 @@ def plot_vae_training_curves(
             continue
 
         downsampled = data[::plot_every_n]
-        ax.plot(range(len(downsampled)), downsampled, color=color, linewidth=0.8, alpha=0.85)
+        ax.plot(
+            range(len(downsampled)), downsampled, color=color, linewidth=0.8, alpha=0.85
+        )
 
         # Calculate dynamic y-axis minimum
         min_val = min(downsampled)
@@ -508,16 +677,22 @@ def plot_vae_sample_row(
 
     images = _to_numpy_images(x_hat, channels)
 
-    fig, axes = plt.subplots(1, N_SAMPLES, figsize=(N_SAMPLES * 1.5, 1.5), gridspec_kw={"wspace": 0.0})
+    fig, axes = plt.subplots(
+        1, N_SAMPLES, figsize=(N_SAMPLES * 1.5, 1.5), gridspec_kw={"wspace": 0.0}
+    )
     for ax, img in zip(axes, images, strict=False):
         if channels == 1:
-            ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+            ax.imshow(
+                img, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto"
+            )
         else:
             ax.imshow(img, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
         ax.axis("off")
 
     # Manual placement of the single VAE headline below the row
-    fig.text(0.5, 0.01, headline, ha="center", va="center", fontsize=10, fontweight="bold")
+    fig.text(
+        0.5, 0.01, headline, ha="center", va="center", fontsize=10, fontweight="bold"
+    )
 
     fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.0)
     plt.close(fig)
@@ -561,38 +736,78 @@ def plot_vae_recon_vs_interp(
         x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1)
     recons = _to_numpy_images(x_hat, channels)
 
-    originals_up = F.interpolate(x.cpu().float(), size=(scale, scale), mode="bilinear", align_corners=False)
+    originals_up = F.interpolate(
+        x.cpu().float(), size=(scale, scale), mode="bilinear", align_corners=False
+    )
     originals_up = (originals_up * 0.5 + 0.5).clamp(0, 1)
     originals_up = _to_numpy_images(originals_up, channels)
 
     # ── Figure Layout & Tightness ──
-    fig, axes = plt.subplots(2, N_IMAGES, figsize=(N_IMAGES * 1.5, 3.4), gridspec_kw={"wspace": 0.0})
+    fig, axes = plt.subplots(
+        2, N_IMAGES, figsize=(N_IMAGES * 1.5, 3.4), gridspec_kw={"wspace": 0.0}
+    )
 
     for col in range(N_IMAGES):
         # Top Row
         ax_top = axes[0, col]
         img_top = originals_up[col]
         if channels == 1:
-            ax_top.imshow(img_top, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+            ax_top.imshow(
+                img_top,
+                cmap="gray",
+                vmin=0,
+                vmax=1,
+                interpolation="nearest",
+                aspect="auto",
+            )
         else:
-            ax_top.imshow(img_top, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+            ax_top.imshow(
+                img_top, vmin=0, vmax=1, interpolation="nearest", aspect="auto"
+            )
         ax_top.axis("off")
 
         # Bottom Row
         ax_bot = axes[1, col]
         img_bot = recons[col]
         if channels == 1:
-            ax_bot.imshow(img_bot, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+            ax_bot.imshow(
+                img_bot,
+                cmap="gray",
+                vmin=0,
+                vmax=1,
+                interpolation="nearest",
+                aspect="auto",
+            )
         else:
-            ax_bot.imshow(img_bot, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
+            ax_bot.imshow(
+                img_bot, vmin=0, vmax=1, interpolation="nearest", aspect="auto"
+            )
         ax_bot.axis("off")
 
     # Add headlines positioned below the relevant rows
-    fig.text(0.5, 0.52, headlines[0], ha="center", va="center", fontsize=10, fontweight="bold")
-    fig.text(0.5, 0.04, headlines[1], ha="center", va="center", fontsize=10, fontweight="bold")
+    fig.text(
+        0.5,
+        0.52,
+        headlines[0],
+        ha="center",
+        va="center",
+        fontsize=10,
+        fontweight="bold",
+    )
+    fig.text(
+        0.5,
+        0.04,
+        headlines[1],
+        ha="center",
+        va="center",
+        fontsize=10,
+        fontweight="bold",
+    )
 
     plt.subplots_adjust(hspace=0.4)  # Vertical gap remains for label readability
-    fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.0)  # pad_inches removes fig-level borders
+    fig.savefig(
+        save_path, dpi=150, bbox_inches="tight", pad_inches=0.0
+    )  # pad_inches removes fig-level borders
     plt.close(fig)
     print(f"  Tight VAE comparison plot saved → {save_path}")
 
@@ -600,7 +815,9 @@ def plot_vae_recon_vs_interp(
 # ── Coord grid (mirrors make_coord_grid in the decoder) ───────────────────────
 
 
-def make_coord_grid(shape: tuple[int, ...], range: list | tuple, device=None) -> torch.Tensor:
+def make_coord_grid(
+    shape: tuple[int, ...], range: list | tuple, device=None
+) -> torch.Tensor:
     """
     Build a coordinate grid matching the model's internal convention.
 
@@ -642,8 +859,8 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
     """
     import torch.nn as nn
 
-    from src.models.LatentEncoder import ResNetLatentEncoder
-    from src.models.trans_inr import TransInr
+    from src.models.latent_diffusion.modules.LatentEncoder import ResNetLatentEncoder
+    from src.models.latent_diffusion.modules.trans_inr import TransInr
 
     class VAEWrapper(nn.Module):
         """Thin wrapper combining ResNetLatentEncoder + TransInr decoder."""
@@ -654,11 +871,13 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
             self.decoder = decoder
             self.img_size = img_size
             self.device = device
-            self.register_buffer("coord_grid", make_coord_grid((img_size, img_size), (-1, 1)))
+            self.register_buffer(
+                "coord_grid", make_coord_grid((img_size, img_size), (-1, 1))
+            )
 
         def encode(self, x):
             """Returns (mu, logvar) — mirrors LDM encode() signature for reconstruct_at_scale."""
-            mu, logvar = self.latent_encoder(x)
+            mu, logvar = self.latent_encoder(x)  # noqa: RUF059
             # Return mu as the deterministic latent (no sampling during eval)
             return mu, None, None
 
@@ -770,15 +989,21 @@ def sample_at_scale(
         theta = model.sample_weight(n_samples)  # (B, weight_dim)
         theta = model.weight_encoder.decode_modulations(theta)  # structured params
         # Pass custom coord grid; _inr_decode expects (B, H, W, 2) or (1, H, W, 2)
-        coord_batched = coord.unsqueeze(0).expand(n_samples, -1, -1, -1)  # (B, scale, scale, 2)
+        coord_batched = coord.unsqueeze(0).expand(
+            n_samples, -1, -1, -1
+        )  # (B, scale, scale, 2)
         pixels = model._inr_decode(theta, coords=coord_batched)  # (B, scale*scale)
         x_hat = pixels.reshape(n_samples, channels, scale, scale)
         x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1)
 
     else:
         # VAE: sample z ~ N(0, I) directly then decode via TransInr decoder
-        latent_dim = hparams["latent_dim"] if isinstance(hparams, dict) else hparams.latent_dim
-        latent_size = hparams["latent_size"] if isinstance(hparams, dict) else hparams.latent_size
+        latent_dim = (
+            hparams["latent_dim"] if isinstance(hparams, dict) else hparams.latent_dim
+        )
+        latent_size = (
+            hparams["latent_size"] if isinstance(hparams, dict) else hparams.latent_size
+        )
         z = torch.randn(n_samples, latent_dim, latent_size, latent_size, device=device)
         x_hat = model.decoder(z, coord)  # (B, C, scale, scale)
         x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1)
@@ -822,7 +1047,9 @@ def reconstruct_at_scale(
         # WeightDiffusion encodes to flat weight vectors, decodes via SIREN
         B = x.shape[0]  # noqa: N806
         theta_prime_raw, _, _ = model.encode(x)  # (B, weight_dim)
-        theta = model.weight_encoder.decode_modulations(theta_prime_raw)  # structured params
+        theta = model.weight_encoder.decode_modulations(
+            theta_prime_raw
+        )  # structured params
         coord_batched = coord.unsqueeze(0).expand(B, -1, -1, -1)  # (B, scale, scale, 2)
         pixels = model._inr_decode(theta, coords=coord_batched)  # (B, scale*scale)
         x_hat = pixels.reshape(B, channels, scale, scale)
@@ -853,7 +1080,10 @@ def _extract_run_name(config_path: str) -> str:
         idx = parts.index("metadata")
         return parts[idx - 1]
     except (ValueError, IndexError):
-        raise ValueError(f"Could not extract run name from: {config_path}\n" "Expected: .../<run_name>/metadata/config.json")  # noqa: B904
+        raise ValueError(
+            f"Could not extract run name from: {config_path}\n"
+            "Expected: .../<run_name>/metadata/config.json"
+        )  # noqa: B904
 
 
 # ── Plot 1: upscaled sample row ───────────────────────────────────────────────
@@ -887,7 +1117,9 @@ def plot_sample_row(
         None
     """
     print(f"  Generating {n_samples} samples at {scale}x{scale} …")
-    images = sample_at_scale(model, model_type, n_samples, scale, device, channels, hparams)
+    images = sample_at_scale(
+        model, model_type, n_samples, scale, device, channels, hparams
+    )
 
     fig, axes = plt.subplots(1, n_samples, figsize=(n_samples * 1.5, 1.5))
     for ax, img in zip(axes, images, strict=False):
@@ -1041,24 +1273,46 @@ def plot_recon_vs_interp(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Reworked Evaluation Visualizations for INR models.")
+    parser = argparse.ArgumentParser(
+        description="Reworked Evaluation Visualizations for INR models."
+    )
 
     # VAE inputs (Required)
-    parser.add_argument("--vae_config_path", type=str, required=True, help="Path to VAE _config.json.")
-    parser.add_argument("--vae_checkpoint_path", type=str, required=True, help="Path to VAE checkpoint .pt.")
+    parser.add_argument(
+        "--vae_config_path", type=str, required=True, help="Path to VAE _config.json."
+    )
+    parser.add_argument(
+        "--vae_checkpoint_path",
+        type=str,
+        required=True,
+        help="Path to VAE checkpoint .pt.",
+    )
 
     # Latent Diffusion inputs (Optional, accepts up to 3 paths)
     parser.add_argument(
-        "--latent_config_paths", type=str, nargs="+", default=[], help="Paths to Latent Diffusion config.json files (Max 3)."
+        "--latent_config_paths",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Paths to Latent Diffusion config.json files (Max 3).",
     )
 
     # Weight Diffusion inputs (Optional, accepts up to 3 paths)
     parser.add_argument(
-        "--weight_config_paths", type=str, nargs="+", default=[], help="Paths to Weight Diffusion config.json files (Max 3)."
+        "--weight_config_paths",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Paths to Weight Diffusion config.json files (Max 3).",
     )
 
     # Scale input
-    parser.add_argument("--sample_scale", type=int, default=32, help="Target resolution for upscaled samples and reconstructions.")
+    parser.add_argument(
+        "--sample_scale",
+        type=int,
+        default=32,
+        help="Target resolution for upscaled samples and reconstructions.",
+    )
 
     args = parser.parse_args()
 
@@ -1168,7 +1422,9 @@ def main():
     # ── 4. LATENT & WEIGHT VARIATIONS ─────────────────────────────────────────
     # ── 4. PROCESS LATENT DIFFUSION MODELS ────────────────────────────────────
     if args.latent_config_paths:
-        print(f"\n--- Processing Latent Diffusion Suite ({len(args.latent_config_paths)} variants) ---")
+        print(
+            f"\n--- Processing Latent Diffusion Suite ({len(args.latent_config_paths)} variants) ---"
+        )
         from src.utility.model_builders import build_model as build_ldm_model
 
         latent_models = []
@@ -1239,7 +1495,9 @@ def main():
         )
 
         # Loop through each active variant separately
-        for idx, (model, cfg) in enumerate(zip(latent_models, latent_configs, strict=False)):
+        for idx, (model, cfg) in enumerate(
+            zip(latent_models, latent_configs, strict=False)
+        ):
             run_name = NAMES[idx] if idx < len(NAMES) else f"variant_{idx+1}"
             plot_multi_sample_grid(
                 model=model,
@@ -1253,7 +1511,9 @@ def main():
 
     # ── 5. PROCESS WEIGHT DIFFUSION MODELS ────────────────────────────────────
     if args.weight_config_paths:
-        print(f"\n--- Processing Weight Diffusion Suite ({len(args.weight_config_paths)} variants) ---")
+        print(
+            f"\n--- Processing Weight Diffusion Suite ({len(args.weight_config_paths)} variants) ---"
+        )
         from src.utility.model_builders import build_model as build_ldm_model
 
         weight_models = []
@@ -1322,7 +1582,9 @@ def main():
             headlines=active_weight_headlines,
             save_path=os.path.join(output_dir, "weight_reconstructions.png"),
         )
-        for idx, (model, cfg) in enumerate(zip(weight_models, weight_configs, strict=False)):
+        for idx, (model, cfg) in enumerate(
+            zip(weight_models, weight_configs, strict=False)
+        ):
             run_name = NAMES[idx] if idx < len(NAMES) else f"variant_{idx+1}"
             plot_multi_sample_grid(
                 model=model,

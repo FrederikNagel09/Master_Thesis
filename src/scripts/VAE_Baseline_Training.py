@@ -13,8 +13,9 @@ from tqdm import tqdm
 sys.path.append(".")
 import warnings
 
-from src.models.LatentEncoder import ResNetLatentEncoder
-from src.models.trans_inr import TransInr, make_coord_grid
+from models.latent_diffusion.modules.LatentEncoder import ResNetLatentEncoder
+from models.latent_diffusion.modules.trans_inr import TransInr, make_coord_grid
+
 from src.utility.classifier_utils import (
     _get_inception,
     _inception_features,
@@ -172,7 +173,9 @@ def parse_args() -> argparse.Namespace:
 
     # Run
     p.add_argument("--run_name", type=str, required=True)
-    p.add_argument("--ldm_config", type=str, required=True, help="Path to trained LDM config .json")
+    p.add_argument(
+        "--ldm_config", type=str, required=True, help="Path to trained LDM config .json"
+    )
     p.add_argument("--results_dir", type=str, default="src/results")
 
     # Training
@@ -186,11 +189,26 @@ def parse_args() -> argparse.Namespace:
     # KL
     p.add_argument("--lambda_kl_max", type=float, default=0.1)
     p.add_argument("--kl_warmup_frac", type=float, default=0.4)
-    p.add_argument("--n_fid_samples", type=int, default=1000, help="Number of samples to generate for FID evaluation")
-    p.add_argument("--fid_batch_size", type=int, default=64, help="Batch size to use during FID sample generation and feature extraction")
+    p.add_argument(
+        "--n_fid_samples",
+        type=int,
+        default=1000,
+        help="Number of samples to generate for FID evaluation",
+    )
+    p.add_argument(
+        "--fid_batch_size",
+        type=int,
+        default=64,
+        help="Batch size to use during FID sample generation and feature extraction",
+    )
 
     # Resume
-    p.add_argument("--resume", type=str, default=None, help="Path to VAE checkpoint .pt to resume from")
+    p.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to VAE checkpoint .pt to resume from",
+    )
 
     return p.parse_args()
 
@@ -243,7 +261,13 @@ def load_ldm_config(path: str) -> dict:
 
 
 class VAEWrapper(nn.Module):
-    def __init__(self, encoder: nn.Module, decoder: nn.Module, img_size: int, device: torch.device):
+    def __init__(
+        self,
+        encoder: nn.Module,
+        decoder: nn.Module,
+        img_size: int,
+        device: torch.device,
+    ):
         super().__init__()
         self.latent_encoder = encoder
         self.decoder = decoder
@@ -256,10 +280,14 @@ class VAEWrapper(nn.Module):
     def _decode_latent(self, z: torch.Tensor) -> torch.Tensor:
         """Decodes a latent tensor through the TransInr decoder."""
         batch_size = z.shape[0]
-        coords = self.coord_grid.unsqueeze(0).repeat(batch_size, 1, 1, 1).to(self.device)
+        coords = (
+            self.coord_grid.unsqueeze(0).repeat(batch_size, 1, 1, 1).to(self.device)
+        )
         return self.decoder(z, coords)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, logvar = self.latent_encoder(x)
         z = self.latent_encoder.reparameterize(mu, logvar)
         x_recon = self._decode_latent(z)
@@ -357,7 +385,10 @@ def save_training_graph(
     """
     max_ticks = 10
     step = max(1, total_epochs_so_far // max_ticks)
-    tick_positions = [i * steps_per_epoch // plot_every_n for i in range(0, total_epochs_so_far + 1, step)]
+    tick_positions = [
+        i * steps_per_epoch // plot_every_n
+        for i in range(0, total_epochs_so_far + 1, step)
+    ]
     tick_labels = [str(i) for i in range(0, total_epochs_so_far + 1, step)]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
@@ -369,11 +400,13 @@ def save_training_graph(
 
     for ax, (key, title, color) in zip(axes, panels):  # noqa: B905
         downsampled = history[key][::plot_every_n]
-        ax.plot(range(len(downsampled)), downsampled, color=color, linewidth=0.8, alpha=0.85)
+        ax.plot(
+            range(len(downsampled)), downsampled, color=color, linewidth=0.8, alpha=0.85
+        )
         ax.set_title(title)
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Loss")
-        #ax.set_ylim(bottom=0, top=100)
+        # ax.set_ylim(bottom=0, top=100)
         ax.set_xticks(tick_positions)
         ax.set_xticklabels(tick_labels)
         ax.grid(True, linestyle="--", alpha=0.4)
@@ -525,7 +558,9 @@ def build_model(
     print(f"  {'─'*10}-+-{'─'*16}---{'─'*8}")
     print(f"  {'TOTAL':<10} | {'':>16}   {inr_total:>8,}")
     print("############## Latent Space & INR Summary: #############")
-    print(f"Latent variable (diffusion) : ({latent_dim}, {latent_size_tuple[0]}, {latent_size_tuple[1]})")
+    print(
+        f"Latent variable (diffusion) : ({latent_dim}, {latent_size_tuple[0]}, {latent_size_tuple[1]})"
+    )
     print("________________________________________________________")
     print(f"latent dim: {latent_dim * latent_size_tuple[0] * latent_size_tuple[1]}")
     print(f"INR dim.  : {inr_total}")
@@ -597,12 +632,16 @@ def compute_eval_metrics(
     if is_mnist:
         print("  Computing MNIST classifier FID …")
         classifier = _load_classifier(device)
-        real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(classifier, inception, device)
+        real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(
+            classifier, inception, device
+        )
         gen_mnist_feats, gen_preds = _mnist_features(fid_tensor, classifier, device)
         mnist_fid = float(_fid(real_mnist_feats, gen_mnist_feats))
     else:
         # Reuse inception real features; caller must ensure they exist for non-MNIST
-        _, real_inception_feats, _ = _load_or_compute_real_features(None, inception, device)
+        _, real_inception_feats, _ = _load_or_compute_real_features(
+            None, inception, device
+        )
         gen_preds = None  # no classifier for non-MNIST
 
     print("  Computing Inception FID …")
@@ -620,7 +659,9 @@ def compute_eval_metrics(
         class_probs = class_counts / class_counts.sum()
         entropy = -(class_probs * (class_probs + 1e-8).log()).sum()
         uniformity_score = float(entropy / np.log(n_classes))
-        class_breakdown = {str(i): int(class_counts[i].item()) for i in range(n_classes)}
+        class_breakdown = {
+            str(i): int(class_counts[i].item()) for i in range(n_classes)
+        }
 
     # ── Avg reconstruction MSE over validation set ────────────────────────────
     print("  Computing validation reconstruction MSE …")
@@ -668,7 +709,6 @@ def compute_eval_metrics(
     print(f"  Eval metrics saved → {metrics_path}")
 
 
-
 def _get_beta(
     global_step: int,
     beta_final: float,
@@ -689,7 +729,6 @@ def _get_beta(
     if global_step < burnin_steps:
         return 0.0
     return beta_final * min(1.0, (global_step - burnin_steps) / warmup_steps)
-
 
 
 def run_training(args: argparse.Namespace) -> None:
@@ -717,13 +756,17 @@ def run_training(args: argparse.Namespace) -> None:
         subset_frac=args.subset_frac,
         single_class=False,
     )
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, shuffle=True, drop_last=True
+    )
     channels = data_config["channels"]
     img_size = data_config["img_size"]
 
     # 3. Build model
     model = build_model(hparams, channels, img_size, device)
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = optim.AdamW(
+        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+    )
 
     # 4. Resume or fresh start
     if args.resume:
@@ -754,11 +797,13 @@ def run_training(args: argparse.Namespace) -> None:
 
     total_steps = args.epochs * len(dataloader)
     progress_bar = tqdm(total=total_steps, desc="Training", unit="step")
-    
+
     # two-stage training control variables (for applicable models)
     lambda_kl = args.lambda_kl_max
-    kl_burnin_steps = 0          # set >0 if you want pure-reconstruction burn-in
-    kl_warmup_steps = kl_warmup_epochs * len(dataloader)   # <-- fixed: was hardcoded 30000
+    kl_burnin_steps = 0  # set >0 if you want pure-reconstruction burn-in
+    kl_warmup_steps = kl_warmup_epochs * len(
+        dataloader
+    )  # <-- fixed: was hardcoded 30000
     beta = 0.0
     global_step = 0
 
@@ -786,8 +831,9 @@ def run_training(args: argparse.Namespace) -> None:
 
             loss_recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
 
-
-            loss_kl = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3]))
+            loss_kl = -0.5 * torch.mean(
+                torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3])
+            )
 
             total_loss = loss_recon + beta * loss_kl
 
@@ -816,9 +862,13 @@ def run_training(args: argparse.Namespace) -> None:
 
         epoch_mse = running_mse / len(dataloader)
         epoch_kl = running_kl / len(dataloader)
-        print(f"      ↳ [Summary] Avg MSE: {epoch_mse:.5f} | Avg KL: {epoch_kl:.3f} | β: {beta:.4f}")
+        print(
+            f"      ↳ [Summary] Avg MSE: {epoch_mse:.5f} | Avg KL: {epoch_kl:.3f} | β: {beta:.4f}"
+        )
 
-        save_checkpoint(model, optimizer, global_epoch, history, args.run_name, results_dir)
+        save_checkpoint(
+            model, optimizer, global_epoch, history, args.run_name, results_dir
+        )
         save_training_graph(history, len(dataloader), global_epoch, graph_path)
     progress_bar.close()
     # 6. Final artefacts
@@ -829,15 +879,34 @@ def run_training(args: argparse.Namespace) -> None:
     model.eval()
     with torch.no_grad():
         # ── Sample grid (8x8 = 64 samples) ───────────────────────────────────
-        z = torch.randn(64, hparams["latent_dim"], hparams["latent_size"], hparams["latent_size"]).to(device)
+        z = torch.randn(
+            64, hparams["latent_dim"], hparams["latent_size"], hparams["latent_size"]
+        ).to(device)
         samples = (model._decode_latent(z) * 0.5 + 0.5).clamp(0, 1)
-        vutils.save_image(samples, os.path.join(results_dir, f"{args.run_name}_samples_8x8.png"), nrow=8, padding=2)
+        vutils.save_image(
+            samples,
+            os.path.join(results_dir, f"{args.run_name}_samples_8x8.png"),
+            nrow=8,
+            padding=2,
+        )
 
         # ── Row plots (10, 8, 6 samples) ─────────────────────────────────────
         for n_samples in [10, 8, 6]:
-            z = torch.randn(n_samples, hparams["latent_dim"], hparams["latent_size"], hparams["latent_size"]).to(device)
+            z = torch.randn(
+                n_samples,
+                hparams["latent_dim"],
+                hparams["latent_size"],
+                hparams["latent_size"],
+            ).to(device)
             row = (model._decode_latent(z) * 0.5 + 0.5).clamp(0, 1)
-            vutils.save_image(row, os.path.join(results_dir, f"{args.run_name}_samples_row{n_samples}.png"), nrow=n_samples, padding=2)
+            vutils.save_image(
+                row,
+                os.path.join(
+                    results_dir, f"{args.run_name}_samples_row{n_samples}.png"
+                ),
+                nrow=n_samples,
+                padding=2,
+            )
 
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
 

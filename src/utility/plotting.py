@@ -44,7 +44,9 @@ _AZIM_OFFSETS = [-30, -15, 0, 15, 30, 45]
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _voxels_to_mesh(voxels: np.ndarray, threshold: float = VOXEL_THRESHOLD) -> tuple[np.ndarray, np.ndarray] | None:
+def _voxels_to_mesh(
+    voxels: np.ndarray, threshold: float = VOXEL_THRESHOLD
+) -> tuple[np.ndarray, np.ndarray] | None:
     """Run marching cubes on a (D, H, W) voxel array.
 
     Args:
@@ -90,7 +92,17 @@ def _render_mesh_on_ax(
         ax.auto_scale_xyz(scale, scale, scale)
     else:
         # Empty grid — draw a wireframe cube as placeholder
-        ax.text(0.5, 0.5, 0.5, "empty", ha="center", va="center", transform=ax.transAxes, fontsize=7, color="#aaaaaa")
+        ax.text(
+            0.5,
+            0.5,
+            0.5,
+            "empty",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=7,
+            color="#aaaaaa",
+        )
 
     ax.view_init(elev=elev, azim=azim)
     ax.set_axis_off()
@@ -158,7 +170,15 @@ def _add_lr_twin(ax: plt.Axes, steps: list[float], lr_values: list[float]) -> No
     """Overlay the LR schedule on a twin y-axis of the given axes."""
     ax2 = ax.twinx()
     color = _COLORS["lr"]
-    ax2.plot(steps, lr_values, color=color, linewidth=1.2, linestyle="--", alpha=0.6, label="LR")
+    ax2.plot(
+        steps,
+        lr_values,
+        color=color,
+        linewidth=1.2,
+        linestyle="--",
+        alpha=0.6,
+        label="LR",
+    )
     ax2.set_ylabel("Learning Rate", fontsize=9, color=color)
     ax2.tick_params(axis="y", colors=color, labelsize=8)
     ax2.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.1e"))
@@ -286,11 +306,21 @@ def _model_to_grid(
             z = model.prior().sample(torch.Size([n_samples])).to(dev)
             flat_weights = model.decode_to_weights(z)
             pixels = model.inr(coords_batch, flat_weights)
-            samples = pixels.permute(0, 2, 1).reshape(n_samples, channels, img_size, img_size).clamp(0, 1)
+            samples = (
+                pixels.permute(0, 2, 1)
+                .reshape(n_samples, channels, img_size, img_size)
+                .clamp(0, 1)
+            )
 
-        elif model_type == "ndm_inr" or model_type in ("latent_inr_diffusion", "weight_inr_diffusion", "weight_inr_ndm_diffusion"):
+        elif model_type == "ndm_inr" or model_type in (
+            "latent_inr_diffusion",
+            "weight_inr_diffusion",
+            "weight_inr_ndm_diffusion",
+        ):
             if collect_snapshots:
-                raw_samples, snapshots = model.sample(n_samples, collect_snapshots=True, debug=debug)
+                raw_samples, snapshots = model.sample(
+                    n_samples, collect_snapshots=True, debug=debug
+                )
             else:
                 raw_samples = model.sample(n_samples, debug=debug)
 
@@ -300,7 +330,11 @@ def _model_to_grid(
                 model.train()
                 return grid, snapshots
 
-            samples = (raw_samples * 0.5 + 0.5).clamp(0, 1).reshape(n_samples, channels, img_size, img_size)
+            samples = (
+                (raw_samples * 0.5 + 0.5)
+                .clamp(0, 1)
+                .reshape(n_samples, channels, img_size, img_size)
+            )
 
         else:
             raise ValueError(f"Unknown model_type '{model_type}' for sampling.")
@@ -363,7 +397,9 @@ def plot_final_samples(
 
     # ── Grid samples (for display) ────────────────────────────────────────────
     n_side = int(np.sqrt(n_samples))
-    grid, _ = _model_to_grid(model, model_type, n_side * n_side, device, data_config, debug=debug)
+    grid, _ = _model_to_grid(
+        model, model_type, n_side * n_side, device, data_config, debug=debug
+    )
 
     # ── FID samples ───────────────────────────────────────────────────────────
     print(f"  Computing FID ({n_fid_samples} samples) …")
@@ -371,12 +407,18 @@ def plot_final_samples(
     fid_batches = []
 
     for start in range(0, n_fid_samples, fid_batch_size):
-        print(f"    Sampling FID batch {start} to {min(start + fid_batch_size, n_fid_samples)} …")
+        print(
+            f"    Sampling FID batch {start} to {min(start + fid_batch_size, n_fid_samples)} …"
+        )
         batch_n = min(fid_batch_size, n_fid_samples - start)
-        batch, _ = _model_to_grid(model, model_type, batch_n, device, data_config, debug=debug)
+        batch, _ = _model_to_grid(
+            model, model_type, batch_n, device, data_config, debug=debug
+        )
         fid_batches.append(batch)
 
-    fid_grid = np.concatenate(fid_batches, axis=0)  # (n_fid_samples, H, W) or (n_fid_samples, H, W, C)
+    fid_grid = np.concatenate(
+        fid_batches, axis=0
+    )  # (n_fid_samples, H, W) or (n_fid_samples, H, W, C)
 
     # Convert numpy grid back to (N, C, H, W) float tensor in [0, 1]
     if channels == 1:
@@ -388,7 +430,9 @@ def plot_final_samples(
 
     if is_mnist:
         classifier = _load_classifier(device)
-        real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(classifier, inception, device)
+        real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(
+            classifier, inception, device
+        )
         gen_mnist_feats, gen_preds = _mnist_features(fid_tensor, classifier, device)
         mnist_fid = _fid(real_mnist_feats, gen_mnist_feats)
     else:
@@ -426,8 +470,16 @@ def plot_final_samples(
     print(f"\n{'=' * 45}")
     print(f"  Eval Summary  —  epoch {epoch}")
     print(f"{'=' * 45}")
-    print(f"  Rec Loss      : {rec_loss:.4f}" if rec_loss is not None else "  Rec Loss      : None")
-    print(f"  ELBO          : {elbo_val:.4f}" if elbo_val is not None else "  ELBO          : None")
+    print(
+        f"  Rec Loss      : {rec_loss:.4f}"
+        if rec_loss is not None
+        else "  Rec Loss      : None"
+    )
+    print(
+        f"  ELBO          : {elbo_val:.4f}"
+        if elbo_val is not None
+        else "  ELBO          : None"
+    )
     print(f"  MNIST FID     : {mnist_fid:.2f}")
     print(f"  Inception FID : {inception_fid:.2f}")
     print(f"  Uniformity    : {uniformity_score:.4f}  (0=collapsed, 1=uniform)")
@@ -475,7 +527,9 @@ def plot_final_samples(
         fig, axes = plt.subplots(1, n_row, figsize=(n_row * 1.5, 1.5))
         for ax, idx in zip(axes, indices):  # noqa: B905
             if channels == 1:
-                ax.imshow(grid[idx], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                ax.imshow(
+                    grid[idx], cmap="gray", vmin=0, vmax=1, interpolation="nearest"
+                )
             else:
                 ax.imshow(grid[idx], vmin=0, vmax=1, interpolation="nearest")
             ax.axis("off")
@@ -520,7 +574,9 @@ def plot_sample_progression(
     channels = data_config["channels"]
     is_3d = data_config.get("is_3d", False)
 
-    new_row, snapshots = _model_to_grid(model, model_type, n_cols, device, data_config, collect_snapshots)
+    new_row, snapshots = _model_to_grid(
+        model, model_type, n_cols, device, data_config, collect_snapshots
+    )
 
     metadata_dir = os.path.join(run_dir, "metadata")
     os.makedirs(metadata_dir, exist_ok=True)
@@ -557,10 +613,17 @@ def plot_sample_progression(
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
-    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+    for r, (row_samples, ep) in enumerate(
+        zip(padded_rows, padded_epochs, strict=False)
+    ):
         for c in range(n_cols):
             left = (label_width + c * img_inches) / fig_w
-            bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            bottom = (
+                1.0
+                - (title_pad / fig_h)
+                - (r + 1) * (img_inches / fig_h)
+                - r * (row_gap / fig_h)
+            )
             width = img_inches / fig_w
             height = img_inches / fig_h
 
@@ -575,14 +638,23 @@ def plot_sample_progression(
             else:
                 ax = fig.add_axes([left, bottom, width, height])
                 if channels == 1:
-                    ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                    ax.imshow(
+                        row_samples[c],
+                        cmap="gray",
+                        vmin=0,
+                        vmax=1,
+                        interpolation="nearest",
+                    )
                 else:
                     ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
                 ax.axis("off")
 
         fig.text(
             (label_width * 0.5) / fig_w,
-            1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
+            1.0
+            - (title_pad / fig_h)
+            - (r + 0.5) * (img_inches / fig_h)
+            - r * (row_gap / fig_h),
             f"ep {ep}",
             ha="center",
             va="center",
@@ -596,7 +668,9 @@ def plot_sample_progression(
     plt.close(fig)
 
     if collect_snapshots and snapshots is not None:
-        denoising_filename = filename.replace("sample_progression", "Reverse_denoising_progression")
+        denoising_filename = filename.replace(
+            "sample_progression", "Reverse_denoising_progression"
+        )
         if denoising_filename == filename:
             denoising_filename = f"Reverse_denoising_progression_{filename}"
         plot_denoising_trajectory_progression(
@@ -672,7 +746,9 @@ def plot_denoising_trajectory_progression(
 
     # ── 2. Pad to N_ROWS_TOTAL (Strict Layout Isolation) ──────────────────────
     padded_rows = all_rows[:N_ROWS_TOTAL] + [None] * (N_ROWS_TOTAL - len(all_rows))
-    padded_epochs = sorted_epochs[:N_ROWS_TOTAL] + [""] * (N_ROWS_TOTAL - len(sorted_epochs))
+    padded_epochs = sorted_epochs[:N_ROWS_TOTAL] + [""] * (
+        N_ROWS_TOTAL - len(sorted_epochs)
+    )
 
     # ── 3. Build Figure Layout ────────────────────────────────────────────────
     col_width, row_height = 2.2, 1.6
@@ -681,7 +757,12 @@ def plot_denoising_trajectory_progression(
     title_pad, header_pad = 0.5, 0.35
 
     fig_w = label_width + n_cols * col_width + (n_cols - 1) * col_gap
-    fig_h = title_pad + header_pad + N_ROWS_TOTAL * row_height + (N_ROWS_TOTAL - 1) * row_gap
+    fig_h = (
+        title_pad
+        + header_pad
+        + N_ROWS_TOTAL * row_height
+        + (N_ROWS_TOTAL - 1) * row_gap
+    )
 
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
@@ -690,13 +771,28 @@ def plot_denoising_trajectory_progression(
     for c, t_val in enumerate(all_t_keys):
         cx = (label_width + c * (col_width + col_gap) + col_width * 0.5) / fig_w
         cy = 1.0 - (title_pad / fig_h) - (header_pad * 0.6 / fig_h)
-        fig.text(cx, cy, f"t = {t_val}", ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
+        fig.text(
+            cx,
+            cy,
+            f"t = {t_val}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#555555",
+            fontweight="bold",
+        )
 
     # Draw Rows safely bound within N_ROWS_TOTAL
     for r in range(N_ROWS_TOTAL):
         row_data = padded_rows[r]
         ep = padded_epochs[r]
-        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (row_height / fig_h) - r * (row_gap / fig_h)
+        row_bottom = (
+            1.0
+            - (title_pad / fig_h)
+            - (header_pad / fig_h)
+            - (r + 1) * (row_height / fig_h)
+            - r * (row_gap / fig_h)
+        )
 
         for c in range(n_cols):
             left = (label_width + c * (col_width + col_gap)) / fig_w
@@ -720,7 +816,12 @@ def plot_denoising_trajectory_progression(
                     ha="right",
                     va="top",
                     fontsize=7,
-                    bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+                    bbox={
+                        "boxstyle": "round",
+                        "fc": "white",
+                        "alpha": 0.6,
+                        "ec": "none",
+                    },
                 )
 
             ax.spines[["top", "right"]].set_visible(False)
@@ -740,7 +841,12 @@ def plot_denoising_trajectory_progression(
             color="#333333",
         )
 
-    fig.suptitle("Denoising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
+    fig.suptitle(
+        "Denoising Trajectory — Weight Distributions",
+        fontsize=11,
+        fontweight="bold",
+        y=0.99,
+    )
 
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -789,7 +895,9 @@ def plot_fphi_progression(
     timesteps[-1] = T - 1  # clamp to valid index
 
     # ── Pick one image from the batch ────────────────────────────────────────
-    x = batch[0][0:1].to(device)  # batch[0] gets the images tensor, [0:1] gets first image
+    x = batch[0][0:1].to(
+        device
+    )  # batch[0] gets the images tensor, [0:1] gets first image
 
     # ── Run F_phi at each timestep ────────────────────────────────────────────
     model.eval()
@@ -867,7 +975,12 @@ def plot_fphi_progression(
     t_label_pad = 0.25  # extra space for t labels on first row
 
     fig_w = label_width + n_cols * img_inches
-    fig_h = title_pad + t_label_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
+    fig_h = (
+        title_pad
+        + t_label_pad
+        + N_ROWS_TOTAL * img_inches
+        + (N_ROWS_TOTAL - 1) * row_gap
+    )
 
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
@@ -876,18 +989,36 @@ def plot_fphi_progression(
     for c, t in enumerate(timesteps):
         label_x = (label_width + (c + 0.5) * img_inches) / fig_w
         label_y = 1.0 - (title_pad / fig_h) - (t_label_pad * 0.5 / fig_h)
-        fig.text(label_x, label_y, f"t={t}", ha="center", va="center", fontsize=7, color="#555555")
+        fig.text(
+            label_x,
+            label_y,
+            f"t={t}",
+            ha="center",
+            va="center",
+            fontsize=7,
+            color="#555555",
+        )
 
-    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+    for r, (row_samples, ep) in enumerate(
+        zip(padded_rows, padded_epochs, strict=False)
+    ):
         for c in range(n_cols):
             left = (label_width + c * img_inches) / fig_w
-            bottom = 1.0 - (title_pad / fig_h) - (t_label_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            bottom = (
+                1.0
+                - (title_pad / fig_h)
+                - (t_label_pad / fig_h)
+                - (r + 1) * (img_inches / fig_h)
+                - r * (row_gap / fig_h)
+            )
             width = img_inches / fig_w
             height = img_inches / fig_h
 
             ax = fig.add_axes([left, bottom, width, height])
             if channels == 1:
-                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                ax.imshow(
+                    row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest"
+                )
             else:
                 ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
             ax.axis("off")
@@ -895,7 +1026,13 @@ def plot_fphi_progression(
         # Epoch label on the left
         fig.text(
             (label_width * 0.5) / fig_w,
-            (1.0 - (title_pad / fig_h) - (t_label_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h)),
+            (
+                1.0
+                - (title_pad / fig_h)
+                - (t_label_pad / fig_h)
+                - (r + 0.5) * (img_inches / fig_h)
+                - r * (row_gap / fig_h)
+            ),
             f"ep {ep}",
             ha="center",
             va="center",
@@ -977,7 +1114,11 @@ def plot_fphi_weight_histograms(
             theta_prime_raw = model.weight_encoder(x)
 
         # Normalize if the model uses normalization (mirrors training flow)
-        theta_prime = model.scaler(theta_prime_raw, reverse=False) if model.normalize else theta_prime_raw
+        theta_prime = (
+            model.scaler(theta_prime_raw, reverse=False)
+            if model.normalize
+            else theta_prime_raw
+        )
         # print(f"DEBUG: F_phi | Mean: {theta_prime.mean():.4f} | Std: {theta_prime.std():.4f}")
 
         # ── Build row: col 0 = baseline, cols 1-5 = F_phi at each timestep ──
@@ -1017,7 +1158,11 @@ def plot_fphi_weight_histograms(
     counts_path = os.path.join(metadata_dir, f"{filename}_counts.npy")
     edges_path = os.path.join(metadata_dir, f"{filename}_edges.npy")
 
-    if os.path.exists(meta_path) and os.path.exists(counts_path) and os.path.exists(edges_path):
+    if (
+        os.path.exists(meta_path)
+        and os.path.exists(counts_path)
+        and os.path.exists(edges_path)
+    ):
         with open(meta_path) as f:
             meta = json.load(f)
         all_counts = np.concatenate([np.load(counts_path), row_counts[None]], axis=0)
@@ -1034,7 +1179,9 @@ def plot_fphi_weight_histograms(
     np.save(counts_path, all_counts)
     np.save(edges_path, all_edges)
     with open(meta_path, "w") as f:
-        json.dump({"epochs": all_epochs, "timesteps": timesteps, "xranges": all_xranges}, f)
+        json.dump(
+            {"epochs": all_epochs, "timesteps": timesteps, "xranges": all_xranges}, f
+        )
 
     # ── Pad to always render N_ROWS_TOTAL rows ────────────────────────────────
     n_existing = len(all_epochs)
@@ -1052,7 +1199,12 @@ def plot_fphi_weight_histograms(
     header_pad = 0.35
 
     fig_w = label_width + n_cols * hist_w_inches + (n_cols - 1) * 0.1  # adjust spacing
-    fig_h = title_pad + header_pad + N_ROWS_TOTAL * hist_h_inches + (N_ROWS_TOTAL - 1) * row_gap
+    fig_h = (
+        title_pad
+        + header_pad
+        + N_ROWS_TOTAL * hist_h_inches
+        + (N_ROWS_TOTAL - 1) * row_gap
+    )
 
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
@@ -1062,16 +1214,33 @@ def plot_fphi_weight_histograms(
     for c, label in enumerate(col_labels):
         label_x = (label_width + c * hist_w_inches + hist_w_inches * 0.5) / fig_w
         label_y = 1.0 - (title_pad / fig_h) - (header_pad * 0.3 / fig_h)
-        fig.text(label_x, label_y, label, ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
+        fig.text(
+            label_x,
+            label_y,
+            label,
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#555555",
+            fontweight="bold",
+        )
 
     for r, (counts_row, edges_row, ep, xrange_row) in enumerate(
         zip(padded_counts, padded_edges, padded_epochs, padded_xranges, strict=False)
     ):
-        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (hist_h_inches / fig_h) - r * (row_gap / fig_h)
+        row_bottom = (
+            1.0
+            - (title_pad / fig_h)
+            - (header_pad / fig_h)
+            - (r + 1) * (hist_h_inches / fig_h)
+            - r * (row_gap / fig_h)
+        )
 
         for c in range(n_cols):
             left = (label_width + c * hist_w_inches) / fig_w
-            ax = fig.add_axes([left, row_bottom, hist_w_inches / fig_w, hist_h_inches / fig_h])
+            ax = fig.add_axes(
+                [left, row_bottom, hist_w_inches / fig_w, hist_h_inches / fig_h]
+            )
 
             if counts_row is None:
                 ax.set_axis_off()
@@ -1083,7 +1252,15 @@ def plot_fphi_weight_histograms(
 
             # Colors: col 0 blue, others orange
             color = "#5b7fa6" if c == 0 else "#E2844A"
-            ax.bar(edges_row[c][:-1], density, width=bin_width, align="edge", color=color, alpha=0.75, linewidth=0)
+            ax.bar(
+                edges_row[c][:-1],
+                density,
+                width=bin_width,
+                align="edge",
+                color=color,
+                alpha=0.75,
+                linewidth=0,
+            )
 
             # Gaussian Overlay for F_phi (cols > 0)
             if c > 0:
@@ -1095,7 +1272,11 @@ def plot_fphi_weight_histograms(
             bin_centers = (edges_row[c][:-1] + edges_row[c][1:]) / 2
             total = counts_row[c].sum()
             mu_val = float(np.sum(bin_centers * counts_row[c]) / (total + 1e-9))
-            std_val = float(np.sqrt(np.sum(counts_row[c] * (bin_centers - mu_val) ** 2) / (total + 1e-9)))
+            std_val = float(
+                np.sqrt(
+                    np.sum(counts_row[c] * (bin_centers - mu_val) ** 2) / (total + 1e-9)
+                )
+            )
             ax.text(
                 0.97,
                 0.93,
@@ -1130,7 +1311,9 @@ def plot_fphi_weight_histograms(
             color="#333333",
         )
 
-    fig.suptitle("F_phi Weight Distribution Progression", fontsize=11, fontweight="bold", y=0.99)
+    fig.suptitle(
+        "F_phi Weight Distribution Progression", fontsize=11, fontweight="bold", y=0.99
+    )
 
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -1228,18 +1411,28 @@ def plot_ztrans_histogram(
     for c, t in enumerate(timesteps):
         axes[0, c].set_title(f"t={t}", fontsize=8, color="#555555", pad=4)
 
-    for r, (row_hists_r, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+    for r, (row_hists_r, ep) in enumerate(
+        zip(padded_rows, padded_epochs, strict=False)
+    ):
         for c in range(N_COLS):
             ax = axes[r, c]
             ax.spines[["top", "right"]].set_visible(False)
             ax.tick_params(labelsize=6)
 
             if row_hists_r is not None:
-                ax.hist(row_hists_r[c], bins=60, color="#4C72B0", edgecolor="none", alpha=0.85)
+                ax.hist(
+                    row_hists_r[c],
+                    bins=60,
+                    color="#4C72B0",
+                    edgecolor="none",
+                    alpha=0.85,
+                )
             else:
                 # Empty placeholder row
                 ax.set_facecolor("#f5f5f5")
-                ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+                ax.tick_params(
+                    left=False, bottom=False, labelleft=False, labelbottom=False
+                )
 
         # Epoch label on the left of each row
         axes[r, 0].set_ylabel(f"ep {ep}", fontsize=8, color="#333333", labelpad=6)
@@ -1290,7 +1483,11 @@ def plot_reconstruction_progression(
     x = batch[0][:n_pairs].to(device)
 
     model.eval()
-    if model_name in ("latent_inr_diffusion", "weight_inr_diffusion", "weight_inr_ndm_diffusion"):
+    if model_name in (
+        "latent_inr_diffusion",
+        "weight_inr_diffusion",
+        "weight_inr_ndm_diffusion",
+    ):
         with torch.no_grad():
             if is_3d:
                 # x arrives as (B, 1, D, H, W) from the dataloader
@@ -1319,9 +1516,9 @@ def plot_reconstruction_progression(
         # Use the same conversion logic as the sampler
         orig_grids = _samples_to_voxel_grids(x, channels, img_size)
         recon_grids = _samples_to_voxel_grids(x_recon, channels, img_size)
-        
+
         # Now these are ready to be saved as the 'correct' format
-        new_row_data = { 
+        new_row_data = {  # noqa: F841
             "orig": orig_grids,
             "recon": recon_grids,
         }
@@ -1334,7 +1531,9 @@ def plot_reconstruction_progression(
 
         originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
         recons = [(x_recon[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
-        new_row = np.stack([_to_img(t) for t in originals + recons], axis=0)  # (6, H, W[,C])
+        new_row = np.stack(
+            [_to_img(t) for t in originals + recons], axis=0
+        )  # (6, H, W[,C])
 
     # ── Persist rows ──────────────────────────────────────────────────────────
     metadata_dir = os.path.join(run_dir, "metadata")
@@ -1389,7 +1588,15 @@ def plot_reconstruction_progression(
     for c, header in enumerate(["", "Originals", "", "", "Reconstructions", ""]):
         extra = divider_gap if c >= n_pairs else 0.0
         cx = (label_width + (c + 0.5) * img_inches + extra) / fig_w
-        fig.text(cx, 1.0 - (title_pad * 0.7 / fig_h), header, ha="center", va="center", fontsize=7, color="#555555")
+        fig.text(
+            cx,
+            1.0 - (title_pad * 0.7 / fig_h),
+            header,
+            ha="center",
+            va="center",
+            fontsize=7,
+            color="#555555",
+        )
 
     # Pad epochs to N_ROWS_TOTAL
     padded_epochs = list(all_epochs) + [""] * (N_ROWS_TOTAL - len(all_epochs))
@@ -1410,7 +1617,12 @@ def plot_reconstruction_progression(
         for c in range(n_cols):
             extra = divider_gap if c >= n_pairs else 0.0
             left = (label_width + c * img_inches + extra) / fig_w
-            bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            bottom = (
+                1.0
+                - (title_pad / fig_h)
+                - (r + 1) * (img_inches / fig_h)
+                - r * (row_gap / fig_h)
+            )
             width = img_inches / fig_w
             height = img_inches / fig_h
 
@@ -1427,14 +1639,25 @@ def plot_reconstruction_progression(
                 if not row_is_blank:
                     row_samples = all_rows[r]
                     if channels == 1:
-                        ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                        ax.imshow(
+                            row_samples[c],
+                            cmap="gray",
+                            vmin=0,
+                            vmax=1,
+                            interpolation="nearest",
+                        )
                     else:
-                        ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
+                        ax.imshow(
+                            row_samples[c], vmin=0, vmax=1, interpolation="nearest"
+                        )
                 ax.axis("off")
 
         fig.text(
             (label_width * 0.5) / fig_w,
-            1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
+            1.0
+            - (title_pad / fig_h)
+            - (r + 0.5) * (img_inches / fig_h)
+            - r * (row_gap / fig_h),
             f"ep {ep}",
             ha="center",
             va="center",
@@ -1564,24 +1787,44 @@ def plot_reconstruction_norm_progression(
     for c, header in enumerate(["", "Originals", "", "", "Reconstructions", ""]):
         extra = divider_gap if c >= n_pairs else 0.0
         cx = (label_width + (c + 0.5) * img_inches + extra) / fig_w
-        fig.text(cx, 1.0 - (title_pad * 0.7 / fig_h), header, ha="center", va="center", fontsize=7, color="#555555")
+        fig.text(
+            cx,
+            1.0 - (title_pad * 0.7 / fig_h),
+            header,
+            ha="center",
+            va="center",
+            fontsize=7,
+            color="#555555",
+        )
 
-    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+    for r, (row_samples, ep) in enumerate(
+        zip(padded_rows, padded_epochs, strict=False)
+    ):
         for c in range(n_cols):
             extra = divider_gap if c >= n_pairs else 0.0
             left = (label_width + c * img_inches + extra) / fig_w
-            bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            bottom = (
+                1.0
+                - (title_pad / fig_h)
+                - (r + 1) * (img_inches / fig_h)
+                - r * (row_gap / fig_h)
+            )
             width = img_inches / fig_w
             height = img_inches / fig_h
             ax = fig.add_axes([left, bottom, width, height])
             if channels == 1:
-                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                ax.imshow(
+                    row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest"
+                )
             else:
                 ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
             ax.axis("off")
         fig.text(
             (label_width * 0.5) / fig_w,
-            1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
+            1.0
+            - (title_pad / fig_h)
+            - (r + 0.5) * (img_inches / fig_h)
+            - r * (row_gap / fig_h),
             f"ep {ep}",
             ha="center",
             va="center",
@@ -1600,7 +1843,9 @@ def plot_reconstruction_norm_progression(
             linestyle="--",
         )
     )
-    fig.suptitle("Reconstruction Norm Progression", fontsize=11, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Reconstruction Norm Progression", fontsize=11, fontweight="bold", y=1.02
+    )
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -1635,12 +1880,18 @@ def print_training_summary(
     print(f"\n{sep}")
     print(f"  TRAINING COMPLETE — {name}")
     print(sep)
-    print(f"  Steps trained   : {total_steps_run:,}  (epochs {start_epoch + 1}-{start_epoch + epochs})")
+    print(
+        f"  Steps trained   : {total_steps_run:,}  (epochs {start_epoch + 1}-{start_epoch + epochs})"
+    )
     print(f"  First loss      : {first_loss:.4f}")
-    print(f"  Final loss      : {final_loss:.4f}  ({'+' if final_loss > first_loss else ''}{final_loss - first_loss:.4f})")
+    print(
+        f"  Final loss      : {final_loss:.4f}  ({'+' if final_loss > first_loss else ''}{final_loss - first_loss:.4f})"
+    )
     print(f"  Best loss       : {best_loss:.4f}  @ step {best_step:.1f}")
     print(f"  Final LR        : {final_lr:.2e}")
-    print(f"  Still improving : {'YES — loss still dropping at end' if still_improving else 'NO  — loss had plateaued'}")
+    print(
+        f"  Still improving : {'YES — loss still dropping at end' if still_improving else 'NO  — loss had plateaued'}"
+    )
     print(sep)
     print("  Loss at training milestones:")
     for pct, val in checkpoints.items():
@@ -1683,7 +1934,12 @@ def plot_reconstruction_diffusion_progression(
     """
     import json
 
-    T_VALUES = [model.T // 4, model.T // 2, 3 * model.T // 4, model.T - 1]  # noise levels to evaluate  # noqa: N806
+    T_VALUES = [
+        model.T // 4,
+        model.T // 2,
+        3 * model.T // 4,
+        model.T - 1,
+    ]  # noise levels to evaluate  # noqa: N806
 
     os.makedirs(run_dir, exist_ok=True)
     N_ROWS_TOTAL = 5  # noqa: N806
@@ -1725,10 +1981,16 @@ def plot_reconstruction_diffusion_progression(
                 beta_t = model.beta[t]
 
                 coeff_x0 = torch.sqrt(alpha_bar_prev) * beta_t / (1.0 - alpha_bar)
-                coeff_xt = torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
+                coeff_xt = (
+                    torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
+                )
                 mean = coeff_x0 * theta0_hat + coeff_xt * curr_theta
                 sigma = torch.sqrt(beta_t * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar))
-                z = torch.randn_like(curr_theta) if t > 1 else torch.zeros_like(curr_theta)
+                z = (
+                    torch.randn_like(curr_theta)
+                    if t > 1
+                    else torch.zeros_like(curr_theta)
+                )
                 curr_theta = mean + sigma * z
             else:
                 curr_theta = theta0_hat
@@ -1751,7 +2013,11 @@ def plot_reconstruction_diffusion_progression(
 
     originals = [(x[i] * 0.5 + 0.5).clamp(0, 1) for i in range(n_pairs)]
     # Shape: (n_cols,) — originals first, then recons grouped by T value
-    all_imgs = originals + [(recons_per_t[t_idx][i] * 0.5 + 0.5).clamp(0, 1) for t_idx in range(len(T_VALUES)) for i in range(n_pairs)]
+    all_imgs = originals + [
+        (recons_per_t[t_idx][i] * 0.5 + 0.5).clamp(0, 1)
+        for t_idx in range(len(T_VALUES))
+        for i in range(n_pairs)
+    ]
     new_row = np.stack([_to_img(t) for t in all_imgs], axis=0)
 
     # ── Persist rows across epochs ────────────────────────────────────────────
@@ -1784,7 +2050,9 @@ def plot_reconstruction_diffusion_progression(
     row_gap = 0.15
     title_pad = 0.55  # extra height for two-line header
     divider_gap = 0.08
-    n_dividers = len(T_VALUES) + 1  # one before originals group, one before each T group
+    n_dividers = (
+        len(T_VALUES) + 1
+    )  # one before originals group, one before each T group
 
     fig_w = label_width + n_cols * img_inches + n_dividers * divider_gap
     fig_h = title_pad + N_ROWS_TOTAL * img_inches + (N_ROWS_TOTAL - 1) * row_gap
@@ -1809,21 +2077,34 @@ def plot_reconstruction_diffusion_progression(
 
     # ── Group header labels ───────────────────────────────────────────────────
     header_y = 1.0 - (title_pad * 0.4 / fig_h)
-    for g_idx, (g_start, g_label) in enumerate(zip(group_starts, group_labels, strict=False)):
+    for g_idx, (g_start, g_label) in enumerate(
+        zip(group_starts, group_labels, strict=False)
+    ):
         g_end = g_start + (n_orig if g_idx == 0 else n_pairs)
         cx = (_col_x(g_start) + _col_x(g_end - 1)) / 2
-        fig.text(cx, header_y, g_label, ha="center", va="center", fontsize=7, color="#555555")
+        fig.text(
+            cx, header_y, g_label, ha="center", va="center", fontsize=7, color="#555555"
+        )
 
     # ── Image axes ───────────────────────────────────────────────────────────
-    for r, (row_samples, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
+    for r, (row_samples, ep) in enumerate(
+        zip(padded_rows, padded_epochs, strict=False)
+    ):
         for c in range(n_cols):
             left = _col_left(c)
-            bottom = 1.0 - (title_pad / fig_h) - (r + 1) * (img_inches / fig_h) - r * (row_gap / fig_h)
+            bottom = (
+                1.0
+                - (title_pad / fig_h)
+                - (r + 1) * (img_inches / fig_h)
+                - r * (row_gap / fig_h)
+            )
             width = img_inches / fig_w
             height = img_inches / fig_h
             ax = fig.add_axes([left, bottom, width, height])
             if channels == 1:
-                ax.imshow(row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+                ax.imshow(
+                    row_samples[c], cmap="gray", vmin=0, vmax=1, interpolation="nearest"
+                )
             else:
                 ax.imshow(row_samples[c], vmin=0, vmax=1, interpolation="nearest")
             ax.axis("off")
@@ -1831,7 +2112,10 @@ def plot_reconstruction_diffusion_progression(
         # Row epoch label
         fig.text(
             (label_width * 0.5) / fig_w,
-            1.0 - (title_pad / fig_h) - (r + 0.5) * (img_inches / fig_h) - r * (row_gap / fig_h),
+            1.0
+            - (title_pad / fig_h)
+            - (r + 0.5) * (img_inches / fig_h)
+            - r * (row_gap / fig_h),
             f"ep {ep}",
             ha="center",
             va="center",
@@ -1854,7 +2138,9 @@ def plot_reconstruction_diffusion_progression(
             )
         )
 
-    fig.suptitle("Reconstruction Diffusion Progression", fontsize=11, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Reconstruction Diffusion Progression", fontsize=11, fontweight="bold", y=1.02
+    )
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -1920,7 +2206,11 @@ def plot_weight_profile_progression(
 
     if model.normalize:
         raw_rows_path = os.path.join(metadata_dir, f"{filename}_raw_weights.npy")
-        all_raw = list(np.load(raw_rows_path, allow_pickle=True)) + [weights_raw_np] if os.path.exists(raw_rows_path) else [weights_raw_np]  # noqa: RUF005
+        all_raw = (
+            list(np.load(raw_rows_path, allow_pickle=True)) + [weights_raw_np]
+            if os.path.exists(raw_rows_path)
+            else [weights_raw_np]
+        )  # noqa: RUF005
         np.save(raw_rows_path, np.array(all_raw, dtype=object))
 
     # ── 3. Plotting ───────────────────────────────────────────────────────────
@@ -1937,14 +2227,21 @@ def plot_weight_profile_progression(
             ax.plot(all_weights[i], color="#E67E22", linewidth=0.6, label="normalized")
             if model.normalize and i < len(all_raw):
                 ax2 = ax.twinx()
-                ax2.plot(all_raw[i], color="#4A90E2", linewidth=0.6, alpha=0.6, label="raw")
+                ax2.plot(
+                    all_raw[i], color="#4A90E2", linewidth=0.6, alpha=0.6, label="raw"
+                )
                 ax2.spines[["top", "right"]].set_visible(False)
             ax.set_ylim(y_min * 1.2, y_max * 1.2)
             ax.set_ylabel(f"ep {all_epochs[i]}", fontsize=9, fontweight="bold")
         ax.spines[["top", "right"]].set_visible(False)
 
     plt.xlabel("Weight Index (0 to N)")
-    fig.suptitle("Weight Vector Profile Progression (Single Sample)", fontsize=12, fontweight="bold", y=0.96)
+    fig.suptitle(
+        "Weight Vector Profile Progression (Single Sample)",
+        fontsize=12,
+        fontweight="bold",
+        y=0.96,
+    )
     plt.savefig(os.path.join(run_dir, f"{filename}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -2014,7 +2311,9 @@ def plot_weight_distribution_progression(
     model.train()
 
     # ── 4. Persist raw, normalized, and noised weights ────────────────────────
-    def _load_or_init(meta_path: str, data_path: str, new_data: np.ndarray, new_epoch: int):
+    def _load_or_init(
+        meta_path: str, data_path: str, new_data: np.ndarray, new_epoch: int
+    ):
         """Load existing history and append new data, or start fresh."""
         if os.path.exists(meta_path) and os.path.exists(data_path):
             with open(meta_path) as f:
@@ -2038,7 +2337,9 @@ def plot_weight_distribution_progression(
 
     all_weights, all_epochs = _load_or_init(raw_meta, raw_data, weights_batch_np, epoch)
     # all_normalized, all_epochs_norm = _load_or_init(norm_meta, norm_data, weights_normalized_np, epoch)
-    all_noised, all_epochs_noised = _load_or_init(noised_meta, noised_data, theta_T_np, epoch)
+    all_noised, all_epochs_noised = _load_or_init(
+        noised_meta, noised_data, theta_T_np, epoch
+    )
 
     # ── 5. Plotting helper ────────────────────────────────────────────────────
     def _plot_progression(
@@ -2061,7 +2362,14 @@ def plot_weight_distribution_progression(
             if i < len(all_data):
                 w = all_data[i]
                 mu_val, std_val = np.mean(w), np.std(w)
-                ax.hist(w, bins=100, color="#4A90E2", alpha=0.7, range=(x_min, x_max), density=True)
+                ax.hist(
+                    w,
+                    bins=100,
+                    color="#4A90E2",
+                    alpha=0.7,
+                    range=(x_min, x_max),
+                    density=True,
+                )
 
                 if reference_gaussian:
                     xs = np.linspace(x_min, x_max, 300)
@@ -2084,7 +2392,12 @@ def plot_weight_distribution_progression(
                     ha="right",
                     va="top",
                     fontsize=8,
-                    bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+                    bbox={
+                        "boxstyle": "round",
+                        "fc": "white",
+                        "alpha": 0.6,
+                        "ec": "none",
+                    },
                 )
             ax.spines[["top", "right"]].set_visible(False)
 
@@ -2176,7 +2489,11 @@ def plot_forward_trajectory_progression(
     model.eval()
     # print("DEBUG: [Trajectory]", model.probablistic, "normalize", model.normalize)
 
-    if model_name in ("latent_inr_diffusion", "weight_inr_diffusion", "weight_inr_ndm_diffusion"):
+    if model_name in (
+        "latent_inr_diffusion",
+        "weight_inr_diffusion",
+        "weight_inr_ndm_diffusion",
+    ):
         if x.dim() == 2:
             channels = x.shape[1] // (model.img_size * model.img_size)
             x = x.view(x.shape[0], channels, model.img_size, model.img_size)
@@ -2189,7 +2506,11 @@ def plot_forward_trajectory_progression(
 
         raw_arrays = []
         for t in T_values_sorted:
-            theta_t = z if t == 0 else model._forward_process(z, torch.tensor([t], device=z.device))[0]
+            theta_t = (
+                z
+                if t == 0
+                else model._forward_process(z, torch.tensor([t], device=z.device))[0]
+            )
             raw_arrays.append(theta_t.detach().cpu().numpy().flatten())
 
     else:
@@ -2264,7 +2585,12 @@ def plot_forward_trajectory_progression(
     header_pad = 0.35
 
     fig_w = label_width + n_cols * col_width + (n_cols - 1) * col_gap
-    fig_h = title_pad + header_pad + N_ROWS_TOTAL * row_height + (N_ROWS_TOTAL - 1) * row_gap
+    fig_h = (
+        title_pad
+        + header_pad
+        + N_ROWS_TOTAL * row_height
+        + (N_ROWS_TOTAL - 1) * row_gap
+    )
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor("white")
 
@@ -2273,10 +2599,25 @@ def plot_forward_trajectory_progression(
         cx = (label_width + c * (col_width + col_gap) + col_width * 0.5) / fig_w
         cy = 1.0 - (title_pad / fig_h) - (header_pad * 0.6 / fig_h)
         label = f"t = {t_val}" if t_val > 0 else "t = 0 (raw)"
-        fig.text(cx, cy, label, ha="center", va="center", fontsize=8, color="#555555", fontweight="bold")
+        fig.text(
+            cx,
+            cy,
+            label,
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#555555",
+            fontweight="bold",
+        )
 
     for r, (row_data, ep) in enumerate(zip(padded_rows, padded_epochs, strict=False)):
-        row_bottom = 1.0 - (title_pad / fig_h) - (header_pad / fig_h) - (r + 1) * (row_height / fig_h) - r * (row_gap / fig_h)
+        row_bottom = (
+            1.0
+            - (title_pad / fig_h)
+            - (header_pad / fig_h)
+            - (r + 1) * (row_height / fig_h)
+            - r * (row_gap / fig_h)
+        )
         for c in range(n_cols):
             left = (label_width + c * (col_width + col_gap)) / fig_w
             ax = fig.add_axes([left, row_bottom, col_width / fig_w, row_height / fig_h])
@@ -2288,12 +2629,26 @@ def plot_forward_trajectory_progression(
                 mu_val, std_val = hist["mu"], hist["std"]
 
                 # Reconstruct bar plot from pre-computed histogram
-                ax.bar(edges[:-1], counts, width=np.diff(edges), align="edge", color="#E2844A", alpha=0.75)
+                ax.bar(
+                    edges[:-1],
+                    counts,
+                    width=np.diff(edges),
+                    align="edge",
+                    color="#E2844A",
+                    alpha=0.75,
+                )
 
                 if T_values_sorted[c] > 0:
                     xs = np.linspace(edges[0], edges[-1], 300)
                     gaussian = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * xs**2)
-                    ax.plot(xs, gaussian, color="#333333", linewidth=1.0, linestyle="--", label="N(0,1)")
+                    ax.plot(
+                        xs,
+                        gaussian,
+                        color="#333333",
+                        linewidth=1.0,
+                        linestyle="--",
+                        label="N(0,1)",
+                    )
 
                 ax.text(
                     0.97,
@@ -2303,7 +2658,12 @@ def plot_forward_trajectory_progression(
                     ha="right",
                     va="top",
                     fontsize=7,
-                    bbox={"boxstyle": "round", "fc": "white", "alpha": 0.6, "ec": "none"},
+                    bbox={
+                        "boxstyle": "round",
+                        "fc": "white",
+                        "alpha": 0.6,
+                        "ec": "none",
+                    },
                 )
 
             ax.spines[["top", "right"]].set_visible(False)
@@ -2321,7 +2681,12 @@ def plot_forward_trajectory_progression(
             color="#333333",
         )
 
-    fig.suptitle("Forward Noising Trajectory — Weight Distributions", fontsize=11, fontweight="bold", y=0.99)
+    fig.suptitle(
+        "Forward Noising Trajectory — Weight Distributions",
+        fontsize=11,
+        fontweight="bold",
+        y=0.99,
+    )
     save_path = os.path.join(run_dir, f"{filename}.png")
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -2382,15 +2747,32 @@ def plot_val_elbo_progression(
     ax.set_facecolor("#fcfcfc")
 
     # Plot historical trajectory tracking lines
-    ax.plot(sorted_epochs, sorted_elbos, marker="o", color="#2b5c8f", linestyle="-", linewidth=2, markersize=5, label="Validation ELBO")
+    ax.plot(
+        sorted_epochs,
+        sorted_elbos,
+        marker="o",
+        color="#2b5c8f",
+        linestyle="-",
+        linewidth=2,
+        markersize=5,
+        label="Validation ELBO",
+    )
 
     # Text annotation for the most recent tracking point
     ax.annotate(
-        f"{avg_elbo:.4f}", xy=(epoch, avg_elbo), xytext=(5, 5), textcoords="offset points", fontsize=9, fontweight="bold", color="#1a365d"
+        f"{avg_elbo:.4f}",
+        xy=(epoch, avg_elbo),
+        xytext=(5, 5),
+        textcoords="offset points",
+        fontsize=9,
+        fontweight="bold",
+        color="#1a365d",
     )
 
     # Layout and styling cleanups
-    ax.set_title("Validation Full ELBO Progression", fontsize=12, fontweight="bold", pad=12)
+    ax.set_title(
+        "Validation Full ELBO Progression", fontsize=12, fontweight="bold", pad=12
+    )
     ax.set_xlabel("Epoch", fontsize=10, color="#333333")
     ax.set_ylabel("ELBO (higher is better)", fontsize=10, color="#333333")
     ax.grid(True, linestyle="--", alpha=0.5, color="#cccccc")
@@ -2443,7 +2825,9 @@ def _build_figure(
     REAL_LABEL = "Real MNIST"  # noqa: N806
 
     # Load 16 real MNIST images for the grid
-    mnist = datasets.MNIST("data/", train=False, download=True, transform=transforms.ToTensor())
+    mnist = datasets.MNIST(
+        "data/", train=False, download=True, transform=transforms.ToTensor()
+    )
     indices = np.random.choice(len(mnist), 16, replace=False)
     real_grid = np.stack([mnist[i][0].numpy() for i in indices])  # (16, 1, 28, 28)
 
@@ -2504,8 +2888,12 @@ def _build_figure(
     tbl.scale(1, 2.2)
 
     best_mnist = min(range(n_models), key=lambda i: metrics[model_keys[i]]["mnist_fid"])
-    best_inception = min(range(n_models), key=lambda i: metrics[model_keys[i]]["inception_fid"])
-    best_uniformity = min(range(n_models), key=lambda i: metrics[model_keys[i]]["uniformity"])
+    best_inception = min(
+        range(n_models), key=lambda i: metrics[model_keys[i]]["inception_fid"]
+    )
+    best_uniformity = min(
+        range(n_models), key=lambda i: metrics[model_keys[i]]["uniformity"]
+    )
     best_cols = {1: best_mnist, 2: best_inception, 3: best_uniformity}
 
     for (row, col), cell in tbl.get_celld().items():
@@ -2516,7 +2904,9 @@ def _build_figure(
             cell.set_facecolor("#eeeeee")
             cell.set_text_props(fontweight="bold", color="#111111")
         if row > 0 and col == 0:
-            cell.set_text_props(color=metrics[model_keys[row - 1]]["color"], fontweight="bold")
+            cell.set_text_props(
+                color=metrics[model_keys[row - 1]]["color"], fontweight="bold"
+            )
         if row > 0 and col in best_cols:  # noqa: SIM102
             if best_cols[col] == row - 1:
                 cell.set_text_props(color="#2a9d3a", fontweight="bold")
@@ -2532,7 +2922,9 @@ def _build_figure(
     # ── Image grids (real + 3 models) ─────────────────────────────────────────
     all_grids = [real_grid] + [sample_images[k] for k in model_keys]
 
-    for g, (images, label, color) in enumerate(zip(all_grids, grid_labels, grid_colors, strict=False)):
+    for g, (images, label, color) in enumerate(
+        zip(all_grids, grid_labels, grid_colors, strict=False)
+    ):
         for idx in range(16):
             ax = grid_axes[g][idx]
             img = images[idx]
@@ -2558,9 +2950,13 @@ def _build_figure(
     all_labels = [REAL_LABEL] + [metrics[k]["label"] for k in model_keys]
     y_max = max(d.max() for d in all_dists) * 100 * 1.25
 
-    for i, (ax, dist, color, label) in enumerate(zip(bar_axes, all_dists, all_colors, all_labels, strict=False)):
+    for i, (ax, dist, color, label) in enumerate(
+        zip(bar_axes, all_dists, all_colors, all_labels, strict=False)
+    ):
         ax.bar(digits, dist * 100, color=color, alpha=0.85, width=0.65)
-        ax.axhline(10, color="#999999", linewidth=1.0, linestyle="--", label="Uniform (10%)")
+        ax.axhline(
+            10, color="#999999", linewidth=1.0, linestyle="--", label="Uniform (10%)"
+        )
         ax.set_xticks(digits)
         ax.set_xticklabels([str(d) for d in digits], fontsize=10)
         ax.set_ylim(0, y_max)

@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import torch
+from models.classifier.MNIST_classifier import UNetClassifier
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
@@ -12,7 +13,6 @@ from src.configs.results_config import (
     CLASSIFIER_CONFIG,
     CLASSIFIER_WEIGHTS,
 )
-from src.models.MNIST_classifier import UNetClassifier
 
 
 def _load_classifier(device: str) -> UNetClassifier:
@@ -33,7 +33,7 @@ def _load_classifier(device: str) -> UNetClassifier:
 
 
 def _get_inception(device: str):
-    from pytorch_fid.inception import InceptionV3
+    from pytorch_fid.inception import InceptionV3  # type: ignore
 
     block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
     inception = InceptionV3([block_idx]).to(device).eval()
@@ -51,7 +51,9 @@ def _inception_features(
     from torchvision.transforms.functional import resize
 
     all_feats = []
-    for i in tqdm(range(0, len(images_01), batch_size), desc="    Inception features", leave=False):
+    for i in tqdm(
+        range(0, len(images_01), batch_size), desc="    Inception features", leave=False
+    ):
         batch = images_01[i : i + batch_size]  # keep on CPU for resize
         if batch.shape[1] == 1:
             batch = batch.repeat(1, 3, 1, 1)
@@ -105,10 +107,16 @@ def _load_or_compute_real_features(
     if os.path.exists(CACHE_PATH):
         print("  Loading cached real MNIST features …")
         data = np.load(CACHE_PATH)
-        return data["mnist_features"], data["inception_features"], data["label_distribution"]
+        return (
+            data["mnist_features"],
+            data["inception_features"],
+            data["label_distribution"],
+        )
 
     print("  Computing real MNIST features (first run — will be cached) …")
-    mnist = datasets.MNIST("data/", train=True, download=True, transform=transforms.ToTensor())
+    mnist = datasets.MNIST(
+        "data/", train=True, download=True, transform=transforms.ToTensor()
+    )
     loader = torch.utils.data.DataLoader(mnist, batch_size=512, shuffle=False)
 
     all_imgs = []

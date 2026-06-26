@@ -7,7 +7,7 @@ from datetime import datetime
 import torch
 from torch import nn
 
-from src.utility.model_builders import build_model
+from src.utility.model_builders.model_builder import build_model
 
 _RESULTS_ROOT = "src/train_results"
 
@@ -77,9 +77,17 @@ def _draw_grid(
     for i, ax in enumerate(axes):
         img = images[i]
         if channels == 1:
-            ax.imshow(img.squeeze(0).numpy(), cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            ax.imshow(
+                img.squeeze(0).numpy(),
+                cmap="gray",
+                vmin=0,
+                vmax=1,
+                interpolation="nearest",
+            )
         else:
-            ax.imshow(img.permute(1, 2, 0).numpy(), vmin=0, vmax=1, interpolation="nearest")
+            ax.imshow(
+                img.permute(1, 2, 0).numpy(), vmin=0, vmax=1, interpolation="nearest"
+            )
         ax.axis("off")
 
 
@@ -191,7 +199,9 @@ def _save_config(
     if os.path.exists(path):
         with open(path) as f:
             old = json.load(f)
-        config["timing"]["start"] = old["timing"].get("start", config["timing"]["start"])
+        config["timing"]["start"] = old["timing"].get(
+            "start", config["timing"]["start"]
+        )
         config["epochs"]["start"] = old["epochs"].get("start", start_epoch)
 
     with open(path, "w") as f:

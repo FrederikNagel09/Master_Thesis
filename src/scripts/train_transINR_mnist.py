@@ -17,7 +17,8 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 sys.path.append(".")
 
 
-from src.models.trans_inr import TransInr  # noqa: E402
+from models.latent_diffusion.modules.trans_inr import TransInr  # noqa: E402
+
 from src.utility.evaluation import run_evaluation  # noqa: E402
 
 # =============================================================================
@@ -91,7 +92,11 @@ class ImprovedMNISTEncoder(nn.Module):
         self.latent_res = latent_res
 
         # 1. Initial Feature Extraction (28x28 -> 14x14)
-        self.initial = nn.Sequential(nn.Conv2d(1, 64, 3, stride=2, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True))
+        self.initial = nn.Sequential(
+            nn.Conv2d(1, 64, 3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
 
         # 2. Deep Feature Extraction (14x14)
         self.res_layers = nn.Sequential(
@@ -143,7 +148,9 @@ class VAE(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.encoder = ImprovedMNISTEncoder(latent_chan=config["latent_chan"], latent_res=config["latent_res"])
+        self.encoder = ImprovedMNISTEncoder(
+            latent_chan=config["latent_chan"], latent_res=config["latent_res"]
+        )
 
         tokenizer_cfg = {
             "target": "src.models.trans_inr_helpers.LatentTokenizer",
@@ -205,14 +212,20 @@ def build_dataloaders():
         ]
     )
 
-    train_full = torchvision.datasets.MNIST(root=DATA_ROOT, train=True, download=True, transform=transform)
-    val_full = torchvision.datasets.MNIST(root=DATA_ROOT, train=False, download=True, transform=transform)
+    train_full = torchvision.datasets.MNIST(
+        root=DATA_ROOT, train=True, download=True, transform=transform
+    )
+    val_full = torchvision.datasets.MNIST(
+        root=DATA_ROOT, train=False, download=True, transform=transform
+    )
 
     # --- optional subset ---
     if SUBSET_SIZE is not None:
         indices = torch.randperm(len(train_full))[:SUBSET_SIZE].tolist()
         train_ds = Subset(train_full, indices)
-        print(f"[data] Using subset of {SUBSET_SIZE}/{len(train_full)} training samples")
+        print(
+            f"[data] Using subset of {SUBSET_SIZE}/{len(train_full)} training samples"
+        )
     else:
         train_ds = train_full
         print(f"[data] Using full training set ({len(train_full)} samples)")
@@ -250,12 +263,18 @@ class WarmupCosineScheduler:
     def step(self):
         self._step += 1
         s = self._step
-        for pg, base_lr in zip(self.optimizer.param_groups, self.base_lrs, strict=False):
+        for pg, base_lr in zip(
+            self.optimizer.param_groups, self.base_lrs, strict=False
+        ):
             if s <= self.warmup_steps:
                 lr = base_lr * s / max(1, self.warmup_steps)
             else:
-                progress = (s - self.warmup_steps) / max(1, self.total_steps - self.warmup_steps)
-                lr = self.min_lr + 0.5 * (base_lr - self.min_lr) * (1 + math.cos(math.pi * progress))
+                progress = (s - self.warmup_steps) / max(
+                    1, self.total_steps - self.warmup_steps
+                )
+                lr = self.min_lr + 0.5 * (base_lr - self.min_lr) * (
+                    1 + math.cos(math.pi * progress)
+                )
             pg["lr"] = lr
 
     @property
@@ -308,7 +327,13 @@ def evaluate(encoder, model, loader, criterion, device):
 
 def train():
     # 1. Setup Device & Data
-    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
     print(f"[device] {device}")
 
     # ---- data -------------------------------------------------------------
@@ -333,9 +358,14 @@ def train():
     }
 
     model = VAE(cfg).to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer = optim.AdamW(
+        model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
+    )
 
-    print(f"\n[train] Starting — {NUM_EPOCHS} epochs, " f"{steps_per_epoch} steps/epoch, batch={BATCH_SIZE}\n")
+    print(
+        f"\n[train] Starting — {NUM_EPOCHS} epochs, "
+        f"{steps_per_epoch} steps/epoch, batch={BATCH_SIZE}\n"
+    )
     global_step = 0
     for epoch in range(NUM_EPOCHS):
         model.train()
@@ -346,12 +376,16 @@ def train():
             images = images.to(device)
 
             # KL Annealing logic
-            kl_weight = min(KL_WEIGHT_TARGET, KL_WEIGHT_TARGET * (global_step / KL_ANNEAL_STEPS))
+            kl_weight = min(
+                KL_WEIGHT_TARGET, KL_WEIGHT_TARGET * (global_step / KL_ANNEAL_STEPS)
+            )
 
             pred, mu, logvar = model(images)
 
             recon_loss = F.l1_loss(pred, images)
-            kl_loss = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3]))
+            kl_loss = -0.5 * torch.mean(
+                torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3])
+            )
             loss = recon_loss + kl_weight * kl_loss
 
             optimizer.zero_grad()
@@ -362,7 +396,11 @@ def train():
             global_step += 1
             total_recon += recon_loss.item()
             total_kl += kl_loss.item()
-            pbar.set_postfix(recon=f"{recon_loss.item():.4f}", kl=f"{kl_loss.item():.2f}", kl_w=f"{kl_weight:.2e}")
+            pbar.set_postfix(
+                recon=f"{recon_loss.item():.4f}",
+                kl=f"{kl_loss.item():.2f}",
+                kl_w=f"{kl_weight:.2e}",
+            )
 
         # Epoch Summary
         avg_recon = total_recon / len(train_loader)
@@ -372,9 +410,18 @@ def train():
         # Save everything
         if (epoch + 1) % 5 == 0:
             save_path = os.path.join(CHECKPOINT_DIR, "vae_transINR_weights_v4.pt")
-            torch.save({"model_state": model.state_dict(), "config": cfg, "epoch": epoch}, save_path)
+            torch.save(
+                {"model_state": model.state_dict(), "config": cfg, "epoch": epoch},
+                save_path,
+            )
 
-    run_evaluation(model=model, config=cfg, output_path="src/results/vae_final_evaluation.png", device=device, data_root=DATA_ROOT)
+    run_evaluation(
+        model=model,
+        config=cfg,
+        output_path="src/results/vae_final_evaluation.png",
+        device=device,
+        data_root=DATA_ROOT,
+    )
 
 
 if __name__ == "__main__":
