@@ -888,10 +888,17 @@ def _build_weight_diffusion(args, data_config: dict):
     """
     Build WeightDiffusion:
         TransInrEncoder as W(x) + NDM diffusion in weight space.
+        Updated to support 3D volumetric data.
     """
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
+    is_3d = data_config.get("is_3d", False)
+    
+    # Handle 3D vs 2D dimensionality
+    data_shape = (img_size, img_size, img_size) if is_3d else (img_size, img_size)
+    inr_in_dim = 3 if is_3d else 2
+    inr_out_act = "sigmoid" if is_3d else "tanh"
 
     # ── TransInrEncoder config ────────────────────────────────────────────────
     encoder_dim = getattr(args, "encoder_trans_dim", 256)
@@ -900,32 +907,51 @@ def _build_weight_diffusion(args, data_config: dict):
     encoder_ff_dim = getattr(args, "encoder_trans_ff_dim", 512)
     encoder_enc_depth = getattr(args, "encoder_trans_enc_depth", 4)
     encoder_dec_depth = getattr(args, "encoder_trans_dec_depth", 4)
-    encoder_patch_size = getattr(args, "encoder_trans_patch_size", 4)
+    encoder_patch_size = getattr(args, "encoder_trans_patch_size", 4) # Should be (pd, ph, pw) if 3D
     encoder_n_groups = getattr(args, "encoder_trans_n_groups", 8)
     encoder_update_strat = getattr(args, "encoder_trans_update_strategy", "scale")
     inr_hidden = getattr(args, "inr_hidden_dim", 256)
     inr_layers = getattr(args, "inr_layers", 5)
 
-    tokenizer_cfg = {
-        "target": "src.models.trans_inr_helpers.ImageTokenizer",
-        "params": {
-            "in_channels": channels,
-            "image_size": img_size,
-            "patch_size": encoder_patch_size,
-            "n_head": encoder_n_head,
-            "head_dim": encoder_head_dim,
-        },
+    # Use VolumeTokenizer if 3D, else keep ImageTokenizer
+    tokenizer_target = "src.models.trans_inr_helpers.VolumeTokenizer" if is_3d else "src.models.trans_inr_helpers.ImageTokenizer"
+    
+    # Ensure patch_size is a tuple (pd, ph, pw)
+    if isinstance(encoder_patch_size, int):
+        # Assuming isotropic patches if a single int is provided
+        patch_size_tuple = (encoder_patch_size, encoder_patch_size, encoder_patch_size)
+    else:
+        patch_size_tuple = encoder_patch_size
+
+    tokenizer_params = {
+        "in_channels": channels,
+        "patch_size": patch_size_tuple,  # Use the tuple here
+        "n_head": encoder_n_head,
+        "head_dim": encoder_head_dim,
     }
+    # Add size parameter specific to tokenizer type
+    if is_3d:
+        tokenizer_params["vol_size"] = data_shape
+    else:
+        tokenizer_params["image_size"] = img_size
+
+    tokenizer_cfg = {
+        "target": tokenizer_target,
+        "params": tokenizer_params,
+    }
+    
     inr_cfg = {
         "target": "src.models.trans_inr_helpers.SIREN",
         "params": {
             "depth": inr_layers,
-            "in_dim": 2,
+            "in_dim": inr_in_dim,
             "out_dim": channels,
             "hidden_dim": inr_hidden,
             "out_bias": 0.5,
+            "out_activation": inr_out_act,
         },
     }
+    
     transformer_cfg = {
         "target": "src.models.trans_inr_helpers.Transformer",
         "params": {
@@ -937,6 +963,7 @@ def _build_weight_diffusion(args, data_config: dict):
             "ff_dim": encoder_ff_dim,
         },
     }
+    
     encoder = TransInrEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
@@ -944,7 +971,7 @@ def _build_weight_diffusion(args, data_config: dict):
         transformer=transformer_cfg,
         update_strategy=encoder_update_strat,
         in_channels=channels,
-        img_size=img_size,
+        img_size=data_shape, # Pass full shape tuple
     )
     weight_dim = encoder.modulation_dim
     encoder_params = print_encoder_stats(encoder)
@@ -991,7 +1018,7 @@ def _build_weight_diffusion(args, data_config: dict):
     noise_predictor_params = print_noise_predictor_stats(network)
 
     # ── Coordinate grid ───────────────────────────────────────────────────────
-    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
+    coord_grid = make_coord_grid(data_shape, (-1, 1))
 
     # ── Assemble ──────────────────────────────────────────────────────────────
     model = WeightDiffusion(
@@ -1003,7 +1030,7 @@ def _build_weight_diffusion(args, data_config: dict):
         T=args.T,
         sigma_tilde_factor=args.sigma_tilde,
         data_dim=data_dim,
-        img_size=img_size,
+        img_size=data_shape, # Updated to tuple
         stop_gradient_flow=args.stop_gradient_flow,
         normalize=args.normalize,
     )

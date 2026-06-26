@@ -110,7 +110,7 @@ def parse_args() -> argparse.Namespace:
     # Run
     p.add_argument("--run_name",    type=str,   required=True)
     p.add_argument("--ldm_config",  type=str,   required=True, help="Path to LDM config .json")
-    p.add_argument("--results_dir", type=str,   default="src/results")
+    p.add_argument("--results_dir", type=str,   default="src/train_results")
     p.add_argument(
         "--mode", type=str, required=True, choices=["fixed", "convergence"],
         help="'fixed': explicit epoch counts; 'convergence': early-stop both stages",

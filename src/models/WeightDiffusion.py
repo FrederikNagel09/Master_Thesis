@@ -149,11 +149,6 @@ class WeightDiffusion(nn.Module):
         self.register_buffer("sigma_sq", 1.0 - alpha_cumprod)
         self.register_buffer("sigma", (1.0 - alpha_cumprod).sqrt())
         # --- Pre-build pixel coordinate grid for MNIST (28x28) ---
-        xs = torch.linspace(-1, 1, img_size)
-        ys = torch.linspace(-1, 1, img_size)
-        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
-        coords = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=-1)  # (784, 2)
-        self.register_buffer("coords", coords.unsqueeze(0))  # (1, 784, 2)
         # Register coord grid as buffer so it moves with the model
         self.register_buffer("trans_coord", coord_grid, persistent=False)
 

@@ -309,6 +309,9 @@ from src.utility.run_training import run_training  # noqa: E402
 
 
 def main():
+    import torch
+    torch.autograd.set_detect_anomaly(True)
+    
     parser = get_default_parser()
     args = parser.parse_args()
     log_file_path = f"src/logs/{args.run_name}.log"

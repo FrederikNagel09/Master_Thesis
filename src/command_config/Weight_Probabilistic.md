@@ -86,7 +86,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --run_name weight-diffusion-3D-data \
     --epochs 5 \
     --batch_size 64 \
-    --subset_frac 0.1 \
+    --subset_frac 1.0 \
     --stop_gradient_flow True \
     --normalize True \
     --n_fid_samples 16 \

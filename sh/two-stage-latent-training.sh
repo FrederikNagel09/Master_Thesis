@@ -31,7 +31,7 @@ python /zhome/66/4/156534/Master_Thesis/src/scripts/two-stage-latent-training.py
     --vae_delta 1e-4 \
     --ddpm_check_every 5 \
     --ddpm_patience 30 \
-    --ddpm_delta 7e-5 \
+    --ddpm_delta 1e-4 \
     --ddpm_max_epochs 2000 \
     --T 1000 \
     --beta_1 1e-4 \
