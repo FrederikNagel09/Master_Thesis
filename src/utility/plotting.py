@@ -2978,3 +2978,139 @@ def _build_figure(
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"  Figure saved → {out_path}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PLOTTING
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def save_vae_training_graph(
+    history: dict,
+    steps_per_epoch: int,
+    total_epochs: int,
+    save_path: str,
+    plot_every_n: int = 100,
+) -> None:
+    """
+    Save 3-panel VAE training curve (ELBO, recon, KL).
+
+    Args:
+        history        (dict): keys "elbo", "recon", "kl" — per-step values
+        steps_per_epoch(int):  optimizer steps per epoch
+        total_epochs   (int):  total epochs completed
+        save_path      (str):  output .png path
+        plot_every_n   (int):  downsample factor for plotting
+    Returns:
+        None
+    """
+    max_ticks = 10
+    step = max(1, total_epochs // max_ticks)
+    tick_pos = [
+        i * steps_per_epoch // plot_every_n for i in range(0, total_epochs + 1, step)
+    ]
+    tick_labels = [str(i) for i in range(0, total_epochs + 1, step)]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    panels = [
+        ("elbo", "Total ELBO", "tab:blue"),
+        ("recon", "Reconstruction Loss", "tab:orange"),
+        ("kl", "KL Loss", "tab:green"),
+    ]
+    for ax, (key, title, color) in zip(axes, panels):  # noqa: B905
+        downsampled = history[key][::plot_every_n]
+        ax.plot(
+            range(len(downsampled)), downsampled, color=color, linewidth=0.8, alpha=0.85
+        )
+        ax.set_title(title)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_labels)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    fig.suptitle("VAE Training Curves", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
+def save_ddpm_training_graph(
+    history: dict,
+    steps_per_epoch: int,
+    total_epochs: int,
+    save_path: str,
+    plot_every_n: int = 100,
+) -> None:
+    """
+    Save DDPM training curve (train loss, val loss, periodic FID).
+
+    Args:
+        history        (dict): keys "train_loss", "val_loss", "fid_epochs", "fid_scores"
+        steps_per_epoch(int):  optimizer steps per epoch
+        total_epochs   (int):  total DDPM epochs completed
+        save_path      (str):  output .png path
+        plot_every_n   (int):  downsample factor for train loss
+    Returns:
+        None
+    """
+    max_ticks = 10
+    step = max(1, total_epochs // max_ticks)
+
+    has_fid = len(history.get("fid_epochs", [])) > 0
+
+    n_panels = 3 if has_fid else 2
+    fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 4))
+
+    tick_pos = [
+        i * steps_per_epoch // plot_every_n for i in range(0, total_epochs + 1, step)
+    ]
+    tick_labels = [str(i) for i in range(0, total_epochs + 1, step)]
+    downsampled = history["train_loss"][::plot_every_n]
+    axes[0].plot(
+        range(len(downsampled)),
+        downsampled,
+        color="tab:blue",
+        linewidth=0.8,
+        alpha=0.85,
+    )
+    axes[0].set_title("DDPM Train Loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("MSE")
+    axes[0].set_xticks(tick_pos)
+    axes[0].set_xticklabels(tick_labels)
+    axes[0].grid(True, linestyle="--", alpha=0.4)
+
+    val_epochs = history.get("val_epochs", [])
+    val_losses = history.get("val_loss", [])
+    axes[1].plot(
+        val_epochs,
+        val_losses,
+        color="tab:orange",
+        linewidth=1.2,
+        marker="o",
+        markersize=3,
+    )
+    axes[1].set_title("DDPM Validation Loss")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("MSE")
+    axes[1].grid(True, linestyle="--", alpha=0.4)
+
+    if has_fid:
+        axes[2].plot(
+            history["fid_epochs"],
+            history["fid_scores"],
+            color="tab:red",
+            linewidth=1.2,
+            marker="o",
+            markersize=4,
+        )
+        axes[2].set_title("Inception FID (periodic)")
+        axes[2].set_xlabel("Epoch")
+        axes[2].set_ylabel("FID")
+        axes[2].grid(True, linestyle="--", alpha=0.4)
+
+    fig.suptitle("DDPM Training Curves", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close(fig)

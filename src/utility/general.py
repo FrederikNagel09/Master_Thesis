@@ -253,3 +253,118 @@ def _flat_to_image(
     """
     pixels = pixels.reshape(n_samples, channels, resolution, resolution)
     return pixels.clamp(0.0, 1.0).cpu()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CONFIG LOADING
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def load_ldm_config(path: str) -> dict:
+    """
+    Load hparams from a trained LDM config JSON.
+
+    Args:
+        path (str): path to config .json
+    Returns:
+        dict: hparams block from config
+    """
+    with open(path, "r") as f:  # noqa: UP015
+        config = json.load(f)
+    required_keys = [
+        "latent_dim",
+        "latent_size",
+        "latent_patch_size",
+        "latent_enc_hidden_dim",
+        "dec_trans_dim",
+        "dec_trans_n_head",
+        "dec_trans_head_dim",
+        "dec_trans_ff_dim",
+        "dec_trans_enc_depth",
+        "dec_trans_dec_depth",
+        "dec_trans_n_groups",
+        "dec_trans_update_strategy",
+        "inr_hidden_dim",
+        "inr_layers",
+        "dataset",
+        "pred_d_model",
+        "pred_n_heads",
+        "pred_n_layers",
+        "pred_d_ff",
+        "pred_t_embed_dim",
+        "noise_predictor_dropout",
+    ]
+    hparams = config["hparams"]
+    missing = [k for k in required_keys if k not in hparams]
+    if missing:
+        raise ValueError(f"LDM config missing required keys: {missing}")
+    return hparams
+
+
+_DDPM_ONLY_FILES = [
+    "_ldm_checkpoint.pt",
+    "_ldm_weights.pt",
+    "_ldm_config.json",
+    "_ddpm_training_curves.png",
+    "_eval_metrics.json",
+    "_ldm_samples_8x8.png",
+]
+
+
+def _clear_ddpm_files(results_dir: str, run_name: str) -> None:
+    """
+    Delete only Stage-2 output files, leaving VAE files intact.
+
+    Args:
+        results_dir (str): results directory
+        run_name    (str): run identifier prefix
+    Returns:
+        None
+    """
+    for suffix in _DDPM_ONLY_FILES:
+        path = os.path.join(results_dir, f"{run_name}{suffix}")
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"  Removed stale DDPM file: {path}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CONVERGENCE DETECTION
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class SmoothedPlateauDetector:
+    """
+    Stops training when a smoothed validation signal stops improving.
+    Compares mean of first vs second half of a rolling window of check values.
+    """
+
+    def __init__(self, patience: int, delta: float) -> None:
+        """
+        Args:
+            patience (int):   number of checks in the rolling window
+            delta    (float): minimum improvement to count as progress
+        """
+        self.patience = patience
+        self.delta = delta
+        self._window: list[float] = []
+
+    def step(self, value: float) -> bool:
+        """
+        Record a new check value and return True if training should stop.
+
+        Args:
+            value (float): latest validation metric (lower is better)
+        Returns:
+            bool: True if plateau detected
+        """
+        self._window.append(value)
+        if len(self._window) < self.patience:
+            return False
+
+        window = self._window[-self.patience :]
+        mid = len(window) // 2
+        first_half_avg = sum(window[:mid]) / mid
+        second_half_avg = sum(window[mid:]) / (len(window) - mid)
+        improvement = first_half_avg - second_half_avg
+        return improvement < self.delta

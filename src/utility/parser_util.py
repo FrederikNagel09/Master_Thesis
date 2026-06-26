@@ -19,9 +19,17 @@ def get_default_parser() -> argparse.ArgumentParser:
         "--model",
         type=str,
         required=True,
-        help=("'ndm' | 'inr_vae' | 'ndm_inr' | 'ndm_transinr' | " "'ndm_temporal_transinr' | 'ndm_static_mlpinr'"),
+        help=(
+            "'ndm' | 'inr_vae' | 'ndm_inr' | 'ndm_transinr' | "
+            "'ndm_temporal_transinr' | 'ndm_static_mlpinr'"
+        ),
     )
-    p.add_argument("--dataset", type=str, default="mnist", help="'mnist' | 'cifar10' | 'celeba | shapenet_voxels'")
+    p.add_argument(
+        "--dataset",
+        type=str,
+        default="mnist",
+        help="'mnist' | 'cifar10' | 'celeba | shapenet_voxels'",
+    )
     p.add_argument("--device", type=str, default="cuda")
 
     # ── Data ──────────────────────────────────────────────────────────────────
@@ -38,16 +46,28 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--weight_decay", type=float, default=0.0)
     p.add_argument("--grad_clip", type=float, default=1.0)
     p.add_argument("--log_every_n_steps", type=int, default=20)
-    p.add_argument("--resume", type=str, default=None, help="Path to a weights.pt checkpoint to resume from")
+    p.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to a weights.pt checkpoint to resume from",
+    )
     p.add_argument("--deactivate_progress_bar", type=bool, default=False)
     p.add_argument(
-        "--freeze_encoder", type=float, default=None, help="Fraction of training epochs to freeze the encoder for (only for NDM-INR)"
+        "--freeze_encoder",
+        type=float,
+        default=None,
+        help="Fraction of training epochs to freeze the encoder for (only for NDM-INR)",
     )
     p.add_argument("--normalize", type=lambda x: x.lower() == "true", default=True)
     p.add_argument("--probablistic", type=lambda x: x.lower() == "true", default=False)
     p.add_argument("--do_scaling", type=lambda x: x.lower() == "true", default=True)
-    p.add_argument("--do_latent_recon", type=lambda x: x.lower() == "true", default=True)
-    p.add_argument("--stop_gradient_flow", type=lambda x: x.lower() == "true", default=True)
+    p.add_argument(
+        "--do_latent_recon", type=lambda x: x.lower() == "true", default=True
+    )
+    p.add_argument(
+        "--stop_gradient_flow", type=lambda x: x.lower() == "true", default=True
+    )
     p.add_argument("--n_fid_samples", type=int, default=2048)
     # ── Scheduler ─────────────────────────────────────────────────────────────
     p.add_argument("--use_scheduler", action="store_true")
@@ -80,7 +100,9 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--f_phi_head_dim", type=int, default=64)
     p.add_argument("--f_phi_mlp_ratio", type=float, default=4.0)
 
-    p.add_argument("--f_phi_type", type=str, default="mlp", choices=["mlp", "trans", "param"])
+    p.add_argument(
+        "--f_phi_type", type=str, default="mlp", choices=["mlp", "trans", "param"]
+    )
     p.add_argument("--f_phi_hidden", type=int, nargs="+", default=[512, 512, 512])
     p.add_argument("--f_phi_t_embed", type=int, default=64)
     p.add_argument("--base_channels", type=int, default=64)
@@ -89,7 +111,9 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_t_embed", type=int, default=128)
 
     # ── NDM-INR Transformer / CNN settings ───────────────────────────────────
-    p.add_argument("--encoder_variant", default="mlp", choices=["mlp", "cnn", "transformer"])
+    p.add_argument(
+        "--encoder_variant", default="mlp", choices=["mlp", "cnn", "transformer"]
+    )
     p.add_argument("--predictor_variant", default="mlp", choices=["mlp", "transformer"])
     # Predictor transformer args
     p.add_argument("--transformer_chunk_size", type=int, default=32)
@@ -110,7 +134,9 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--enc_dropout", type=float, default=0.1)
 
     # ─── NDM-INR────────────────────────────────────────────────────────────────
-    p.add_argument("--ndm_variant", type=str, default="temporal", choices=["temporal", "static"])
+    p.add_argument(
+        "--ndm_variant", type=str, default="temporal", choices=["temporal", "static"]
+    )
 
     # ── UNet NDM-specific args ───────────────────────────────────────────────
     p.add_argument("--use_attention_unet", action="store_true")
@@ -130,7 +156,12 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--encoder_trans_dec_depth", type=int, default=4)
     p.add_argument("--encoder_trans_patch_size", type=int, default=4)
     p.add_argument("--encoder_trans_n_groups", type=int, default=8)
-    p.add_argument("--encoder_trans_update_strategy", type=str, default="normalize", choices=["normalize", "scale", "identity"])
+    p.add_argument(
+        "--encoder_trans_update_strategy",
+        type=str,
+        default="normalize",
+        choices=["normalize", "scale", "identity"],
+    )
     p.add_argument("--encoder_trans_t_embed_dim", type=int, default=128)
     p.add_argument("--encoder_time_freq_dim", type=int, default=128)
 
@@ -145,16 +176,33 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise_predictor_chunk_size", type=int, default=128)
 
     # ── ParamDiT noise predictor args ─────────────────────────────────────────
-    p.add_argument("--noise_predictor_type", type=str, default="transinr", choices=["transinr", "paramdit"])
-    p.add_argument("--paramdit_tokenizer", type=str, default="column", choices=["column", "hyperdiff"])
+    p.add_argument(
+        "--noise_predictor_type",
+        type=str,
+        default="transinr",
+        choices=["transinr", "paramdit"],
+    )
+    p.add_argument(
+        "--paramdit_tokenizer",
+        type=str,
+        default="column",
+        choices=["column", "hyperdiff"],
+    )
     p.add_argument("--paramdit_mlp_ratio", type=float, default=4.0)
     p.add_argument("--paramdit_tokens_per_tensor", type=int, default=1)
     p.add_argument("--paramdit_chunk_size", type=int, default=None)
     # ── NDM Latent Diffusion ──────────────────────────────────────────────────────
     p.add_argument("--latent_size", type=int, default=14)
     p.add_argument("--latent_patch_size", type=int, default=2)
-    p.add_argument("--latent_encoder_type", type=str, default="mlp", choices=["mlp", "transformer"])
-    p.add_argument("--latent_predictor_type", type=str, default="mlp", choices=["mlp", "transformer"])
+    p.add_argument(
+        "--latent_encoder_type", type=str, default="mlp", choices=["mlp", "transformer"]
+    )
+    p.add_argument(
+        "--latent_predictor_type",
+        type=str,
+        default="mlp",
+        choices=["mlp", "transformer"],
+    )
     p.add_argument("--latent_enc_hidden_dim", type=int, default=64)
 
     # LatentEncoder transformer args
@@ -177,10 +225,20 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--dec_trans_enc_depth", type=int, default=4)
     p.add_argument("--dec_trans_dec_depth", type=int, default=4)
     p.add_argument("--dec_trans_n_groups", type=int, default=8)
-    p.add_argument("--dec_trans_update_strategy", type=str, default="scale", choices=["normalize", "scale", "identity"])
+    p.add_argument(
+        "--dec_trans_update_strategy",
+        type=str,
+        default="scale",
+        choices=["normalize", "scale", "identity"],
+    )
 
     # Latent MLP Decoder
-    p.add_argument("--latent_decoder_type", type=str, default="transinr", choices=["transinr", "mlp"])
+    p.add_argument(
+        "--latent_decoder_type",
+        type=str,
+        default="transinr",
+        choices=["transinr", "mlp"],
+    )
     p.add_argument("--dec_mlp_hidden_dim", type=int, default=512)
     p.add_argument("--dec_mlp_n_layers", type=int, default=4)
 
@@ -196,3 +254,136 @@ def get_default_parser() -> argparse.ArgumentParser:
     p.add_argument("--pred_d_ff", type=int, default=1024)
 
     return p
+
+
+def parse_args() -> argparse.Namespace:
+    """
+    Parse CLI arguments for two-stage LDM training.
+
+    Returns:
+        argparse.Namespace: parsed arguments
+    """
+    p = argparse.ArgumentParser(description="Train a two-stage VAE + LDM model")
+
+    # Run
+    p.add_argument("--run_name", type=str, required=True)
+    p.add_argument(
+        "--ldm_config", type=str, required=True, help="Path to LDM config .json"
+    )
+    p.add_argument("--results_dir", type=str, default="src/train_results")
+    p.add_argument(
+        "--mode",
+        type=str,
+        required=True,
+        choices=["fixed", "convergence"],
+        help="'fixed': explicit epoch counts; 'convergence': early-stop both stages",
+    )
+
+    # Skip-VAE: load pre-trained VAE weights and go straight to DDPM
+    p.add_argument(
+        "--skip_vae",
+        action="store_true",
+        default=False,
+        help="Skip VAE training and load pre-trained weights instead",
+    )
+    p.add_argument(
+        "--vae_weights",
+        type=str,
+        default=None,
+        help="Path to _vae_weights.pt (required when --skip_vae is set)",
+    )
+
+    # Shared training
+    p.add_argument("--batch_size", type=int, default=128)
+    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--weight_decay", type=float, default=1e-5)
+    p.add_argument("--grad_clip", type=float, default=1.0)
+    p.add_argument("--subset_frac", type=float, default=1.0)
+
+    # KL annealing
+    p.add_argument("--lambda_kl_max", type=float, default=1.0)
+    p.add_argument("--kl_warmup_frac", type=float, default=0.4)
+
+    # Fixed-mode epochs
+    p.add_argument(
+        "--total_epochs",
+        type=int,
+        default=400,
+        help="[fixed mode] Total epochs across both stages",
+    )
+    p.add_argument(
+        "--vae_epochs",
+        type=int,
+        default=100,
+        help="[fixed mode] How many of total_epochs go to VAE training",
+    )
+
+    # Convergence-mode VAE stopping
+    p.add_argument(
+        "--vae_check_every",
+        type=int,
+        default=5,
+        help="[convergence mode] Validate VAE every N epochs",
+    )
+    p.add_argument(
+        "--vae_patience",
+        type=int,
+        default=10,
+        help="[convergence mode] Stop VAE after this many checks without improvement",
+    )
+    p.add_argument(
+        "--vae_delta",
+        type=float,
+        default=1e-4,
+        help="[convergence mode] Minimum ELBO improvement to count as progress",
+    )
+    p.add_argument(
+        "--vae_max_epochs",
+        type=int,
+        default=1000,
+        help="[convergence mode] Hard cap on VAE epochs",
+    )
+
+    # Convergence-mode DDPM stopping
+    p.add_argument(
+        "--ddpm_check_every",
+        type=int,
+        default=5,
+        help="[convergence mode] Validate DDPM every N epochs",
+    )
+    p.add_argument(
+        "--ddpm_patience",
+        type=int,
+        default=20,
+        help="[convergence mode] Window size (in checks) for smoothed plateau detection",
+    )
+    p.add_argument(
+        "--ddpm_delta",
+        type=float,
+        default=1e-4,
+        help="[convergence mode] Minimum avg-loss improvement (first vs second half of window)",
+    )
+    p.add_argument(
+        "--ddpm_max_epochs",
+        type=int,
+        default=5000,
+        help="[convergence mode] Hard cap on DDPM epochs",
+    )
+
+    # Noise schedule
+    p.add_argument("--T", type=int, default=1000)
+    p.add_argument("--beta_1", type=float, default=1e-4)
+    p.add_argument("--beta_T", type=float, default=0.02)
+
+    # FID evaluation
+    p.add_argument("--n_fid_samples", type=int, default=1024)
+    p.add_argument("--fid_batch_size", type=int, default=64)
+    p.add_argument(
+        "--fid_fractions",
+        type=float,
+        nargs="+",
+        default=[0.4, 0.55, 0.7, 0.8, 0.9, 1.0],
+        help="Fractional checkpoints (of ddpm epochs) at which to log FID during DDPM training",
+    )
+
+    return p.parse_args()

@@ -1,93 +1,106 @@
-###### Two-stage Approahc 1 ######
-
-CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name Latent-Probabilistic-two-stage \
-    --epochs 400 \
-    --two_stage True \
-    --stage_one_epochs 150 \
-    --stage_two_epochs 250 \
+# Fixed-budget mode (version 1):
+python src/scripts/train_two_stage.py \
+    --run_name two_stage_fixed \
+    --mode fixed \
+    --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1612/metadata/config.json \
+    --total_epochs 15 \
+    --vae_epochs 5 \
     --batch_size 128 \
-    --subset_frac 1.0 \
-    --normalize False\
-    --do_scaling False \
-    --do_latent_recon False \
-    --probablistic True\
-    --stop_gradient_flow False \
-    --n_fid_samples 4096 \
-    --model latent_inr_diffusion \
-    --dataset mnist \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 100 \
-    --lambda_kl 0.1 \
+    --lambda_kl_max 0.1 \
+    --kl_warmup_frac 0.4 \
     --T 1000 \
     --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --inr_hidden_dim 128 \
-    --inr_layers 3 \
-    --latent_dim 16 \
-    --latent_size 16 \
-    --latent_patch_size 2 \
-    --latent_enc_hidden_dim 20\
-    --pred_d_model 128 \
-    --pred_n_heads 8 \
-    --pred_n_layers 6 \
-    --pred_d_ff 1024 \
-    --pred_t_embed_dim 128 \
-    --dec_trans_dim 128 \
-    --dec_trans_n_head 8 \
-    --dec_trans_head_dim 32 \
-    --dec_trans_ff_dim 1024 \
-    --dec_trans_enc_depth 4 \
-    --dec_trans_dec_depth 4 \
-    --dec_trans_n_groups 32 \
-    --dec_trans_update_strategy scale
+    --beta_T 0.02 \
+    --n_fid_samples 32 \
+    --fid_batch_size 32
 
-
-###### Two-stage Approahc 1 ######
-python main.py \
-    --run_name Latent-Probabilistic-two-stage-convergence \
-    --epochs 1000 \
-    --two_stage True \
-    --stage_one_epochs 0 \
-    --stage_two_epochs 0 \
+# Convergence mode (version 2):
+python src/scripts/train_two_stage.py \
+    --run_name two_stage_convergence \
+    --mode convergence \
+    --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1612/metadata/config.json \
     --batch_size 128 \
-    --subset_frac 1.0 \
-    --normalize False\
-    --do_scaling False \
-    --do_latent_recon False \
-    --probablistic True\
-    --stop_gradient_flow False \
-    --n_fid_samples 4096 \
-    --model latent_inr_diffusion \
-    --dataset mnist \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 100 \
-    --lambda_kl 0.1 \
+    --lambda_kl_max 0.1 \
+    --kl_warmup_frac 0.4 \
+    --vae_check_every 5 \
+    --vae_patience 10 \
+    --vae_delta 1e-4 \
+    --ddpm_check_every 5 \
+    --ddpm_patience 30 \
+    --ddpm_delta 7e-5 \
+    --ddpm_max_epochs 2000 \
     --T 1000 \
     --beta_1 1e-4 \
-    --beta_T 2e-2 \
-    --inr_hidden_dim 128 \
-    --inr_layers 3 \
-    --latent_dim 16 \
-    --latent_size 16 \
-    --latent_patch_size 2 \
-    --latent_enc_hidden_dim 20\
-    --pred_d_model 128 \
-    --pred_n_heads 8 \
-    --pred_n_layers 6 \
-    --pred_d_ff 1024 \
-    --pred_t_embed_dim 128 \
-    --dec_trans_dim 128 \
-    --dec_trans_n_head 8 \
-    --dec_trans_head_dim 32 \
-    --dec_trans_ff_dim 1024 \
-    --dec_trans_enc_depth 4 \
-    --dec_trans_dec_depth 4 \
-    --dec_trans_n_groups 32 \
-    --dec_trans_update_strategy scale
+    --beta_T 0.02 \
+    --n_fid_samples 1024 \
+    --fid_batch_size 64
 
+# Skip-VAE mode (re-run DDPM only, VAE files left untouched):
+python src/scripts/train_two_stage.py \
+    --run_name two_stage_convergence \
+    --mode convergence \
+    --skip_vae \
+    --vae_weights src/results/two_stage_convergence/two_stage_convergence_vae_weights.pt \
+    --ldm_config src/train_results/latent-diffusion-4/metadata/config.json \
+    --batch_size 128 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --ddpm_check_every 5 \
+    --ddpm_patience 30 \
+    --ddpm_delta 5e-5 \
+    --ddpm_max_epochs 2000 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 0.02 \
+    --n_fid_samples 128 \
+    --fid_batch_size 64
 
+# 3D ShapeNet voxels mode (convergence):
+python src/scripts/train_two_stage.py \
+    --run_name two_stage_shapenet \
+    --mode convergence \
+    --ldm_config src/train_results/latent-probability-3D-data/metadata/config.json \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --lambda_kl_max 0.1 \
+    --kl_warmup_frac 0.4 \
+    --vae_check_every 5 \
+    --vae_patience 10 \
+    --vae_delta 1e-4 \
+    --ddpm_check_every 5 \
+    --ddpm_patience 30 \
+    --ddpm_delta 7e-5 \
+    --ddpm_max_epochs 2000 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 0.02 \
+    --n_fid_samples 64 \
+    --fid_batch_size 16
+
+# 3D ShapeNet voxels mode (fixed):
+python src/scripts/train_two_stage.py \
+    --run_name two_stage_shapenet_fixed \
+    --mode fixed \
+    --ldm_config src/train_results/latent-probability-3D-data/metadata/config.json \
+    --total_epochs 10 \
+    --vae_epochs 5 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --lambda_kl_max 0.1 \
+    --kl_warmup_frac 0.4 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 0.02 \
+    --n_fid_samples 64 \
+    --fid_batch_size 16

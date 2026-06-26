@@ -24,9 +24,12 @@ import argparse
 import os
 import sys
 from datetime import datetime
-
+from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
+
+from src.utility.model_builders.util.vae_builder import load_pretrained_vae
+from src.utility.evaluation import compute_final_eval
 
 sys.path.append(".")
 
@@ -39,6 +42,8 @@ from src.utility.general import (
     _save_checkpoint,
     _save_config,
     _save_graph_data,
+    load_ldm_config,
+    _clear_ddpm_files,
 )
 from src.utility.model_builders.model_builder import build_model
 from src.utility.plotting import (
@@ -53,7 +58,8 @@ from src.utility.plotting import (
     plot_val_elbo_progression,  # noqa: F401
     plot_weight_profile_progression,  # noqa: F401
 )
-from src.utility.training import train
+from src.utility.training import train, train_ddpm, train_vae
+
 
 # =============================================================================
 # Public API
@@ -389,3 +395,114 @@ def run_training(
     print("=" * 60 + "\n")
 
     return model.cpu()
+
+
+def run_two_stage_training(args: argparse.Namespace) -> None:
+    """
+    Orchestrate two-stage training: VAE → DDPM, then final eval.
+
+    Args:
+        args (argparse.Namespace): parsed CLI arguments
+    Returns:
+        None
+    """
+    if args.skip_vae and not args.vae_weights:
+        raise ValueError("--vae_weights must be provided when --skip_vae is set.")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"--- Two-Stage LDM Training: {args.run_name} | mode={args.mode} ---")
+
+    hparams = load_ldm_config(args.ldm_config)
+    print(f"Dataset: {hparams['dataset']}")
+
+    dataset, val_dataset, data_config = build_dataset(
+        dataset_name=hparams["dataset"],
+        data_root="data/",
+        subset_frac=args.subset_frac,
+        single_class=False,
+    )
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, shuffle=True, drop_last=True
+    )
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+
+    channels = data_config["channels"]
+    img_size = data_config["img_size"]
+    is_3d = data_config.get("is_3d", False)
+
+    results_dir = os.path.join(args.results_dir, args.run_name)
+
+    if args.skip_vae:
+        if not os.path.exists(results_dir):
+            raise FileNotFoundError(
+                f"Results directory '{results_dir}' not found. "
+                "Run full training first before using --skip_vae."
+            )
+        print(f"  --skip_vae: clearing stale DDPM outputs from {results_dir}")
+        _clear_ddpm_files(results_dir, args.run_name)
+    else:
+        if os.path.exists(results_dir):
+            import shutil
+
+            shutil.rmtree(results_dir)
+        os.makedirs(results_dir, exist_ok=True)
+
+    # ── Stage 1: VAE ──────────────────────────────────────────────────────────
+    if args.skip_vae:
+        print("\n" + "=" * 60)
+        print("  STAGE 1 — VAE TRAINING SKIPPED (loading pre-trained weights)")
+        print("=" * 60)
+        vae = load_pretrained_vae(
+            args.vae_weights, hparams, channels, img_size, device, is_3d=is_3d
+        )
+        vae_epochs_done = 0
+    else:
+        vae = train_vae(
+            args,
+            hparams,
+            dataloader,
+            val_loader,
+            channels,
+            img_size,
+            is_3d,
+            results_dir,
+            device,
+        )
+        vae_ckpt_path = os.path.join(results_dir, f"{args.run_name}_vae_checkpoint.pt")
+        vae_ckpt = torch.load(vae_ckpt_path, map_location=device)
+        vae_epochs_done = vae_ckpt["epoch"]
+
+    # ── Stage 2: DDPM ─────────────────────────────────────────────────────────
+    ldm = train_ddpm(
+        args,
+        hparams,
+        vae,
+        dataloader,
+        val_loader,
+        channels,
+        img_size,
+        is_3d,
+        data_config,
+        results_dir,
+        device,
+        vae_epochs_done=vae_epochs_done,
+    )
+
+    ldm_ckpt_path = os.path.join(results_dir, f"{args.run_name}_ldm_checkpoint.pt")
+    ldm_ckpt = torch.load(ldm_ckpt_path, map_location=device)
+    ddpm_epochs_done = ldm_ckpt["epoch"]
+
+    # ── Final eval ────────────────────────────────────────────────────────────
+    compute_final_eval(
+        vae=vae if not args.skip_vae else None,
+        ldm=ldm,
+        hparams=hparams,
+        val_loader=val_loader,
+        data_config=data_config,
+        args=args,
+        results_dir=results_dir,
+        device=device,
+        vae_epochs=vae_epochs_done,
+        ddpm_epochs=ddpm_epochs_done,
+        skip_vae_eval=args.skip_vae,
+    )

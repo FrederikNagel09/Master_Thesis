@@ -3,7 +3,7 @@ import os
 
 import numpy as np
 import torch
-from models.classifier.MNIST_classifier import UNetClassifier
+from src.models.classifier.MNIST_classifier import UNetClassifier
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
