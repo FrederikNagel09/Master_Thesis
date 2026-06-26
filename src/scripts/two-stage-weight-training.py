@@ -13,10 +13,13 @@ from tqdm import tqdm
 
 sys.path.append(".")
 
-from models.latent_diffusion.modules.trans_inr import make_coord_grid
-from models.weight_diffusion.WeightDiffusion import WeightDiffusion
+from src.models.weight_diffusion.modules.WeightnoisePredictor import (
+    TransInrNoisePredictor,
+)
+from src.models.weight_diffusion.modules.WeightEncoder import TransInrEncoder
+from src.models.latent_diffusion.modules.trans_inr import make_coord_grid
+from src.models.weight_diffusion.WeightDiffusion import WeightDiffusion
 
-from src.models.trans_inr_encoder import TransInrEncoder, TransInrNoisePredictor
 from src.utility.classifier_utils import (
     _get_inception,
     _inception_features,
@@ -33,7 +36,7 @@ Fixed-budget mode:
 python src/scripts/two-stage-weight-training.py \
     --run_name wd_two_stage_fixed \
     --mode fixed \
-    --wd_config src/train_results/weight-diffusion-TEST/metadata/config.json \
+    --wd_config src/train_results/Weight-Diffusion-Probabilistic-test/metadata/config.json \
     --total_epochs 300 \
     --vae_epochs 150 \
     --batch_size 128 \
@@ -52,7 +55,7 @@ Convergence mode:
 python src/scripts/two-stage-weight-training.py \
     --run_name wd_two_stage_convergence \
     --mode convergence \
-    --wd_config src/train_results/weight-Diffusion/metadata/config.json \
+    --wd_config src/train_results/Weight-Diffusion-Probabilistic-test/metadata/config.json \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -71,6 +74,51 @@ python src/scripts/two-stage-weight-training.py \
     --beta_T 0.02 \
     --n_fid_samples 4096 \
     --fid_batch_size 1024
+
+Skip-encoder mode (re-run diffusion only, encoder files left untouched):
+python src/scripts/two-stage-weight-training.py \
+    --run_name wd_two_stage_convergence \
+    --mode convergence \
+    --skip_vae \
+    --encoder_weights src/train_results/wd_two_stage_convergence/wd_two_stage_convergence_encoder_weights.pt \
+    --wd_config src/train_results/weight-Diffusion/metadata/config.json \
+    --batch_size 128 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --ddpm_check_every 5 \
+    --ddpm_patience 20 \
+    --ddpm_delta 1e-4 \
+    --ddpm_max_epochs 2000 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 0.02 \
+    --n_fid_samples 256 \
+    --fid_batch_size 64
+
+3D ShapeNet voxels mode (convergence):
+python src/scripts/two-stage-weight-training.py \
+    --run_name wd_two_stage_shapenet \
+    --mode convergence \
+    --wd_config src/train_results/weight-diffusion-shapenet/metadata/config.json \
+    --batch_size 16 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --lambda_kl_max 0.1 \
+    --kl_warmup_frac 0.4 \
+    --vae_check_every 5 \
+    --vae_patience 10 \
+    --vae_delta 1e-4 \
+    --ddpm_check_every 5 \
+    --ddpm_patience 20 \
+    --ddpm_delta 1e-4 \
+    --ddpm_max_epochs 2000 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 0.02 \
+    --n_fid_samples 128 \
+    --fid_batch_size 16
 """
 
 
@@ -107,6 +155,20 @@ def parse_args() -> argparse.Namespace:
         help="'fixed': explicit epoch counts; 'convergence': early-stop both stages",
     )
 
+    # Skip-encoder: load pre-trained encoder weights and go straight to diffusion
+    p.add_argument(
+        "--skip_vae",
+        action="store_true",
+        default=False,
+        help="Skip encoder training and load pre-trained weights instead",
+    )
+    p.add_argument(
+        "--encoder_weights",
+        type=str,
+        default=None,
+        help="Path to _encoder_weights.pt (required when --skip_vae is set)",
+    )
+
     # Shared training
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--lr", type=float, default=1e-4)
@@ -134,16 +196,16 @@ def parse_args() -> argparse.Namespace:
         "--vae_epochs",
         type=int,
         default=100,
-        help="[fixed mode] How many of total_epochs go to WeightEncoder training",
+        help="[fixed mode] How many of total_epochs go to encoder training",
     )
 
-    # Convergence-mode WeightEncoder stopping
+    # Convergence-mode encoder stopping
     p.add_argument("--vae_check_every", type=int, default=5)
     p.add_argument("--vae_patience", type=int, default=10)
     p.add_argument("--vae_delta", type=float, default=1e-4)
     p.add_argument("--vae_max_epochs", type=int, default=1000)
 
-    # Convergence-mode DDPM stopping
+    # Convergence-mode diffusion stopping
     p.add_argument("--ddpm_check_every", type=int, default=5)
     p.add_argument("--ddpm_patience", type=int, default=20)
     p.add_argument("--ddpm_delta", type=float, default=1e-4)
@@ -154,7 +216,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--beta_1", type=float, default=1e-4)
     p.add_argument("--beta_T", type=float, default=0.02)
 
-    # FID evaluation
+    # FID / MMD+COV evaluation
     p.add_argument("--n_fid_samples", type=int, default=1024)
     p.add_argument("--fid_batch_size", type=int, default=64)
     p.add_argument(
@@ -162,7 +224,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         nargs="+",
         default=[0.4, 0.55, 0.7, 0.8, 0.9, 1.0],
-        help="Fractional checkpoints (of ddpm epochs) at which to log FID",
+        help="Fractional checkpoints (of diffusion epochs) at which to log FID",
     )
 
     return p.parse_args()
@@ -186,9 +248,7 @@ def load_wd_config(path: str) -> dict:
         config = json.load(f)
 
     required_keys = [
-        # Dataset
         "dataset",
-        # TransInrEncoder arch
         "encoder_trans_dim",
         "encoder_trans_n_head",
         "encoder_trans_head_dim",
@@ -198,10 +258,8 @@ def load_wd_config(path: str) -> dict:
         "encoder_trans_patch_size",
         "encoder_trans_n_groups",
         "encoder_trans_update_strategy",
-        # INR arch
         "inr_hidden_dim",
         "inr_layers",
-        # Noise predictor arch
         "noise_predictor_type",
         "noise_predictor_dim",
         "noise_predictor_n_head",
@@ -228,39 +286,69 @@ def build_weight_encoder(
     hparams: dict,
     channels: int,
     img_size: int,
+    is_3d: bool = False,
 ) -> TransInrEncoder:
     """
-    Instantiate the TransInrEncoder (WeightEncoder) from hparams.
+    Instantiate TransInrEncoder using VolumeTokenizer for 3D or ImageTokenizer for 2D.
 
     Args:
         hparams  (dict): WeightDiffusion hparams
-        channels (int):  image channels
-        img_size (int):  spatial image size
+        channels (int):  image/volume channels
+        img_size (int):  spatial size per dimension
+        is_3d    (bool): whether input is volumetric
     Returns:
-        TransInrEncoder: encoder with decode_modulations built in
+        TransInrEncoder
     """
-    tokenizer_cfg = {
-        "target": "src.models.trans_inr_helpers.ImageTokenizer",
-        "params": {
-            "in_channels": channels,
-            "image_size": img_size,
-            "patch_size": hparams["encoder_trans_patch_size"],
-            "n_head": hparams["encoder_trans_n_head"],
-            "head_dim": hparams["encoder_trans_head_dim"],
-        },
-    }
-    inr_cfg = {
-        "target": "src.models.trans_inr_helpers.SIREN",
-        "params": {
-            "depth": hparams["inr_layers"],
-            "in_dim": 2,
-            "out_dim": channels,
-            "hidden_dim": hparams["inr_hidden_dim"],
-            "out_bias": 0.5,
-        },
-    }
+    if is_3d:
+        vol_size = (img_size, img_size, img_size)
+        tokenizer_cfg = {
+            "target": "src.models.tokenizers.volume_tokenizer.VolumeTokenizer",
+            "params": {
+                "in_channels": channels,
+                "vol_size": vol_size,
+                "patch_size": hparams["encoder_trans_patch_size"],
+                "dim": hparams["encoder_trans_dim"],
+                "n_head": hparams["encoder_trans_n_head"],
+                "head_dim": hparams["encoder_trans_head_dim"],
+            },
+        }
+        # 3D INR: 3D coords, sigmoid output (voxels are binary [0,1])
+        inr_cfg = {
+            "target": "src.models.inr.siren.SIREN",
+            "params": {
+                "depth": hparams["inr_layers"],
+                "in_dim": 3,
+                "out_dim": channels,
+                "hidden_dim": hparams["inr_hidden_dim"],
+                "out_bias": 0.5,
+                "out_activation": "sigmoid",
+            },
+        }
+    else:
+        tokenizer_cfg = {
+            "target": "src.models.tokenizers.image_tokenizer.ImageTokenizer",
+            "params": {
+                "in_channels": channels,
+                "image_size": img_size,
+                "patch_size": hparams["encoder_trans_patch_size"],
+                "n_head": hparams["encoder_trans_n_head"],
+                "head_dim": hparams["encoder_trans_head_dim"],
+            },
+        }
+        inr_cfg = {
+            "target": "src.models.inr.siren.SIREN",
+            "params": {
+                "depth": hparams["inr_layers"],
+                "in_dim": 2,
+                "out_dim": channels,
+                "hidden_dim": hparams["inr_hidden_dim"],
+                "out_bias": 0.5,
+                "out_activation": "tanh",
+            },
+        }
+
     transformer_cfg = {
-        "target": "src.models.trans_inr_helpers.Transformer",
+        "target": "src.models.utils.transformer.Transformer",
         "params": {
             "dim": hparams["encoder_trans_dim"],
             "encoder_depth": hparams["encoder_trans_enc_depth"],
@@ -270,6 +358,7 @@ def build_weight_encoder(
             "ff_dim": hparams["encoder_trans_ff_dim"],
         },
     }
+
     return TransInrEncoder(
         tokenizer=tokenizer_cfg,
         inr=inr_cfg,
@@ -281,10 +370,7 @@ def build_weight_encoder(
     )
 
 
-def build_noise_predictor(
-    hparams: dict,
-    weight_dim: int,
-) -> nn.Module:
+def build_noise_predictor(hparams: dict, weight_dim: int) -> nn.Module:
     """
     Instantiate the noise predictor from hparams.
 
@@ -292,7 +378,7 @@ def build_noise_predictor(
         hparams    (dict): WeightDiffusion hparams
         weight_dim (int):  dimensionality of the weight/modulation space
     Returns:
-        nn.Module: noise predictor (TransInrNoisePredictor or ParamDiT)
+        nn.Module: noise predictor
     """
     predictor_type = hparams.get("noise_predictor_type", "transinr").lower()
 
@@ -309,8 +395,6 @@ def build_noise_predictor(
             dropout=hparams["noise_predictor_dropout"],
         )
     elif predictor_type == "paramdit":
-        # ParamDiT expects (out_dim, in_dim+1); encoder stores (in_dim+1, out_dim)
-        # We can't access encoder.modulation_shapes here so caller must pass it separately
         raise ValueError(
             "paramdit noise predictor requires modulation_shapes from the encoder. "
             "Build it manually via build_full_wd_model() instead."
@@ -328,6 +412,7 @@ def build_full_wd_model(
     img_size: int,
     data_dim: int,
     device: torch.device,
+    is_3d: bool = False,
 ) -> WeightDiffusion:
     """
     Build a full WeightDiffusion model from hparams and CLI args.
@@ -335,14 +420,15 @@ def build_full_wd_model(
     Args:
         hparams   (dict):              WeightDiffusion hparams
         args      (argparse.Namespace): CLI args (noise schedule, etc.)
-        channels  (int):               image channels
-        img_size  (int):               spatial image size
-        data_dim  (int):               flattened image dimension
+        channels  (int):               image/volume channels
+        img_size  (int):               spatial size per dimension
+        data_dim  (int):               flattened data dimension
         device    (torch.device):      target device
+        is_3d     (bool):              whether input is volumetric
     Returns:
         WeightDiffusion: assembled model on device
     """
-    encoder = build_weight_encoder(hparams, channels, img_size)
+    encoder = build_weight_encoder(hparams, channels, img_size, is_3d=is_3d)
     weight_dim = encoder.modulation_dim
 
     predictor_type = hparams.get("noise_predictor_type", "transinr").lower()
@@ -370,7 +456,9 @@ def build_full_wd_model(
     else:
         raise ValueError(f"Unknown noise_predictor_type '{predictor_type}'.")
 
-    coord_grid = make_coord_grid((img_size, img_size), (-1, 1))
+    # Coord grid shape depends on dimensionality
+    data_shape = (img_size, img_size, img_size) if is_3d else (img_size, img_size)
+    coord_grid = make_coord_grid(data_shape, (-1, 1))
 
     return WeightDiffusion(
         NoisePredictor=noise_predictor,
@@ -382,8 +470,68 @@ def build_full_wd_model(
         sigma_tilde_factor=hparams.get("sigma_tilde", 1.0),
         data_dim=data_dim,
         img_size=img_size,
-        stop_gradient_flow=False,  # VAE stage: full gradients through encoder
+        stop_gradient_flow=False,
     ).to(device)
+
+
+def load_pretrained_encoder(
+    weights_path: str,
+    hparams: dict,
+    args: argparse.Namespace,
+    channels: int,
+    img_size: int,
+    data_dim: int,
+    device: torch.device,
+    is_3d: bool = False,
+) -> WeightDiffusion:
+    """
+    Build a full WeightDiffusion model and load pre-trained encoder weights.
+
+    Args:
+        weights_path (str):           path to _encoder_weights.pt
+        hparams      (dict):          arch hparams
+        args         (argparse.Namespace): CLI args
+        channels     (int):           image/volume channels
+        img_size     (int):           spatial size per dimension
+        data_dim     (int):           flattened data dimension
+        device       (torch.device):  target device
+        is_3d        (bool):          whether input is volumetric
+    Returns:
+        WeightDiffusion: model with pre-trained encoder loaded, in eval mode
+    """
+    if not os.path.exists(weights_path):
+        raise FileNotFoundError(f"Encoder weights not found at: {weights_path}")
+
+    model = build_full_wd_model(
+        hparams, args, channels, img_size, data_dim, device, is_3d=is_3d
+    )
+    ckpt = torch.load(weights_path, map_location=device)
+    model.weight_encoder.load_state_dict(ckpt["weight_encoder_state_dict"])
+    model.eval()
+    print(f"  Loaded pre-trained encoder weights from: {weights_path}")
+    return model
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# INPUT PREPARATION HELPER
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _prepare_input(x: torch.Tensor, is_3d: bool) -> torch.Tensor:
+    """
+    Prepare batch input for the weight encoder.
+    3D: keep as (B, C, D, H, W). 2D: flatten to (B, data_dim).
+
+    Args:
+        x     (torch.Tensor): raw batch tensor
+        is_3d (bool):         whether input is volumetric
+    Returns:
+        torch.Tensor: prepared input
+    """
+    if is_3d:
+        return x  # VolumeTokenizer expects (B, C, D, H, W)
+    B = x.shape[0]
+    return x.reshape(B, -1) if x.dim() > 2 else x
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -427,7 +575,7 @@ def save_encoder_checkpoint(
     run_name: str,
 ) -> None:
     """
-    Save full WeightEncoder training checkpoint (resumable).
+    Save full encoder training checkpoint (resumable).
 
     Args:
         model       (WeightDiffusion):  model containing the encoder
@@ -456,15 +604,17 @@ def save_encoder_weights(
     hparams: dict,
     results_dir: str,
     run_name: str,
+    is_3d: bool = False,
 ) -> None:
     """
-    Save standalone WeightEncoder weights + config for independent later use.
+    Save standalone encoder weights + config for independent later use.
 
     Args:
         model       (WeightDiffusion): trained model
         hparams     (dict):            arch hparams
         results_dir (str):             output directory
         run_name    (str):             run identifier
+        is_3d       (bool):            whether input is volumetric
     Returns:
         None
     """
@@ -472,10 +622,7 @@ def save_encoder_weights(
     config_path = os.path.join(results_dir, f"{run_name}_encoder_config.json")
 
     torch.save(
-        {
-            "weight_encoder_state_dict": model.weight_encoder.state_dict(),
-        },
-        weights_path,
+        {"weight_encoder_state_dict": model.weight_encoder.state_dict()}, weights_path
     )
 
     arch_keys = [
@@ -494,6 +641,7 @@ def save_encoder_weights(
     ]
     config = {k: hparams[k] for k in arch_keys if k in hparams}
     config["run_name"] = run_name
+    config["is_3d"] = is_3d
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
@@ -540,6 +688,7 @@ def save_diffusion_weights(
     args: argparse.Namespace,
     results_dir: str,
     run_name: str,
+    is_3d: bool = False,
 ) -> None:
     """
     Save standalone full WeightDiffusion weights + config for independent later use.
@@ -550,6 +699,7 @@ def save_diffusion_weights(
         args        (argparse.Namespace): CLI args (noise schedule)
         results_dir (str):               output directory
         run_name    (str):               run identifier
+        is_3d       (bool):              whether input is volumetric
     Returns:
         None
     """
@@ -593,6 +743,7 @@ def save_diffusion_weights(
     config["T"] = args.T
     config["beta_1"] = args.beta_1
     config["beta_T"] = args.beta_T
+    config["is_3d"] = is_3d
 
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
@@ -614,7 +765,7 @@ def save_encoder_training_graph(
     plot_every_n: int = 100,
 ) -> None:
     """
-    Save 3-panel WeightEncoder training curve (ELBO, recon, KL).
+    Save 3-panel encoder training curve (ELBO, recon, KL).
 
     Args:
         history        (dict): keys "elbo", "recon", "kl" — per-step values
@@ -664,7 +815,7 @@ def save_diffusion_training_graph(
     plot_every_n: int = 100,
 ) -> None:
     """
-    Save diffusion stage training curve (train loss, val loss, periodic FID).
+    Save diffusion stage training curve (train loss, val loss, periodic FID/MMD).
 
     Args:
         history        (dict): keys "train_loss", "val_loss", "val_epochs",
@@ -682,7 +833,6 @@ def save_diffusion_training_graph(
     n_panels = 3 if has_fid else 2
     fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 4))
 
-    # Train loss (per step, downsampled)
     tick_pos = [
         i * steps_per_epoch // plot_every_n for i in range(0, total_epochs + 1, step)
     ]
@@ -702,7 +852,6 @@ def save_diffusion_training_graph(
     axes[0].set_xticklabels(tick_labels)
     axes[0].grid(True, linestyle="--", alpha=0.4)
 
-    # Val loss (per check epoch)
     val_epochs = history.get("val_epochs", [])
     val_losses = history.get("val_loss", [])
     axes[1].plot(
@@ -757,8 +906,6 @@ def _build_val_noise_cache(
         seed        (int):        RNG seed for reproducibility
     Returns:
         list of (x_batch_cpu, t_batch_cpu) tuples
-              x_batch_cpu: (B, ...) images on CPU
-              t_batch_cpu: (B,) int64 timestep indices
     """
     rng = torch.Generator()
     rng.manual_seed(seed)
@@ -776,17 +923,18 @@ def compute_diffusion_val_loss(
     model: WeightDiffusion,
     val_cache: list[tuple[torch.Tensor, torch.Tensor]],
     device: torch.device,
+    is_3d: bool = False,
     noise_seed: int = 42,
 ) -> float:
     """
-    Compute MSE between predicted and actual noise/v-target on the validation set.
-    Uses fixed (x, t) pairs and seeded noise for reproducibility.
+    Compute MSE between predicted and actual v-target on the validation set.
 
     Args:
         model      (WeightDiffusion):               model in eval mode
         val_cache  (list of (x_cpu, t_cpu)):         pre-built fixed val pairs
         device     (torch.device):                   target device
-        noise_seed (int):                            seed for noise generation
+        is_3d      (bool):                           whether input is volumetric
+        noise_seed (int):                            seed for reproducibility
     Returns:
         float: mean MSE over validation set
     """
@@ -800,22 +948,16 @@ def compute_diffusion_val_loss(
     for x_cpu, t_cpu in val_cache:
         x = x_cpu.to(device)
         t = t_cpu.to(device)
-
-        # Flatten images for the weight encoder
         B = x.shape[0]
-        x_flat = x.reshape(B, -1) if x.dim() > 2 else x
 
-        # Encode to weight space using frozen encoder
-        mean, logvar = model.weight_encoder(x_flat)
+        x_in = _prepare_input(x, is_3d)
+
+        mean, logvar = model.weight_encoder(x_in)
         theta_prime = model.weight_encoder._reparameterize(mean, logvar)
 
-        # Forward diffusion
         theta_t, epsilon = model._forward_process(theta_prime, t)
 
-        # Normalise t to [0, 1]
         t_norm = (t.float() / (model.T - 1)).unsqueeze(1)
-
-        # v-prediction target
         sqrt_ab = model.sqrt_alpha_cumprod[t].unsqueeze(1)
         sqrt_1mab = model.sigma[t].unsqueeze(1)
         v_target = sqrt_ab * epsilon - sqrt_1mab * theta_prime
@@ -856,22 +998,20 @@ class SmoothedPlateauDetector:
         Args:
             value (float): latest validation metric (lower is better)
         Returns:
-            bool: True if plateau detected (stop training)
+            bool: True if plateau detected
         """
         self._window.append(value)
         if len(self._window) < self.patience:
             return False
-
         window = self._window[-self.patience :]
         mid = len(window) // 2
         first_half_avg = sum(window[:mid]) / mid
         second_half_avg = sum(window[mid:]) / (len(window) - mid)
-        improvement = first_half_avg - second_half_avg
-        return improvement < self.delta
+        return (first_half_avg - second_half_avg) < self.delta
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# FID EVALUATION
+# FID / MMD+COV EVALUATION
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -883,31 +1023,33 @@ def compute_fid(
     device: torch.device,
 ) -> float:
     """
-    Generate samples via full reverse diffusion and compute Inception FID.
+    Generate samples and compute Inception FID (2D) or skip and return nan (3D).
 
     Args:
         model          (WeightDiffusion): model in eval mode
-        data_config    (dict):            dataset config with "dataset", "channels"
+        data_config    (dict):            dataset config
         n_samples      (int):             number of samples to generate
         fid_batch_size (int):             generation batch size
-        device         (torch.device):   target device
+        device         (torch.device):    target device
     Returns:
-        float: Inception FID score
+        float: Inception FID score, or nan if 3D
     """
+    if data_config.get("is_3d", False):
+        print("  FID skipped — not defined for 3D voxel data.")
+        return float("nan")
+
     dataset_name = data_config.get("dataset", "mnist").lower()
     is_mnist = dataset_name == "mnist"
+    img_size = data_config["img_size"]
+    channels = data_config["channels"]
 
     print(f"  Generating {n_samples} samples for FID …")
     all_samples = []
     remaining = n_samples
     model.eval()
-    img_size = data_config["img_size"]
-    channels = data_config["channels"]
-
     with torch.no_grad():
         while remaining > 0:
             n = min(fid_batch_size, remaining)
-            # sample() returns (B, H*W) flat pixels in [-1, 1] → reshape + normalise to [0, 1]
             imgs = model.sample(n_samples=n)
             imgs = imgs.reshape(n, channels, img_size, img_size)
             imgs = (imgs * 0.5 + 0.5).clamp(0, 1)
@@ -933,6 +1075,39 @@ def compute_fid(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# RESULTS FOLDER HELPERS
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Files produced exclusively by Stage 2 — safe to delete on a diffusion-only re-run
+_DIFFUSION_ONLY_FILES = [
+    "_diffusion_checkpoint.pt",
+    "_wd_weights.pt",
+    "_wd_config.json",
+    "_diffusion_training_curves.png",
+    "_eval_metrics.json",
+    "_diffusion_samples_8x8.png",
+    "_encoder_samples_8x8.png",
+]
+
+
+def _clear_diffusion_files(results_dir: str, run_name: str) -> None:
+    """
+    Delete only Stage-2 output files, leaving encoder files intact.
+
+    Args:
+        results_dir (str): results directory
+        run_name    (str): run identifier prefix
+    Returns:
+        None
+    """
+    for suffix in _DIFFUSION_ONLY_FILES:
+        path = os.path.join(results_dir, f"{run_name}{suffix}")
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"  Removed stale diffusion file: {path}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # STAGE 1 — WEIGHT ENCODER TRAINING
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -948,11 +1123,10 @@ def train_weight_encoder(
     data_config: dict,
     results_dir: str,
     device: torch.device,
+    is_3d: bool = False,
 ) -> WeightDiffusion:
     """
     Train Stage 1: WeightEncoder end-to-end with pixel recon + KL loss.
-    The denoiser is present but not used; stop_gradient_flow=False so
-    gradients flow freely through the encoder.
 
     In fixed mode     : trains for exactly args.vae_epochs epochs.
     In convergence mode: trains until ELBO plateaus.
@@ -962,12 +1136,13 @@ def train_weight_encoder(
         hparams     (dict):               arch hparams
         dataloader  (DataLoader):         training data loader
         val_loader  (DataLoader):         validation data loader
-        channels    (int):                image channels
-        img_size    (int):                spatial image size
-        data_dim    (int):                flattened image size
+        channels    (int):                image/volume channels
+        img_size    (int):                spatial size per dimension
+        data_dim    (int):                flattened data size
         data_config (dict):               dataset config dict
         results_dir (str):                output directory
         device      (torch.device):       target device
+        is_3d       (bool):               whether input is volumetric
     Returns:
         WeightDiffusion: model with trained WeightEncoder (on device)
     """
@@ -975,7 +1150,9 @@ def train_weight_encoder(
     print("  STAGE 1 — WEIGHT ENCODER TRAINING")
     print("=" * 60)
 
-    model = build_full_wd_model(hparams, args, channels, img_size, data_dim, device)
+    model = build_full_wd_model(
+        hparams, args, channels, img_size, data_dim, device, is_3d=is_3d
+    )
     optimizer = optim.AdamW(
         model.weight_encoder.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
@@ -1009,30 +1186,28 @@ def train_weight_encoder(
 
         for batch in dataloader:
             x = batch[0].to(device)
+            x_in = _prepare_input(x, is_3d)
             B = x.shape[0]
-            x_flat = x.reshape(B, -1) if x.dim() > 2 else x
 
             optimizer.zero_grad()
             beta_kl = _get_beta_kl(global_step, args.lambda_kl_max, kl_warmup_steps)
 
-            # Encode → reparameterise → decode_modulations → INR decode
-            mu, logvar = model.weight_encoder(x_flat)
+            mu, logvar = model.weight_encoder(x_in)
             theta_prime = model.weight_encoder._reparameterize(mu, logvar)
             theta = model.weight_encoder.decode_modulations(theta_prime)
-
-            # Pixel-space reconstruction via INR
             x_recon = model._inr_decode(theta)
-            x_target = x_flat.clamp(-1, 1)
+
+            # Flatten target for loss; clamp only for 2D (images are [-1,1])
+            x_target = x.reshape(B, -1)
+            if not is_3d:
+                x_target = x_target.clamp(-1, 1)
             if x_recon.shape != x_target.shape:
                 x_recon = x_recon.view_as(x_target)
 
             loss_recon = 0.5 * ((x_target - x_recon) ** 2).sum(dim=-1).mean()
-
-            # Standard KL: -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
             loss_kl = -0.5 * torch.mean(
                 torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
             )
-
             total_loss = loss_recon + beta_kl * loss_kl
             total_loss.backward()
 
@@ -1070,7 +1245,6 @@ def train_weight_encoder(
         )
         save_encoder_training_graph(history, steps_per_epoch, epoch, graph_path)
 
-        # Convergence check on validation ELBO
         if detector is not None and epoch % args.vae_check_every == 0:
             model.eval()
             val_elbo = 0.0
@@ -1078,14 +1252,17 @@ def train_weight_encoder(
             with torch.no_grad():
                 for batch in val_loader:
                     x = batch[0].to(device)
+                    x_in = _prepare_input(x, is_3d)
                     B = x.shape[0]
-                    x_flat = x.reshape(B, -1) if x.dim() > 2 else x
 
-                    mu, logvar = model.weight_encoder(x_flat)
+                    mu, logvar = model.weight_encoder(x_in)
                     theta_prime = model.weight_encoder._reparameterize(mu, logvar)
                     theta = model.weight_encoder.decode_modulations(theta_prime)
                     x_recon = model._inr_decode(theta)
-                    x_target = x_flat.clamp(-1, 1)
+
+                    x_target = x.reshape(B, -1)
+                    if not is_3d:
+                        x_target = x_target.clamp(-1, 1)
                     if x_recon.shape != x_target.shape:
                         x_recon = x_recon.view_as(x_target)
 
@@ -1108,7 +1285,7 @@ def train_weight_encoder(
                 break
 
     progress.close()
-    save_encoder_weights(model, hparams, results_dir, args.run_name)
+    save_encoder_weights(model, hparams, results_dir, args.run_name, is_3d=is_3d)
     return model
 
 
@@ -1130,6 +1307,7 @@ def train_diffusion(
     results_dir: str,
     device: torch.device,
     encoder_epochs_done: int,
+    is_3d: bool = False,
 ) -> WeightDiffusion:
     """
     Train Stage 2: noise predictor / denoiser on frozen WeightEncoder.
@@ -1144,13 +1322,14 @@ def train_diffusion(
         stage1_model        (WeightDiffusion):    trained stage-1 model
         dataloader          (DataLoader):         training data loader
         val_loader          (DataLoader):         validation data loader
-        channels            (int):                image channels
-        img_size            (int):                spatial image size
-        data_dim            (int):                flattened image size
+        channels            (int):                image/volume channels
+        img_size            (int):                spatial size per dimension
+        data_dim            (int):                flattened data size
         data_config         (dict):               dataset config dict
         results_dir         (str):                output directory
         device              (torch.device):       target device
-        encoder_epochs_done (int):                VAE epochs actually completed
+        encoder_epochs_done (int):                encoder epochs actually completed
+        is_3d               (bool):               whether input is volumetric
     Returns:
         WeightDiffusion: fully trained model (on device)
     """
@@ -1158,9 +1337,8 @@ def train_diffusion(
     print("  STAGE 2 — DIFFUSION TRAINING")
     print("=" * 60)
 
-    # Re-use the same model; freeze the weight encoder entirely
     model = stage1_model
-    model.stop_gradient_flow = True  # not strictly needed but signals intent
+    model.stop_gradient_flow = True
 
     for p in model.weight_encoder.parameters():
         p.requires_grad_(False)
@@ -1197,7 +1375,6 @@ def train_diffusion(
     steps_per_epoch = len(dataloader)
     val_cache = _build_val_noise_cache(val_loader, args.T)
 
-    # Fractional FID checkpoints (skip first 25% — too noisy)
     fid_check_epochs = {max(1, int(f * max_epochs)) for f in args.fid_fractions}
     warmup_cutoff = int(0.25 * max_epochs)
     fid_check_epochs = {e for e in fid_check_epochs if e > warmup_cutoff}
@@ -1208,32 +1385,27 @@ def train_diffusion(
 
     for epoch in range(1, max_epochs + 1):
         model.train()
-        # Keep weight encoder in eval mode so BatchNorm/Dropout behave correctly
-        model.weight_encoder.eval()
+        model.weight_encoder.eval()  # keep encoder bn/dropout in eval mode
         running_loss = 0.0
 
         for batch in dataloader:
             x = batch[0].to(device)
+            x_in = _prepare_input(x, is_3d)
             B = x.shape[0]
-            x_flat = x.reshape(B, -1) if x.dim() > 2 else x
 
             optimizer.zero_grad()
 
-            # Encode with frozen WeightEncoder → weight space
             with torch.no_grad():
-                mu, logvar = model.weight_encoder(x_flat)
+                mu, logvar = model.weight_encoder(x_in)
                 theta_prime = model.weight_encoder._reparameterize(mu, logvar)
 
-            # Forward diffusion
             t = torch.randint(0, args.T, (B,), device=device)
             theta_t, epsilon = model._forward_process(theta_prime, t)
 
-            # v-prediction target
             t_norm = (t.float() / (args.T - 1)).unsqueeze(1)
             sqrt_ab = model.sqrt_alpha_cumprod[t].unsqueeze(1)
             sqrt_1mab = model.sigma[t].unsqueeze(1)
             v_target = sqrt_ab * epsilon - sqrt_1mab * theta_prime
-
             v_hat = model.denoiser(theta_t, t_norm)
             loss = ((v_hat - v_target) ** 2).mean()
 
@@ -1256,9 +1428,8 @@ def train_diffusion(
         epoch_loss = running_loss / steps_per_epoch
         print(f"  [Diffusion epoch {epoch}] Train MSE: {epoch_loss:.5f}")
 
-        # Periodic validation
         if epoch % args.ddpm_check_every == 0:
-            val_loss = compute_diffusion_val_loss(model, val_cache, device)
+            val_loss = compute_diffusion_val_loss(model, val_cache, device, is_3d=is_3d)
             history["val_loss"].append(val_loss)
             history["val_epochs"].append(epoch)
             print(f"  [Diffusion val @ epoch {epoch}] Val MSE: {val_loss:.5f}")
@@ -1273,7 +1444,6 @@ def train_diffusion(
                 )
                 break
 
-        # Periodic FID logging
         if epoch in fid_check_epochs:
             fid_score = compute_fid(
                 model, data_config, args.n_fid_samples, args.fid_batch_size, device
@@ -1288,7 +1458,9 @@ def train_diffusion(
         save_diffusion_training_graph(history, steps_per_epoch, epoch, graph_path)
 
     progress.close()
-    save_diffusion_weights(model, hparams, args, results_dir, args.run_name)
+    save_diffusion_weights(
+        model, hparams, args, results_dir, args.run_name, is_3d=is_3d
+    )
     return model
 
 
@@ -1307,21 +1479,26 @@ def compute_final_eval(
     device: torch.device,
     encoder_epochs: int,
     diffusion_epochs: int,
+    is_3d: bool = False,
+    skip_encoder_eval: bool = False,
 ) -> None:
     """
-    Compute and save final eval metrics: encoder recon MSE + FID for both
-    encoder-only samples (z ~ N(0,I) → decode) and full diffusion samples.
+    Compute and save final eval metrics.
+    2D: recon MSE + Inception FID for encoder prior samples + diffusion samples.
+    3D: recon MSE + MMD/COV for diffusion samples vs val set.
 
     Args:
-        model            (WeightDiffusion):   trained model
-        hparams          (dict):              arch hparams
-        val_loader       (DataLoader):        validation data loader
-        data_config      (dict):              dataset config
-        args             (argparse.Namespace): CLI args
-        results_dir      (str):               output directory
-        device           (torch.device):      target device
-        encoder_epochs   (int):               WeightEncoder epochs trained
-        diffusion_epochs (int):               diffusion epochs trained
+        model             (WeightDiffusion):   trained model
+        hparams           (dict):              arch hparams
+        val_loader        (DataLoader):        validation data loader
+        data_config       (dict):              dataset config
+        args              (argparse.Namespace): CLI args
+        results_dir       (str):               output directory
+        device            (torch.device):      target device
+        encoder_epochs    (int):               encoder epochs trained (0 if skipped)
+        diffusion_epochs  (int):               diffusion epochs trained
+        is_3d             (bool):              whether input is volumetric
+        skip_encoder_eval (bool):              if True, skip encoder-only eval
     Returns:
         None
     """
@@ -1332,77 +1509,149 @@ def compute_final_eval(
     dataset_name = data_config.get("dataset", "mnist").lower()
     is_mnist = dataset_name == "mnist"
 
-    inception = _get_inception(device)
-    if is_mnist:
-        classifier = _load_classifier(device)
-        _, real_inception_feats, _ = _load_or_compute_real_features(
-            classifier, inception, device
-        )
+    # FID infrastructure only needed for 2D
+    if not is_3d:
+        inception = _get_inception(device)
+        if is_mnist:
+            classifier = _load_classifier(device)
+            _, real_inception_feats, _ = _load_or_compute_real_features(
+                classifier, inception, device
+            )
+        else:
+            _, real_inception_feats, _ = _load_or_compute_real_features(
+                None, inception, device
+            )
+            classifier = None
     else:
-        _, real_inception_feats, _ = _load_or_compute_real_features(
-            None, inception, device
+        inception = classifier = real_inception_feats = None
+
+    model.eval()
+
+    # ── Encoder eval ──────────────────────────────────────────────────────────
+    enc_recon_mse = None
+    enc_inception_fid = None
+
+    if not skip_encoder_eval:
+        print("\n--- Encoder Final Eval ---")
+
+        # Reconstruction MSE on val set
+        total_mse, n_seen = 0.0, 0
+        with torch.no_grad():
+            for batch in val_loader:
+                x = batch[0].to(device)
+                x_in = _prepare_input(x, is_3d)
+                B = x.shape[0]
+
+                mu, logvar = model.weight_encoder(x_in)
+                theta_prime = model.weight_encoder._reparameterize(mu, logvar)
+                theta = model.weight_encoder.decode_modulations(theta_prime)
+                x_recon = model._inr_decode(theta)
+
+                x_target = x.reshape(B, -1)
+                if not is_3d:
+                    x_target = x_target.clamp(-1, 1)
+                if x_recon.shape != x_target.shape:
+                    x_recon = x_recon.view_as(x_target)
+
+                total_mse += ((x_target - x_recon) ** 2).sum(dim=-1).sum().item()
+                n_seen += B
+
+        enc_recon_mse = total_mse / n_seen
+
+        # Encoder prior samples — 2D only
+        if not is_3d:
+            weight_dim = model.weight_encoder.modulation_dim
+            all_enc_samples = []
+            remaining = args.n_fid_samples
+            with torch.no_grad():
+                while remaining > 0:
+                    n = min(args.fid_batch_size, remaining)
+                    z = torch.randn(n, weight_dim, device=device)
+                    theta = model.weight_encoder.decode_modulations(z)
+                    imgs = model._inr_decode(theta)
+                    imgs = imgs.reshape(n, channels, img_size, img_size)
+                    imgs = (imgs * 0.5 + 0.5).clamp(0, 1)
+                    all_enc_samples.append(imgs.cpu())
+                    remaining -= n
+
+            enc_tensor = torch.cat(all_enc_samples, dim=0)
+            gen_enc_inception = _inception_features(enc_tensor, inception, device)
+            enc_inception_fid = float(_fid(real_inception_feats, gen_enc_inception))
+
+            vutils.save_image(
+                enc_tensor[:64],
+                os.path.join(results_dir, f"{args.run_name}_encoder_samples_8x8.png"),
+                nrow=8,
+                padding=2,
+            )
+        else:
+            print("  Encoder prior samples + FID skipped for 3D data.")
+    else:
+        print("\n--- Encoder Final Eval SKIPPED (pre-trained encoder reused) ---")
+
+    # ── Diffusion eval ────────────────────────────────────────────────────────
+    print("\n--- Diffusion Final Eval ---")
+
+    diff_fid = None
+    diff_mmd = None
+    diff_cov = None
+
+    if is_3d:
+        from src.utility.voxel_metrics import compute_mmd_cov
+
+        print(f"  Generating {args.n_fid_samples} 3D samples for MMD/COV …")
+        all_samples = []
+        remaining = args.n_fid_samples
+        with torch.no_grad():
+            while remaining > 0:
+                n = min(args.fid_batch_size, remaining)
+                imgs = model.sample(n_samples=n)
+                imgs = imgs.reshape(n, channels, img_size, img_size, img_size)
+                all_samples.append(imgs.cpu())
+                remaining -= n
+        generated = torch.cat(all_samples, dim=0)
+
+        ref_batches = [batch[0] for batch in val_loader]
+        reference = torch.cat(ref_batches, dim=0)
+
+        print(
+            f"  Computing MMD/COV ({generated.shape[0]} gen vs {reference.shape[0]} ref) …"
+        )
+        diff_mmd, diff_cov = compute_mmd_cov(generated, reference)
+        print(f"  MMD: {diff_mmd:.4f} | COV: {diff_cov:.4f}")
+    else:
+        diff_fid = compute_fid(
+            model, data_config, args.n_fid_samples, args.fid_batch_size, device
         )
 
-    # ── Encoder-only samples (prior samples through decode_modulations) ────────
-    print("\n--- Encoder Final Eval ---")
-    model.eval()
-    weight_dim = model.weight_encoder.modulation_dim
+        with torch.no_grad():
+            diff_imgs = model.sample(n_samples=64)
+            diff_imgs = diff_imgs.reshape(64, channels, img_size, img_size)
+            diff_imgs = (diff_imgs * 0.5 + 0.5).clamp(0, 1)
+        vutils.save_image(
+            diff_imgs.cpu(),
+            os.path.join(results_dir, f"{args.run_name}_diffusion_samples_8x8.png"),
+            nrow=8,
+            padding=2,
+        )
 
-    all_enc_samples = []
-    remaining = args.n_fid_samples
-    with torch.no_grad():
-        while remaining > 0:
-            n = min(args.fid_batch_size, remaining)
-            # Sample from the prior in weight space and decode
-            z = torch.randn(n, weight_dim, device=device)
-            theta = model.weight_encoder.decode_modulations(z)
-            imgs = model._inr_decode(theta)
-            imgs = imgs.reshape(n, channels, img_size, img_size)
-            imgs = (imgs * 0.5 + 0.5).clamp(0, 1)
-            all_enc_samples.append(imgs.cpu())
-            remaining -= n
-
-    enc_tensor = torch.cat(all_enc_samples, dim=0)
-    gen_enc_inception = _inception_features(enc_tensor, inception, device)
-    enc_inception_fid = float(_fid(real_inception_feats, gen_enc_inception))
-
-    # Encoder reconstruction MSE on validation set
-    total_mse, n_seen = 0.0, 0
-    model.eval()
-    with torch.no_grad():
-        for batch in val_loader:
-            x = batch[0].to(device)
-            B = x.shape[0]
-            x_flat = x.reshape(B, -1) if x.dim() > 2 else x
-
-            mu, logvar = model.weight_encoder(x_flat)
-            theta_prime = model.weight_encoder._reparameterize(mu, logvar)
-            theta = model.weight_encoder.decode_modulations(theta_prime)
-            x_recon = model._inr_decode(theta)
-            x_target = x_flat.clamp(-1, 1)
-            if x_recon.shape != x_target.shape:
-                x_recon = x_recon.view_as(x_target)
-
-            total_mse += ((x_target - x_recon) ** 2).sum(dim=-1).sum().item()
-            n_seen += B
-
-    enc_recon_mse = total_mse / n_seen
-
-    # ── Full diffusion samples ─────────────────────────────────────────────────
-    print("\n--- Diffusion Final Eval ---")
-    diff_fid = compute_fid(
-        model, data_config, args.n_fid_samples, args.fid_batch_size, device
-    )
-
-    # ── Print & save ──────────────────────────────────────────────────────────
+    # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'=' * 50}")
     print(f"  Final Eval Summary — {args.run_name}")
     print(f"{'=' * 50}")
-    print(f"  Encoder epochs trained   : {encoder_epochs}")
+    if skip_encoder_eval:
+        print("  Encoder eval             : skipped (pre-trained)")
+    else:
+        print(f"  Encoder epochs trained   : {encoder_epochs}")
+        print(f"  Encoder recon MSE        : {enc_recon_mse:.6f}")
+        if enc_inception_fid is not None:
+            print(f"  Encoder (prior) FID      : {enc_inception_fid:.2f}")
     print(f"  Diffusion epochs trained : {diffusion_epochs}")
-    print(f"  Encoder recon MSE        : {enc_recon_mse:.6f}")
-    print(f"  Encoder (prior) FID      : {enc_inception_fid:.2f}")
-    print(f"  Diffusion FID            : {diff_fid:.2f}")
+    if is_3d:
+        print(f"  Diffusion MMD            : {diff_mmd:.4f}")
+        print(f"  Diffusion COV            : {diff_cov:.4f}")
+    else:
+        print(f"  Diffusion FID            : {diff_fid:.2f}")
     print(f"{'=' * 50}\n")
 
     metrics = {
@@ -1413,31 +1662,13 @@ def compute_final_eval(
         "enc_recon_mse": enc_recon_mse,
         "enc_inception_fid": enc_inception_fid,
         "diff_inception_fid": diff_fid,
+        "diff_mmd": diff_mmd,
+        "diff_cov": diff_cov,
     }
     metrics_path = os.path.join(results_dir, f"{args.run_name}_eval_metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"  Eval metrics saved → {metrics_path}")
-
-    # Sample grids
-    vutils.save_image(
-        enc_tensor[:64],
-        os.path.join(results_dir, f"{args.run_name}_encoder_samples_8x8.png"),
-        nrow=8,
-        padding=2,
-    )
-
-    model.eval()
-    with torch.no_grad():
-        diff_imgs = model.sample(n_samples=64)
-        diff_imgs = diff_imgs.reshape(64, channels, img_size, img_size)
-        diff_imgs = (diff_imgs * 0.5 + 0.5).clamp(0, 1)
-    vutils.save_image(
-        diff_imgs.cpu(),
-        os.path.join(results_dir, f"{args.run_name}_diffusion_samples_8x8.png"),
-        nrow=8,
-        padding=2,
-    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1448,12 +1679,16 @@ def compute_final_eval(
 def run_training(args: argparse.Namespace) -> None:
     """
     Orchestrate two-stage training: WeightEncoder → Diffusion, then final eval.
+    When --skip_vae is set, loads pre-trained encoder and runs only Stage 2.
 
     Args:
         args (argparse.Namespace): parsed CLI arguments
     Returns:
         None
     """
+    if args.skip_vae and not args.encoder_weights:
+        raise ValueError("--encoder_weights must be provided when --skip_vae is set.")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "mps")
     print(
         f"--- Two-Stage WeightDiffusion Training: {args.run_name} | mode={args.mode} ---"
@@ -1476,31 +1711,60 @@ def run_training(args: argparse.Namespace) -> None:
     channels = data_config["channels"]
     img_size = data_config["img_size"]
     data_dim = data_config["data_dim"]
+    is_3d = data_config.get("is_3d", False)
 
     results_dir = os.path.join(args.results_dir, args.run_name)
-    if os.path.exists(results_dir):
-        import shutil
 
-        shutil.rmtree(results_dir)
-    os.makedirs(results_dir, exist_ok=True)
+    if args.skip_vae:
+        if not os.path.exists(results_dir):
+            raise FileNotFoundError(
+                f"Results directory '{results_dir}' not found. "
+                "Run full training first before using --skip_vae."
+            )
+        print(f"  --skip_vae: clearing stale diffusion outputs from {results_dir}")
+        _clear_diffusion_files(results_dir, args.run_name)
+    else:
+        if os.path.exists(results_dir):
+            import shutil
+
+            shutil.rmtree(results_dir)
+        os.makedirs(results_dir, exist_ok=True)
 
     # ── Stage 1: WeightEncoder ────────────────────────────────────────────────
-    stage1_model = train_weight_encoder(
-        args,
-        hparams,
-        dataloader,
-        val_loader,
-        channels,
-        img_size,
-        data_dim,
-        data_config,
-        results_dir,
-        device,
-    )
-
-    enc_ckpt_path = os.path.join(results_dir, f"{args.run_name}_encoder_checkpoint.pt")
-    enc_ckpt = torch.load(enc_ckpt_path, map_location=device)
-    encoder_epochs_done = enc_ckpt["epoch"]
+    if args.skip_vae:
+        print("\n" + "=" * 60)
+        print("  STAGE 1 — ENCODER TRAINING SKIPPED (loading pre-trained weights)")
+        print("=" * 60)
+        stage1_model = load_pretrained_encoder(
+            args.encoder_weights,
+            hparams,
+            args,
+            channels,
+            img_size,
+            data_dim,
+            device,
+            is_3d=is_3d,
+        )
+        encoder_epochs_done = 0
+    else:
+        stage1_model = train_weight_encoder(
+            args,
+            hparams,
+            dataloader,
+            val_loader,
+            channels,
+            img_size,
+            data_dim,
+            data_config,
+            results_dir,
+            device,
+            is_3d=is_3d,
+        )
+        enc_ckpt = torch.load(
+            os.path.join(results_dir, f"{args.run_name}_encoder_checkpoint.pt"),
+            map_location=device,
+        )
+        encoder_epochs_done = enc_ckpt["epoch"]
 
     # ── Stage 2: Diffusion ────────────────────────────────────────────────────
     final_model = train_diffusion(
@@ -1516,12 +1780,13 @@ def run_training(args: argparse.Namespace) -> None:
         results_dir,
         device,
         encoder_epochs_done=encoder_epochs_done,
+        is_3d=is_3d,
     )
 
-    diff_ckpt_path = os.path.join(
-        results_dir, f"{args.run_name}_diffusion_checkpoint.pt"
+    diff_ckpt = torch.load(
+        os.path.join(results_dir, f"{args.run_name}_diffusion_checkpoint.pt"),
+        map_location=device,
     )
-    diff_ckpt = torch.load(diff_ckpt_path, map_location=device)
     diffusion_epochs_done = diff_ckpt["epoch"]
 
     # ── Final eval ────────────────────────────────────────────────────────────
@@ -1533,8 +1798,10 @@ def run_training(args: argparse.Namespace) -> None:
         args,
         results_dir,
         device,
-        encoder_epochs_done,
-        diffusion_epochs_done,
+        encoder_epochs=encoder_epochs_done,
+        diffusion_epochs=diffusion_epochs_done,
+        is_3d=is_3d,
+        skip_encoder_eval=args.skip_vae,
     )
 
 
