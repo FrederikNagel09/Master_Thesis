@@ -18,7 +18,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/main.py\
     --run_name latent-diffusion-VOXEL \
-    --epochs 400 \
+    --epochs 500 \
     --batch_size 64 \
     --subset_frac 1.0 \
     --n_fid_samples 4096 \
@@ -27,26 +27,26 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --log_every_n_steps 1 \
+    --log_every_n_steps 200 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
-    --inr_hidden_dim 256 \
+    --inr_hidden_dim 128 \
     --inr_layers 5 \
-    --latent_dim 64 \
+    --latent_dim 128 \
     --latent_size 8 \
     --latent_patch_size 4 \
-    --latent_enc_hidden_dim 64\
+    --latent_enc_hidden_dim 128\
     --pred_d_model 128 \
     --pred_n_heads 8 \
-    --pred_n_layers 6 \
+    --pred_n_layers 8 \
     --pred_d_ff 1024 \
     --pred_t_embed_dim 128 \
     --dec_trans_dim 128 \
     --dec_trans_n_head 8 \
     --dec_trans_head_dim 64 \
     --dec_trans_ff_dim 1024 \
-    --dec_trans_enc_depth 4 \
-    --dec_trans_dec_depth 4 \
+    --dec_trans_enc_depth 6 \
+    --dec_trans_dec_depth 6 \
     --dec_trans_n_groups 32 \
     --dec_trans_update_strategy scale

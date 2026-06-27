@@ -311,6 +311,33 @@ def _model_to_grid(
                 .reshape(n_samples, channels, img_size, img_size)
                 .clamp(0, 1)
             )
+        elif model_type == "latent_two_stage":
+            raw_samples = model.p_sample_loop(n_samples)
+            
+            if is_3d:
+                grid = _samples_to_voxel_grids(raw_samples, channels, img_size)
+                model.train()
+                return grid, snapshots
+
+            samples = (
+                (raw_samples * 0.5 + 0.5)
+                .clamp(0, 1)
+                .reshape(n_samples, channels, img_size, img_size)
+            )
+
+        elif model_type == "weight_two_stage":
+            raw_samples = model.sample(n_samples=n_samples)
+            
+            if is_3d:
+                grid = _samples_to_voxel_grids(raw_samples, channels, img_size)
+                model.train()
+                return grid, snapshots
+
+            samples = (
+                (raw_samples * 0.5 + 0.5)
+                .clamp(0, 1)
+                .reshape(n_samples, channels, img_size, img_size)
+            )
 
         elif model_type == "ndm_inr" or model_type in (
             "latent_inr_diffusion",

@@ -63,6 +63,46 @@ class TwoStageLDM(nn.Module):
             coords = self.coord_grid.unsqueeze(0).repeat(B, 1, 1, 1).to(self.device)
         return self.decoder(z, coords)
 
+    @torch.no_grad()
+    def compute_rec_loss(self, val_loader) -> float:
+        self.eval()
+        total_loss = 0.0
+        num_batches = 0
+
+        for batch in val_loader:
+            x = batch[0].to(self.device)
+            B = x.shape[0]
+
+            # Force shape correction directly on 'x' to prevent flat vectors
+            if len(x.shape) == 2:
+                if self.is_3d:
+                    x = x.view(B, -1, self.img_size, self.img_size, self.img_size)
+                else:
+                    x = x.view(B, -1, self.img_size, self.img_size)
+
+            # 1. Encode
+            encoded = self.latent_encoder(x)
+            
+            if hasattr(encoded, "sample"):
+                z = encoded.sample()
+            elif isinstance(encoded, tuple):
+                z = encoded[0]
+            else:
+                z = encoded
+
+            # 2. Decode
+            x_reconstructed = self._decode_latent(z)
+
+            # 3. MSE Loss
+            loss = torch.nn.functional.mse_loss(x_reconstructed.view_as(x), x)
+            total_loss += loss.item()
+            num_batches += 1
+
+        if num_batches == 0:
+            return 0.0
+
+        return total_loss / num_batches
+
     def q_sample(
         self,
         z0: torch.Tensor,

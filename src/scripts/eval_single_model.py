@@ -2,26 +2,76 @@
 eval_single_model.py
 
 Generates final samples and computes eval metrics for a single model.
-Supports both original one-stage models and two-stage VAE+LDM models.
+Supports three model families:
+  - Original one-stage models  (config at .../metadata/config.json)
+  - Two-stage Latent LDM       (config at .../<run>_ldm_config.json)
+  - Two-stage Weight Diffusion (config at .../<run>_wd_config.json)
+
+All three support both 2D image and 3D voxel (ShapeNet) data.
 
 Original model usage:
 ---------------------
+## LATENT DIFFUSION - ONE-STAGE - READY
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/latent-diffusion-ramp/metadata/config.json \
-    --n_fid_samples 4096
+    --config_path src/train_results/latent-diffusion/metadata/config.json \
+    --n_fid_samples 16
 
-Two-stage model usage (2D):
----------------------------
+## WEIGHT DIFFUSION - ONE-STAGE - READY
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/two_stage_fixed/two_stage_fixed_ldm_config.json \
-    --weights_path src/train_results/two_stage_fixed/two_stage_fixed_ldm_weights.pt \
-    --n_fid_samples 4096
+    --config_path src/train_results/weight-diffusion/metadata/config.json \
+    --n_fid_samples 16
 
-Two-stage model usage (3D ShapeNet):
--------------------------------------
+
+Latent two-stage usage (2D):
+-----------------------------
+
+## LATENT TWO-STAGE - FIXED - TEST
+python src/scripts/eval_single_model.py \
+    --config_path src/train_results/latent_two_stage_fixed/latent_two_stage_fixed_ldm_config.json \
+    --weights_path src/train_results/latent_two_stage_fixed/latent_two_stage_fixed_ldm_weights.pt \
+    --n_fid_samples 16
+
+## WEIGHT TWO-STAGE - FIXED - TEST
+python src/scripts/eval_single_model.py \
+    --config_path src/train_results/wd_two_stage_fixed/wd_two_stage_fixed_wd_config.json \
+    --weights_path src/train_results/wd_two_stage_fixed/wd_two_stage_fixed_wd_weights.pt \
+    --n_fid_samples 16
+
+## LATENT TWO-STAGE - CONVERGED - TEST
+python src/scripts/eval_single_model.py \
+    --config_path src/train_results/two_stage_convergence/two_stage_convergence_ldm_config.json \
+    --weights_path src/train_results/two_stage_convergence/two_stage_convergence_ldm_weights.pt \
+    --n_fid_samples 16
+
+## WEIGHT TWO-STAGE - CONVERGED - TEST
+python src/scripts/eval_single_model.py \
+    --config_path src/train_results/wd_two_stage_convergence/wd_two_stage_convergence_wd_config.json \
+    --weights_path src/train_results/wd_two_stage_convergence/wd_two_stage_convergence_wd_weights.pt \
+    --n_fid_samples 16
+
+
+
+
+
+Latent two-stage usage (3D ShapeNet):
+--------------------------------------
 python src/scripts/eval_single_model.py \
     --config_path src/train_results/two_stage_shapenet/two_stage_shapenet_ldm_config.json \
     --weights_path src/train_results/two_stage_shapenet/two_stage_shapenet_ldm_weights.pt \
+    --n_fid_samples 512
+
+Weight diffusion two-stage usage (2D):
+---------------------------------------
+python src/scripts/eval_single_model.py \
+    --config_path src/train_results/wd_two_stage/wd_two_stage_wd_config.json \
+    --weights_path src/train_results/wd_two_stage/wd_two_stage_wd_weights.pt \
+    --n_fid_samples 4096
+
+Weight diffusion two-stage usage (3D):
+---------------------------------------
+python src/scripts/eval_single_model.py \
+    --config_path src/train_results/wd_two_stage_shapenet/wd_two_stage_shapenet_wd_config.json \
+    --weights_path src/train_results/wd_two_stage_shapenet/wd_two_stage_shapenet_wd_weights.pt \
     --n_fid_samples 512
 """
 
@@ -46,19 +96,22 @@ warnings.filterwarnings(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# CONFIG-TYPE DETECTION
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _config_type(config: dict) -> str:
+    if "run_name" in config and "hparams" not in config:
+        if "noise_predictor_type" in config:
+            return "weight_two_stage"
+        return "latent_two_stage"
+    return "original"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ──────────────────────────────────────────────────────────────────────────────
 
-
 def _extract_run_name_original(config_path: str) -> str:
-    """
-    Extract run name from .../<run_name>/metadata/config.json.
-
-    Args:
-        config_path (str): path to config JSON
-    Returns:
-        str: run name
-    """
     parts = os.path.normpath(config_path).split(os.sep)
     try:
         metadata_idx = parts.index("metadata")
@@ -70,53 +123,33 @@ def _extract_run_name_original(config_path: str) -> str:
         )
 
 
-def _is_two_stage_config(config: dict) -> bool:
-    """
-    Detect whether a config JSON belongs to a two-stage model.
-    Two-stage configs have 'run_name' at the top level and no 'hparams' key.
-
-    Args:
-        config (dict): loaded config JSON
-    Returns:
-        bool: True if two-stage model config
-    """
-    return "run_name" in config and "hparams" not in config
+def _dataset_defaults(dataset: str, is_3d: bool) -> tuple[int, int]:
+    if is_3d:
+        return 1, 32
+    mapping = {
+        "mnist": (1, 28),
+        "cifar10": (3, 32),
+        "celeba": (3, 64),
+    }
+    if dataset.lower() not in mapping:
+        raise ValueError(f"Unknown dataset '{dataset}'.")
+    return mapping[dataset.lower()]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TWO-STAGE MODEL LOADING
+# TWO-STAGE LOADERS
 # ──────────────────────────────────────────────────────────────────────────────
 
-
-def _load_two_stage_model(
+def _load_latent_two_stage(
     config: dict,
     weights_path: str,
     device: torch.device,
 ) -> tuple[object, dict]:
-    """
-    Build and load a TwoStageLDM from a two-stage config and weights file.
-
-    Args:
-        config       (dict):          loaded _ldm_config.json
-        weights_path (str):           path to _ldm_weights.pt
-        device       (torch.device):  target device
-    Returns:
-        tuple: (TwoStageLDM on device in eval mode, data_config dict)
-    """
-    from src.scripts.two_stage_latent_training import build_ldm
+    from src.utility.model_builders.util.twostage_builder import build_ldm
 
     is_3d = config.get("is_3d", False)
     dataset = config["dataset"]
-
-    # Resolve dataset properties from config
-    if is_3d:
-        channels, img_size = 1, 32
-    elif dataset == "mnist":
-        channels, img_size = 1, 28
-    elif dataset in ("cifar10", "celeba"):
-        channels, img_size = 3, 32
-    else:
-        raise ValueError(f"Unknown dataset '{dataset}' in two-stage config.")
+    channels, img_size = _dataset_defaults(dataset, is_3d)
 
     data_config = {
         "dataset": dataset,
@@ -126,234 +159,97 @@ def _load_two_stage_model(
         "is_3d": is_3d,
     }
 
-    # Reconstruct the args namespace build_ldm expects
-    args = SimpleNamespace(
-        T=config["T"],
-        beta_1=config["beta_1"],
-        beta_T=config["beta_T"],
-    )
-
+    args = SimpleNamespace(T=config["T"], beta_1=config["beta_1"], beta_T=config["beta_T"])
     ldm = build_ldm(config, args, channels, img_size, device, is_3d=is_3d)
 
     ckpt = torch.load(weights_path, map_location=device)
     ldm.load_state_dict(ckpt["ldm_state_dict"])
     ldm.eval()
-    print(f"  Loaded two-stage LDM weights from: {weights_path}")
+    print(f"  Loaded latent two-stage LDM weights from: {weights_path}")
 
     return ldm, data_config
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# TWO-STAGE EVAL
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def _eval_two_stage(
-    ldm: object,
-    config: dict,  # noqa: ARG001
-    data_config: dict,
-    run_name: str,
-    run_dir: str,
-    args: argparse.Namespace,
+def _load_weight_two_stage(
+    config: dict,
+    weights_path: str,
     device: torch.device,
-) -> None:
-    """
-    Run eval for a two-stage model: FID for 2D, MMD/COV + voxel slices for 3D.
+) -> tuple[object, dict]:
+    from src.scripts.two_stage_weight_training import build_full_wd_model
 
-    Args:
-        ldm         (TwoStageLDM):       loaded model in eval mode
-        config      (dict):              two-stage config dict
-        data_config (dict):              dataset config
-        run_name    (str):               run identifier
-        run_dir     (str):               output directory
-        args        (argparse.Namespace): CLI args
-        device      (torch.device):      target device
-    Returns:
-        None
-    """
-    import torchvision.utils as vutils
+    is_3d = config.get("is_3d", False)
+    dataset = config["dataset"]
+    channels, img_size = _dataset_defaults(dataset, is_3d)
+    data_dim = channels * img_size ** (3 if is_3d else 2)
 
-    from src.utility.dataset_builders import build_dataset
+    data_config = {
+        "dataset": dataset,
+        "channels": channels,
+        "img_size": img_size,
+        "data_dim": data_dim,
+        "is_3d": is_3d,
+    }
 
-    is_3d = data_config.get("is_3d", False)
-    dataset = data_config["dataset"]
-    data_config["channels"]
+    args = SimpleNamespace(T=config["T"], beta_1=config["beta_1"], beta_T=config["beta_T"])
+    model = build_full_wd_model(config, args, channels, img_size, data_dim, device, is_3d=is_3d)
 
-    # Val loader needed for MMD/COV reference set
-    _, val_dataset, _ = build_dataset(
-        dataset_name=dataset,
-        data_root="data/",
-        subset_frac=1.0,
-        single_class=False,
-    )
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.fid_batch_size, shuffle=False
-    )
+    ckpt = torch.load(weights_path, map_location=device)
+    model.load_state_dict(ckpt["full_model_state_dict"])
+    model.eval()
+    print(f"  Loaded weight-diffusion two-stage weights from: {weights_path}")
 
-    metrics = {"run_name": run_name, "is_3d": is_3d}
-
-    if is_3d:
-        # ── 3D: MMD/COV + voxel slice grid ───────────────────────────────────
-        from src.utility.voxel_metrics import compute_mmd_cov
-
-        print(f"  Generating {args.n_fid_samples} 3D samples …")
-        all_samples = []
-        remaining = args.n_fid_samples
-        with torch.no_grad():
-            while remaining > 0:
-                n = min(args.fid_batch_size, remaining)
-                all_samples.append(ldm.p_sample_loop(n).cpu())
-                remaining -= n
-        generated = torch.cat(all_samples, dim=0)  # (N, 1, D, H, W)
-
-        # Collect full reference val set
-        ref_batches = [batch[0] for batch in val_loader]
-        reference = torch.cat(ref_batches, dim=0)  # (M, 1, D, H, W)
-
-        print(
-            f"  Computing MMD/COV ({generated.shape[0]} gen vs {reference.shape[0]} ref) …"
-        )
-        mmd, cov = compute_mmd_cov(generated, reference)
-        print(f"  MMD: {mmd:.4f} | COV: {cov:.4f}")
-        metrics.update({"mmd": mmd, "cov": cov})
-
-        # Save mid-slice visualisation grid (axial slice at D//2)
-        D = generated.shape[2]  # noqa: N806
-        slices = generated[:64, 0, D // 2, :, :]  # (64, H, W)
-        slices = slices.unsqueeze(1).clamp(0, 1)  # (64, 1, H, W)
-        vutils.save_image(
-            slices,
-            os.path.join(run_dir, f"{run_name}_voxel_slices_8x8.png"),
-            nrow=8,
-            padding=2,
-        )
-        print(f"  Voxel slice grid saved → {run_dir}")
-
-    else:
-        # ── 2D: Inception FID + sample grid ──────────────────────────────────
-        from src.utility.classifier_utils import (
-            _get_inception,
-            _inception_features,
-            _load_classifier,
-            _load_or_compute_real_features,
-            _mnist_features,
-        )
-        from src.utility.metrics_util import _fid
-
-        is_mnist = dataset == "mnist"
-        inception = _get_inception(device)
-
-        if is_mnist:
-            classifier = _load_classifier(device)
-            real_mnist_feats, real_inception_feats, _ = _load_or_compute_real_features(
-                classifier, inception, device
-            )
-        else:
-            _, real_inception_feats, _ = _load_or_compute_real_features(
-                None, inception, device
-            )
-            classifier = None
-
-        print(f"  Generating {args.n_fid_samples} samples for FID …")
-        all_samples = []
-        remaining = args.n_fid_samples
-        with torch.no_grad():
-            while remaining > 0:
-                n = min(args.fid_batch_size, remaining)
-                imgs = (ldm.p_sample_loop(n) * 0.5 + 0.5).clamp(0, 1)
-                all_samples.append(imgs.cpu())
-                remaining -= n
-        fid_tensor = torch.cat(all_samples, dim=0)
-
-        gen_inception_feats = _inception_features(fid_tensor, inception, device)
-        inception_fid = float(_fid(real_inception_feats, gen_inception_feats))
-        metrics["inception_fid"] = inception_fid
-        print(f"  Inception FID: {inception_fid:.2f}")
-
-        if is_mnist:
-            gen_mnist_feats, _ = _mnist_features(fid_tensor, classifier, device)
-            mnist_fid = float(_fid(real_mnist_feats, gen_mnist_feats))
-            metrics["mnist_fid"] = mnist_fid
-            print(f"  MNIST FID: {mnist_fid:.2f}")
-
-        # Sample grid
-        vutils.save_image(
-            fid_tensor[:64],
-            os.path.join(run_dir, f"{run_name}_samples_8x8.png"),
-            nrow=8,
-            padding=2,
-        )
-        print(f"  Sample grid saved → {run_dir}")
-
-    # Save metrics JSON
-    metrics_path = os.path.join(run_dir, f"{run_name}_eval_metrics.json")
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"  Metrics saved → {metrics_path}")
+    return model, data_config
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────────────────────────────────────
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate samples and compute eval metrics for a single model."
-    )
-    parser.add_argument(
-        "--config_path", type=str, required=True, help="Path to model config JSON"
-    )
-    parser.add_argument(
-        "--weights_path",
-        type=str,
-        default=None,
-        help="Path to weights .pt file (required for two-stage models)",
-    )
-    parser.add_argument(
-        "--n_fid_samples",
-        type=int,
-        default=10000,
-        help="Number of samples to generate for FID/MMD/COV",
-    )
-    parser.add_argument(
-        "--fid_batch_size",
-        type=int,
-        default=64,
-        help="Batch size for sample generation",
-    )
+    parser = argparse.ArgumentParser(description="Generate samples and compute eval metrics.")
+    parser.add_argument("--config_path", type=str, required=True, help="Path to model config JSON")
+    parser.add_argument("--weights_path", type=str, default=None, help="Path to weights .pt file")
+    parser.add_argument("--n_fid_samples", type=int, default=10000, help="Samples for FID/MMD/COV")
+    parser.add_argument("--fid_batch_size", type=int, default=64, help="Generation batch size")
     args = parser.parse_args()
 
     with open(args.config_path) as f:
         config = json.load(f)
 
     from src.utility.general import _get_device
+    from src.utility.dataset_builders import build_dataset
+    from src.utility.plotting import plot_final_samples
 
-    device = _get_device()
-
-    if _is_two_stage_config(config):
-        # ── Two-stage model path ───────────────────────────────────────────
+    device = torch.device(_get_device())
+    family = _config_type(config)
+    subset_frac_temp = 0.1
+    # 1. Initialize model, data_config, and params based on model family
+    if family == "latent_two_stage":
         if args.weights_path is None:
-            raise ValueError("--weights_path is required for two-stage models.")
-
+            raise ValueError("--weights_path is required for latent two-stage models.")
         run_name = config["run_name"]
-        run_dir = os.path.join("src", "results", run_name)
-        os.makedirs(run_dir, exist_ok=True)
+        model, data_config = _load_latent_two_stage(config, args.weights_path, device)
+        
+        model_type = "latent_two_stage"
+        data_root = "data/"
+        batch_size = args.fid_batch_size
+        epoch = 0
+        single_class, single_class_label, subset_frac = False, None, subset_frac_temp
 
-        print(f"\n{'=' * 55}")
-        print(f"  Eval (Two-Stage)  |  run={run_name}  |  device={device}")
-        print(f"  Output dir: {run_dir}")
-        print(f"{'=' * 55}\n")
-
-        ldm, data_config = _load_two_stage_model(config, args.weights_path, device)
-        _eval_two_stage(ldm, config, data_config, run_name, run_dir, args, device)
+    elif family == "weight_two_stage":
+        if args.weights_path is None:
+            raise ValueError("--weights_path is required for weight two-stage models.")
+        run_name = config["run_name"]
+        model, data_config = _load_weight_two_stage(config, args.weights_path, device)
+        
+        model_type = "weight_two_stage"
+        data_root = "data/"
+        batch_size = args.fid_batch_size
+        epoch = 0
+        single_class, single_class_label, subset_frac = False, None, subset_frac_temp
 
     else:
-        # ── Original one-stage model path ──────────────────────────────────
-        from src.utility.dataset_builders import build_dataset
-        from src.utility.model_builders import build_model
-        from src.utility.plotting import plot_final_samples
-
+        from src.utility.model_builders.model_builder import build_model
         hparams = SimpleNamespace(**config["hparams"])
         data_cfg = config["data"]
         data_config = {
@@ -361,54 +257,71 @@ def main() -> None:
             "channels": data_cfg["channels"],
             "img_size": data_cfg["img_size"],
             "data_dim": data_cfg["data_dim"],
+            "is_3d": data_cfg.get("is_3d", False),
         }
-        epoch = config["epochs"]["end"]
         run_name = _extract_run_name_original(args.config_path)
-        run_dir = os.path.join("src", "results", run_name)
-        os.makedirs(run_dir, exist_ok=True)
-
-        print(f"\n{'=' * 55}")
-        print(f"  Eval Samples  |  run={run_name}  |  device={device}")
-        print(f"  Output dir: {run_dir}")
-        print(f"{'=' * 55}\n")
-
-        print("  Building model …")
+        
         model = build_model(hparams, data_config).to(device)
-
         weights_path = args.weights_path or config["paths"]["weights"]
-        print(f"  Loading weights from {weights_path} …")
         checkpoint = torch.load(weights_path, map_location=device)
+        state_dict = checkpoint["model_state_dict"]
+        # Remove the unexpected 'coords' key if it exists
+        if "coords" in state_dict:
+            del state_dict["coords"]
+            
+        model.load_state_dict(state_dict)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()
 
-        print("  Building validation dataset …")
-        _, val_dataset, _ = build_dataset(
-            dataset_name=data_config["dataset"],
-            data_root=hparams.data_root,
-            subset_frac=hparams.subset_frac,
-            single_class=hparams.single_class,
-            single_class_label=hparams.single_class_label,
-        )
-        val_loader = torch.utils.data.DataLoader(
-            val_dataset,
-            batch_size=hparams.batch_size,
-            shuffle=False,
-            drop_last=True,
-            num_workers=hparams.num_workers,
-        )
+        model_type = hparams.model.lower()
+        if "weight" in model_type:
+            model_type = "weight_inr_diffusion"
+        elif "latent" in model_type:
+            model_type = "latent_inr_diffusion"
 
-        plot_final_samples(
-            model=model,
-            model_type=hparams.model,
-            epoch=epoch,
-            run_dir=run_dir,
-            device=device,
-            data_config=data_config,
-            val_loader=val_loader,
-            debug=False,
-            n_fid_samples=args.n_fid_samples,
-        )
+        data_root = getattr(hparams, "data_root", "data/")
+        batch_size = getattr(hparams, "batch_size", args.fid_batch_size)
+        epoch = config.get("epochs", {}).get("end", 0)
+        single_class = getattr(hparams, "single_class", False)
+        single_class_label = getattr(hparams, "single_class_label", None)
+        subset_frac = subset_frac_temp
 
+    # 2. Setup universal directories and val_loader
+    run_dir = os.path.join("src", "results", run_name)
+    os.makedirs(run_dir, exist_ok=True)
+
+    print(f"\n{'=' * 55}")
+    print(f"  Eval ({family})  |  run={run_name}  |  device={device}")
+    print(f"  Output dir: {run_dir}")
+    print(f"{'=' * 55}\n")
+    print("  Building validation dataset …")
+
+    _, val_dataset, _ = build_dataset(
+        dataset_name=data_config["dataset"],
+        data_root=data_root,
+        subset_frac=subset_frac,
+        single_class=single_class,
+        single_class_label=single_class_label,
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=(family == "original"),
+    )
+
+    # 3. Route everything to plot_final_samples
+    print("  Routing to plot_final_samples ...")
+    plot_final_samples(
+        model=model,
+        model_type=model_type,
+        epoch=epoch,
+        run_dir=run_dir,
+        device=device,
+        data_config=data_config,
+        n_fid_samples=args.n_fid_samples,
+        val_loader=val_loader,
+    )
 
 if __name__ == "__main__":
     main()
