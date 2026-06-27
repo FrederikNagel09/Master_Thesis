@@ -1,28 +1,20 @@
 """
 weight_space_analysis.py
 Weight-space analysis across all three model families: VAE-INR, Latent
-Diffusion (up to 3 variants), and Weight Diffusion (up to 3 variants).
+Diffusion (up to 3 variants), and Weight Diffusion (up to 3 variants),
+plus two-stage variants of both Latent and Weight Diffusion (up to 2 each).
 
-For every model, the modulated SIREN weight vector is extracted per real
-image (NOT the upstream latent z) and analyzed directly in weight space:
-  1. PCA scatter (real-image weight vectors, colored by class label).
-     One PNG per model (no shared prior/sample background here — see
-     latent_space_analysis.py for that diagnostic, which is VAE/LDM-specific).
-  2. Interpolation: pick two real images of different class, get their two
-     weight vectors, linearly interpolate in WEIGHT space across N steps,
-     decode each step through the shared SIREN INR, plot as a row.
-     One PNG per model.
+CUDA_VISIBLE_DEVICES=1 python src/scripts/weight_space_analysis.py \
+    --vae_config_path src/results/VAE_Baseline/VAE_Baseline_config.json \
+    --vae_checkpoint_path src/results/VAE_Baseline/VAE_Baseline_checkpoint.pt \
+    --latent_config_paths src/train_results/latent-diffusion/metadata/config.json \
+    --two_stage_config_paths src/train_results/latent_two_stage_fixed/latent_two_stage_fixed_ldm_config.json src/train_results/two_stage_convergence/two_stage_convergence_ldm_config.json \
+    --weight_config_paths src/train_results/weight-diffusion/metadata/config.json \
+    --two_stage_weight_config_paths src/train_results/wd_two_stage_fixed/wd_two_stage_fixed_wd_config.json src/train_results/wd_two_stage_convergence/wd_two_stage_convergence_wd_config.json\
+    --n_pca_samples 2024 \
+    --n_interp_steps 10
 
-Usage
------
-python src/scripts/weight_space_analysis.py \
-    --vae_config_path src/results/vae_testing_beta01/vae_testing_beta01_config.json \
-    --vae_checkpoint_path src/results/vae_testing_beta01/vae_testing_beta01_checkpoint.pt \
-    --latent_config_paths src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json src/train_results/Latent-Probabilistic-two-stage/metadata/config.json\
-    --weight_config_paths src/train_results/Weight-Diffusion-Probabilistic/metadata/config.json \
-    --n_pca_samples 2048
-"""  # noqa: E501
-
+"""
 from __future__ import annotations
 
 import argparse
@@ -39,11 +31,10 @@ import numpy as np
 import torch
 from sklearn.decomposition import PCA
 
-# Reuse model-building / coord-grid helpers already written for the eval suite
 from src.scripts.get_all_plot_results import build_vae_model, make_coord_grid
 
 
-# ── Path helper (mirrors eval_visual.py / latent_space_analysis.py) ────────────
+# ── Path helpers ───────────────────────────────────────────────────────────────
 def _extract_run_name(config_path: str) -> str:
     """
     Extract run name from .../<run_name>/metadata/config.json.
@@ -73,13 +64,28 @@ def _safe_name(run_name: str) -> str:
     return run_name.lower().replace(" ", "_").replace("-", "_")
 
 
+def _extract_two_stage_wd_checkpoint(config_path: str, run_name: str) -> str:
+    """
+    Derive the two-stage WeightDiffusion weights path from the config file's directory.
+    Convention: <config_dir>/<run_name>_wd_weights.pt
+
+    Args:
+        config_path: Path to the flat two-stage WD config JSON.
+        run_name:    Run name read from config["run_name"].
+    Returns:
+        Absolute path to the WD weights file.
+    """
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    return os.path.join(config_dir, f"{run_name}_wd_weights.pt")
+
+
 def _reshape_if_flat(x: torch.Tensor, channels: int = 1) -> torch.Tensor:
     """
     Reshape a flat (B, data_dim) image tensor to (B, C, H, W) if needed.
 
     Args:
         x:        (B, data_dim) or (B, C, H, W) tensor.
-        channels: Number of image channels (default 1 for MNIST).
+        channels: Number of image channels.
     Returns:
         (B, C, H, W) tensor.
     """
@@ -89,39 +95,35 @@ def _reshape_if_flat(x: torch.Tensor, channels: int = 1) -> torch.Tensor:
     return x
 
 
+# ── Slerp ──────────────────────────────────────────────────────────────────────
 def slerp(w1: torch.Tensor, w2: torch.Tensor, alphas: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
     """
     Spherical linear interpolation between two single vectors, evaluated at
-    each alpha in [0, 1]. Falls back to linear interpolation when w1/w2 are
-    (near) parallel or antiparallel, where the slerp formula is numerically
-    unstable (sin(omega) -> 0).
+    each alpha in [0, 1]. Falls back to linear when w1/w2 are near parallel
+    or antiparallel.
 
     Args:
         w1:     (1, D) start vector.
         w2:     (1, D) end vector.
         alphas: (n_steps, 1) interpolation positions in [0, 1].
-        eps:    Threshold on sin(omega) below which we fall back to linear interpolation.
+        eps:    Threshold on sin(omega) below which we fall back to linear.
     Returns:
-        w_interp: (n_steps, D) interpolated vectors, w1 at alpha=0, w2 at alpha=1.
+        w_interp: (n_steps, D) interpolated vectors.
     """
     w1_flat = w1.reshape(-1)
     w2_flat = w2.reshape(-1)
-
     cos_omega = torch.dot(w1_flat, w2_flat) / (w1_flat.norm() * w2_flat.norm() + eps)
-    cos_omega = cos_omega.clamp(-1.0, 1.0)  # guard against floating point drift outside [-1, 1]
+    cos_omega = cos_omega.clamp(-1.0, 1.0)
     omega = torch.acos(cos_omega)
     sin_omega = torch.sin(omega)
-
     if sin_omega.abs() < eps:
-        # w1, w2 are (near) parallel/antiparallel: slerp is undefined/unstable, use linear instead
         return (1 - alphas) * w1 + alphas * w2
-
-    coeff1 = torch.sin((1 - alphas) * omega) / sin_omega  # (n_steps, 1)
-    coeff2 = torch.sin(alphas * omega) / sin_omega  # (n_steps, 1)
+    coeff1 = torch.sin((1 - alphas) * omega) / sin_omega
+    coeff2 = torch.sin(alphas * omega) / sin_omega
     return coeff1 * w1 + coeff2 * w2
 
 
-# ── Weight vector extraction (branches by model family) ────────────────────────
+# ── Weight vector extraction ───────────────────────────────────────────────────
 @torch.no_grad()
 def collect_weight_vectors(
     model,
@@ -133,20 +135,21 @@ def collect_weight_vectors(
     batch_size: int = 256,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Extract flattened modulated SIREN weight vectors from a FIXED set of real
-    images (shared across all models), paired with class labels.
+    Extract flattened modulated SIREN weight vectors from a fixed set of real
+    images, paired with class labels.
 
     Args:
-        model:      Trained VAEWrapper, LatentDiffusion, or WeightDiffusion model.
-        model_type: "vae", "ldm", or "weight_diffusion".
+        model:      Trained VAEWrapper, LatentDiffusion, TwoStageLDM, WeightDiffusion,
+                    or two-stage WeightDiffusion model.
+        model_type: "vae", "ldm", "two_stage", "weight_diffusion", or "two_stage_weight".
         x_pca:      (N, C, H, W) fixed image batch, identical across all models.
         y_pca:      (N,) integer class labels matching x_pca.
-        coord_grid: (H, W, 2) coordinate grid (only used by vae/ldm decoders).
+        coord_grid: (H, W, 2) coordinate grid (used by vae/ldm/two_stage decoders).
         device:     Device string.
-        batch_size: Sub-batch size for the forward pass (memory control only).
+        batch_size: Sub-batch size for memory control.
     Returns:
         weight_flat: (N, D) flattened weight vectors.
-        labels:      (N,) integer class labels (same as y_pca, returned as numpy).
+        labels:      (N,) integer class labels as numpy.
     """
     w_list = []
     n_total = x_pca.shape[0]
@@ -154,11 +157,12 @@ def collect_weight_vectors(
     for start in range(0, n_total, batch_size):
         x = x_pca[start : start + batch_size].to(device)
 
-        if model_type == "weight_diffusion":
-            theta_prime_raw, _, _ = model.encode(x)  # compressed code, NOT the actual weight vector
-            w_flat = model.weight_encoder.decode_modulations(theta_prime_raw)  # true modulated SIREN weights
+        if model_type in ("weight_diffusion", "two_stage_weight"):
+            # Both one-stage and two-stage WD share the same encode/decode_modulations interface
+            theta_prime_raw, _, _ = model.encode(x)
+            w_flat = model.weight_encoder.decode_modulations(theta_prime_raw)
         else:
-            # vae / ldm: encode to z, then run the decoder's weight-exposing forward pass
+            # vae / ldm / two_stage: encode to z, expose weights via decoder
             z, _, _ = model.encode(x)
             coord_batched = coord_grid.unsqueeze(0).expand(x.shape[0], -1, -1, -1)
             _, w_flat = model.decoder.forward_with_weights(z, coord_batched)
@@ -170,7 +174,7 @@ def collect_weight_vectors(
     return weight_flat, labels
 
 
-# ── Weight vector sampling: draw from the model's OWN generative process ───────
+# ── Weight vector sampling from model's own generative process ─────────────────
 @torch.no_grad()
 def sample_weight_vectors(
     model,
@@ -183,18 +187,17 @@ def sample_weight_vectors(
 ) -> np.ndarray:
     """
     Draw flattened modulated SIREN weight vectors from the model's own
-    generative process (NOT from real images): N(0,I) prior + decoder for the
-    VAE, reverse diffusion + decoder for LDM, reverse diffusion + decode_modulations
-    for weight diffusion. Batched to bound memory.
+    generative process, batched to bound memory.
 
     Args:
-        model:      Trained VAEWrapper, LatentDiffusion, or WeightDiffusion model.
-        model_type: "vae", "ldm", or "weight_diffusion".
+        model:      Trained VAEWrapper, LatentDiffusion, TwoStageLDM, WeightDiffusion,
+                    or two-stage WeightDiffusion model.
+        model_type: "vae", "ldm", "two_stage", "weight_diffusion", or "two_stage_weight".
         n_samples:  Total number of weight vectors to draw.
-        coord_grid: (H, W, 2) coordinate grid (only used by vae/ldm decoders).
+        coord_grid: (H, W, 2) coordinate grid (used by vae/ldm/two_stage decoders).
         device:     Device string.
         vae_config: Required when model_type == "vae"; needs latent_dim/latent_size.
-        batch_size: Number of samples drawn per chunk (memory control).
+        batch_size: Samples drawn per chunk.
     Returns:
         weight_flat: (n_samples, D) flattened weight vectors.
     """
@@ -210,25 +213,27 @@ def sample_weight_vectors(
             z = torch.randn(b, latent_dim, latent_size, latent_size, device=device)
             coord_batched = coord_grid.unsqueeze(0).expand(b, -1, -1, -1)
             _, w_flat = model.decoder.forward_with_weights(z, coord_batched)
-
         elif model_type == "ldm":
             z = model._sample_latent(b, collect_snapshots=False, debug=False)  # noqa: SLF001
-            if model._normalize:  # noqa: SLF001
-                z = model._denormalize_z(z)  # noqa: SLF001
             coord_batched = coord_grid.unsqueeze(0).expand(b, -1, -1, -1)
             _, w_flat = model.decoder.forward_with_weights(z, coord_batched)
-
-        else:  # weight_diffusion
+        elif model_type == "two_stage":
+            # Two-stage LDM: reverse diffusion -> z -> decoder weights
+            z = model._sample_latent(b)
+            coord_batched = coord_grid.unsqueeze(0).expand(b, -1, -1, -1)
+            _, w_flat = model.decoder.forward_with_weights(z, coord_batched)
+        elif model_type in ("weight_diffusion", "two_stage_weight"):
+            # Both share the same sample_weight -> decode_modulations interface
             theta_prime = model.sample_weight(b)
             w_flat = model.weight_encoder.decode_modulations(theta_prime)
-
+        
         w_list.append(w_flat.cpu())
         n_remaining -= b
 
     return torch.cat(w_list, dim=0).numpy()
 
 
-# ── Single PCA subplot helper (draws onto a given Axes, points already 2D) ─────
+# ── Single PCA subplot helper ──────────────────────────────────────────────────
 def _draw_pca_subplot(
     ax: plt.Axes,
     w_2d: np.ndarray,
@@ -239,18 +244,17 @@ def _draw_pca_subplot(
 ) -> object:
     """
     Draw one PCA scatter panel (points already projected to 2D) plus optional
-    linear and Slerp interpolation paths, onto a given matplotlib Axes.
+    linear and Slerp interpolation paths.
 
     Args:
         ax:              Matplotlib axes to draw on.
-        w_2d:            (N, 2) already-PCA-projected background points.
+        w_2d:            (N, 2) already-PCA-projected points.
         labels:          (N,) integer class labels, or None for unlabeled.
-        interp_path_2d:  (n_steps, 2) already-PCA-projected LINEAR interpolation path, or None.
+        interp_path_2d:  (n_steps, 2) projected LINEAR path, or None.
         panel_title:     Subplot title.
-        slerp_path_2d:   (n_steps, 2) already-PCA-projected SLERP interpolation path, or None.
-                         Shares the same theta1/theta2 endpoints as interp_path_2d.
+        slerp_path_2d:   (n_steps, 2) projected SLERP path, or None.
     Returns:
-        scatter: The background scatter artist (for an optional colorbar), or None if labels is None.
+        scatter artist (for colorbar), or None if labels is None.
     """
     scatter = None
     if labels is not None:
@@ -260,44 +264,18 @@ def _draw_pca_subplot(
         ax.scatter(w_2d[:, 0], w_2d[:, 1], color="black", s=8, alpha=0.6, linewidths=0)
 
     if interp_path_2d is not None:
-        linear_color = "darkorange"
-        ax.plot(interp_path_2d[:, 0], interp_path_2d[:, 1], linestyle="-", color=linear_color, linewidth=1.4, zorder=4, label="Linear")
-        ax.scatter(interp_path_2d[1:-1, 0], interp_path_2d[1:-1, 1], color=linear_color, s=15, marker="o", zorder=5)
+        ax.plot(interp_path_2d[:, 0], interp_path_2d[:, 1], linestyle="-", color="darkorange", linewidth=1.4, zorder=4, label="Linear")
+        ax.scatter(interp_path_2d[1:-1, 0], interp_path_2d[1:-1, 1], color="darkorange", s=15, marker="o", zorder=5)
 
     if slerp_path_2d is not None:
-        slerp_color = "mediumvioletred"  # distinct from linear's orange, class tab10 colors, and the neutral background
-        ax.plot(slerp_path_2d[:, 0], slerp_path_2d[:, 1], linestyle="-", color=slerp_color, linewidth=1.4, zorder=4, label="Slerp")
-        ax.scatter(slerp_path_2d[1:-1, 0], slerp_path_2d[1:-1, 1], color=slerp_color, s=15, marker="o", zorder=5)
+        ax.plot(slerp_path_2d[:, 0], slerp_path_2d[:, 1], linestyle="-", color="mediumvioletred", linewidth=1.4, zorder=4, label="Slerp")
+        ax.scatter(slerp_path_2d[1:-1, 0], slerp_path_2d[1:-1, 1], color="mediumvioletred", s=15, marker="o", zorder=5)
 
-    # Endpoints (shared by both paths): drawn once, in neutral gray so they read as
-    # "the two real points" rather than belonging to either path's color
     if interp_path_2d is not None:
         endpoints_2d = interp_path_2d[[0, -1]]
         ax.scatter(endpoints_2d[:, 0], endpoints_2d[:, 1], color="gray", s=28, marker="o", edgecolors="black", linewidths=0.8, zorder=6)
-        ax.annotate(
-            r"$\theta_1$",
-            endpoints_2d[0],
-            ha="center",
-            va="center",
-            fontsize=6,
-            color="black",
-            fontweight="bold",
-            zorder=7,
-            xytext=(0, -10),
-            textcoords="offset points",
-        )
-        ax.annotate(
-            r"$\theta_2$",
-            endpoints_2d[1],
-            ha="center",
-            va="center",
-            fontsize=6,
-            color="black",
-            fontweight="bold",
-            zorder=7,
-            xytext=(0, -10),
-            textcoords="offset points",
-        )
+        ax.annotate(r"$\theta_1$", endpoints_2d[0], ha="center", va="center", fontsize=6, color="black", fontweight="bold", zorder=7, xytext=(0, -10), textcoords="offset points")
+        ax.annotate(r"$\theta_2$", endpoints_2d[1], ha="center", va="center", fontsize=6, color="black", fontweight="bold", zorder=7, xytext=(0, -10), textcoords="offset points")
 
     if interp_path_2d is not None or slerp_path_2d is not None:
         ax.legend(loc="best", fontsize=7, framealpha=0.8)
@@ -307,8 +285,7 @@ def _draw_pca_subplot(
     return scatter
 
 
-# ── Combined PCA figure: reconstruction (left) + sample (right), shared basis ──
-# ── Combined PCA figure: reconstruction (left) + sample (right), shared basis ──
+# ── Combined PCA figure: reconstruction (left) + sample (right) ───────────────
 def plot_weight_pca_combined(
     weight_flat_real: np.ndarray,
     labels_real: np.ndarray,
@@ -322,29 +299,34 @@ def plot_weight_pca_combined(
     grid_res: int = 150,
 ) -> None:
     """
-    Fit PCA(2) ONCE on the real-image (reconstruction) weight vectors, then
-    project the sampled weight vectors into that SAME basis — so the two
-    panels are positionally comparable. Renders side-by-side: left panel =
-    real-image weights (colored by class) + real-data interpolation path(s);
-    right panel = model-generated weights (neutral color) + sample-data
-    interpolation path(s). 
-    
-    Both panels display a synchronized KDE background density map estimated 
-    from the real image weight vector distribution.
+    Fit PCA(2) once on real-image weight vectors, project sampled vectors into
+    that same basis, render side-by-side with a shared real-data KDE background.
+
+    Args:
+        weight_flat_real:      (N, D) real-image weight vectors (defines PCA basis + KDE).
+        labels_real:           (N,) class labels for real vectors.
+        interp_path_real_flat: (n_steps, D) linear interp path from real endpoints.
+        weight_flat_sample:    (M, D) model-generated weight vectors.
+        interp_path_sample_flat: (n_steps, D) linear interp path from sampled endpoints.
+        title:                 Model name for figure title.
+        save_path:             Output PNG path.
+        slerp_path_real_flat:  Optional (n_steps, D) slerp path from real endpoints.
+        slerp_path_sample_flat: Optional (n_steps, D) slerp path from sampled endpoints.
+        grid_res:              KDE grid resolution per axis.
+    Returns:
+        None
     """
     from scipy.stats import gaussian_kde
 
     pca = PCA(n_components=2)
-    w_2d_real = pca.fit_transform(weight_flat_real)  # basis defined HERE, on real data only
-    w_2d_sample = pca.transform(weight_flat_sample)  # projected into the SAME basis
-
+    w_2d_real = pca.fit_transform(weight_flat_real)
+    w_2d_sample = pca.transform(weight_flat_sample)
     interp_2d_real = pca.transform(interp_path_real_flat)
     interp_2d_sample = pca.transform(interp_path_sample_flat)
-
     slerp_2d_real = pca.transform(slerp_path_real_flat) if slerp_path_real_flat is not None else None
     slerp_2d_sample = pca.transform(slerp_path_sample_flat) if slerp_path_sample_flat is not None else None
 
-    # ── Shared axis limits across BOTH panels ─────────────────────────────────
+    # Shared axis limits across both panels
     x_parts = [w_2d_real[:, 0], w_2d_sample[:, 0], interp_2d_real[:, 0], interp_2d_sample[:, 0]]
     y_parts = [w_2d_real[:, 1], w_2d_sample[:, 1], interp_2d_real[:, 1], interp_2d_sample[:, 1]]
     if slerp_2d_real is not None:
@@ -353,7 +335,7 @@ def plot_weight_pca_combined(
     if slerp_2d_sample is not None:
         x_parts.append(slerp_2d_sample[:, 0])
         y_parts.append(slerp_2d_sample[:, 1])
-    
+
     all_x = np.concatenate(x_parts)
     all_y = np.concatenate(y_parts)
     x_pad = 0.05 * (all_x.max() - all_x.min() + 1e-8)
@@ -361,26 +343,18 @@ def plot_weight_pca_combined(
     xlim = (all_x.min() - x_pad, all_x.max() + x_pad)
     ylim = (all_y.min() - y_pad, all_y.max() + y_pad)
 
-    # ── Compute KDE Background from REAL Data ─────────────────────────────────
     xx, yy = np.mgrid[xlim[0]:xlim[1]:complex(0, grid_res), ylim[0]:ylim[1]:complex(0, grid_res)]
-    grid_coords = np.vstack([xx.ravel(), yy.ravel()])
     kde = gaussian_kde(w_2d_real.T)
-    density = kde(grid_coords).reshape(xx.shape)
+    density = kde(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6.5))
 
-    # ── Render Subplots with Unified Density Background ──────────────────────
-    # Left Plot: Paint KDE density under real scatter points
     axes[0].contourf(xx, yy, density, levels=8, cmap="summer", alpha=1.0, zorder=1)
-    scatter = _draw_pca_subplot(
-        axes[0], w_2d_real, labels_real, interp_2d_real, "Reconstruction (real images)", slerp_path_2d=slerp_2d_real
-    )
-    
-    # Right Plot: Paint the exact same KDE density under generative sample points
+    scatter = _draw_pca_subplot(axes[0], w_2d_real, labels_real, interp_2d_real, "Reconstruction (real images)", slerp_path_2d=slerp_2d_real)
+
     axes[1].contourf(xx, yy, density, levels=8, cmap="summer", alpha=1.0, zorder=1)
     _draw_pca_subplot(axes[1], w_2d_sample, None, interp_2d_sample, "Sample (model-generated)", slerp_path_2d=slerp_2d_sample)
 
-    # ── Format and Clean Axes ─────────────────────────────────────────────────
     pc1_pct = pca.explained_variance_ratio_[0] * 100
     pc2_pct = pca.explained_variance_ratio_[1] * 100
     for ax in axes:
@@ -388,12 +362,10 @@ def plot_weight_pca_combined(
         ax.set_ylabel(f"PC2 ({pc2_pct:.1f}%)", fontsize=9)
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
-        ax.set_box_aspect(1)  # Keep panels perfectly square
-        # Ensure scatter/plots remain readable against strong alpha=1.0 contours
+        ax.set_box_aspect(1)
         ax.grid(True, linestyle=":", alpha=0.3, zorder=3)
 
     fig.suptitle(f"Weight Space PCA (Background = Real Density): {title}", fontsize=13, fontweight="bold")
-
     if scatter is not None:
         n_classes = int(labels_real.max()) + 1
         cbar = fig.colorbar(scatter, ax=axes, location="bottom", orientation="horizontal", shrink=0.5, pad=0.1)
@@ -405,11 +377,14 @@ def plot_weight_pca_combined(
     print(f"  Weight PCA saved -> {save_path}")
 
 
-# ── Fixed PCA image batch (drawn ONCE, shared identically across all models) ───
-def draw_fixed_pca_batch(loader: torch.utils.data.DataLoader, n_samples: int, channels: int) -> tuple[torch.Tensor, torch.Tensor]:
+# ── Fixed PCA image batch (shared across all models) ──────────────────────────
+def draw_fixed_pca_batch(
+    loader: torch.utils.data.DataLoader,
+    n_samples: int,
+    channels: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Draw a single fixed batch of real images + labels, to be reused identically
-    across every model's weight extraction (so PCA scatters are comparable).
+    Draw a single fixed batch of real images + labels, reused across all models.
 
     Args:
         loader:    DataLoader yielding (image, label) batches.
@@ -433,40 +408,37 @@ def draw_fixed_pca_batch(loader: torch.utils.data.DataLoader, n_samples: int, ch
     return x_pca, y_pca
 
 
-# ── Interpolation pair selection: two genuinely random images, different class ─
+# ── Interpolation pair selection ───────────────────────────────────────────────
 def get_interpolation_pair(
-    dataset: torch.utils.data.Dataset, channels: int, device: str
+    dataset: torch.utils.data.Dataset,
+    channels: int,
+    device: str,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Pick one image at complete random and record its class label. Then keep
-    picking a second image at complete random until its label differs from
-    the first. No sorting, no encounter-order bias.
+    Pick two random images of different classes from the dataset.
 
     Args:
-        dataset:  Dataset yielding (image, label) pairs, indexable by int.
+        dataset:  Dataset yielding (image, label) pairs.
         channels: Number of image channels.
         device:   Device string.
     Returns:
-        x1, x2: (1, C, H, W) tensors of two randomly-chosen, differently-labeled images.
+        x1, x2: (1, C, H, W) tensors of two differently-labeled images.
     """
     n = len(dataset)
-
     idx1 = random.randrange(n)
     x1, y1 = dataset[idx1]
     label1 = int(y1)
-
     while True:
         idx2 = random.randrange(n)
         x2, y2 = dataset[idx2]
-        label2 = int(y2)
-        if label2 != label1:
+        if int(y2) != label1:
             break
-
     x1 = _reshape_if_flat(x1.unsqueeze(0), channels).to(device)
     x2 = _reshape_if_flat(x2.unsqueeze(0), channels).to(device)
     return x1, x2
 
 
+# ── Per-image weight vector extraction ────────────────────────────────────────
 @torch.no_grad()
 def get_weight_vector(
     model,
@@ -475,26 +447,27 @@ def get_weight_vector(
     coord_grid: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Extract a single flattened weight vector for one image, branching by model family.
+    Extract a single flattened weight vector for one image.
 
     Args:
-        model:      Trained VAEWrapper, LatentDiffusion, or WeightDiffusion model.
-        model_type: "vae", "ldm", or "weight_diffusion".
+        model:      Trained model.
+        model_type: "vae", "ldm", "two_stage", "weight_diffusion", or "two_stage_weight".
         x:          (1, C, H, W) input image.
-        coord_grid: (H, W, 2) coordinate grid (only used by vae/ldm decoders).
+        coord_grid: (H, W, 2) coordinate grid.
     Returns:
         weight_flat: (1, D) flattened weight vector.
     """
-    if model_type == "weight_diffusion":
+    if model_type in ("weight_diffusion", "two_stage_weight"):
         theta_prime_raw, _, _ = model.encode(x)
-        theta = model.weight_encoder.decode_modulations(theta_prime_raw)
-        return theta
+        return model.weight_encoder.decode_modulations(theta_prime_raw)
+
     z, _, _ = model.encode(x)
     coord_batched = coord_grid.unsqueeze(0).expand(x.shape[0], -1, -1, -1)
     _, w_flat = model.decoder.forward_with_weights(z, coord_batched)
     return w_flat
 
 
+# ── Weight vector decoding to pixels ──────────────────────────────────────────
 @torch.no_grad()
 def decode_weight_vector(
     model,
@@ -506,8 +479,8 @@ def decode_weight_vector(
     Decode a (possibly interpolated) flat weight vector back to pixel space.
 
     Args:
-        model:       Trained VAEWrapper, LatentDiffusion, or WeightDiffusion model.
-        model_type:  "vae", "ldm", or "weight_diffusion".
+        model:       Trained model.
+        model_type:  "vae", "ldm", "two_stage", "weight_diffusion", or "two_stage_weight".
         weight_flat: (B, D) flattened weight vectors.
         coord_grid:  (H, W, 2) coordinate grid.
     Returns:
@@ -516,14 +489,13 @@ def decode_weight_vector(
     B = weight_flat.shape[0]  # noqa: N806
     coord_batched = coord_grid.unsqueeze(0).expand(B, -1, -1, -1)
 
-    if model_type == "weight_diffusion":
-        coords_flat = coord_batched.reshape(B, -1, 2)  # _inr_decode expects (B, H, W, 2) or flat; matches trans_coord convention
-        pixels_flat = model._inr_decode(weight_flat, coords=coord_batched)  # noqa: SLF001 (B, H*W*C)
+    if model_type in ("weight_diffusion", "two_stage_weight"):
+        pixels_flat = model._inr_decode(weight_flat, coords=coord_batched)  # noqa: SLF001
         img_size = coord_grid.shape[0]
         channels = pixels_flat.shape[1] // (img_size * img_size)
         return pixels_flat.reshape(B, channels, img_size, img_size)
 
-    # vae / ldm: unflatten weight_flat into the per-layer param dict, then query the INR directly
+    # vae / ldm / two_stage: unflatten into per-layer param dict, query INR directly
     decoder = model.decoder
     params = {}
     offset = 0
@@ -536,21 +508,25 @@ def decode_weight_vector(
     return pred.permute(0, 3, 1, 2).contiguous()
 
 
-def plot_weight_interpolation_row(images: np.ndarray, channels: int, title: str, save_path: str) -> None:
+def plot_weight_interpolation_row(
+    images: np.ndarray,
+    channels: int,
+    title: str,
+    save_path: str,
+) -> None:
     """
-    Plot a single row of weight-space-interpolated reconstructions with a headline.
+    Plot a single row of weight-space-interpolated reconstructions.
 
     Args:
         images:    (n_steps, H, W) or (n_steps, H, W, C) images in [0,1].
         channels:  Number of image channels.
-        title:     Headline above the row (model name).
+        title:     Headline above the row.
         save_path: Output PNG path.
     Returns:
         None
     """
     n_steps = images.shape[0]
     fig, axes = plt.subplots(1, n_steps, figsize=(n_steps * 1.5, 1.8), gridspec_kw={"wspace": 0.0})
-
     for i, ax in enumerate(axes):
         img = images[i]
         if channels == 1:
@@ -558,10 +534,10 @@ def plot_weight_interpolation_row(images: np.ndarray, channels: int, title: str,
         else:
             ax.imshow(img, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
         ax.axis("off")
-        label = "theta1 (real)" if i == 0 else "theta2 (real)" if i == n_steps - 1 else None
-        if label:
-            ax.set_title(label, fontsize=7)
-
+        if i == 0:
+            ax.set_title("theta1 (real)", fontsize=7)
+        elif i == n_steps - 1:
+            ax.set_title("theta2 (real)", fontsize=7)
     fig.suptitle(f"Weight-Space Interpolation: {title}", fontsize=11, fontweight="bold", y=1.05)
     fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
@@ -570,36 +546,39 @@ def plot_weight_interpolation_row(images: np.ndarray, channels: int, title: str,
 
 # ── Entry point ─────────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Weight space analysis (PCA + interpolation) across VAE, Latent, and Weight models.")
+    parser = argparse.ArgumentParser(description="Weight space analysis across VAE, Latent, and Weight Diffusion models.")
 
-    parser.add_argument("--vae_config_path", type=str, required=True, help="Path to VAE _config.json.")
-    parser.add_argument("--vae_checkpoint_path", type=str, required=True, help="Path to VAE checkpoint .pt.")
-    parser.add_argument(
-        "--latent_config_paths", type=str, nargs="+", default=[], help="Paths to Latent Diffusion config.json files (Max 3)."
-    )
-    parser.add_argument(
-        "--weight_config_paths", type=str, nargs="+", default=[], help="Paths to Weight Diffusion config.json files (Max 3)."
-    )
-    parser.add_argument("--n_pca_samples", type=int, default=2000, help="Number of weight vectors to gather for the PCA scatter.")
-    parser.add_argument("--n_interp_steps", type=int, default=10, help="Number of points along the interpolation path (incl. endpoints).")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible image/loader sampling.")
+    parser.add_argument("--vae_config_path", type=str, required=True)
+    parser.add_argument("--vae_checkpoint_path", type=str, required=True)
+    parser.add_argument("--latent_config_paths", type=str, nargs="+", default=[], help="One-stage LDM config paths (max 3).")
+    parser.add_argument("--two_stage_config_paths", type=str, nargs="+", default=[], help="Two-stage LDM config paths (max 2).")
+    parser.add_argument("--weight_config_paths", type=str, nargs="+", default=[], help="One-stage WeightDiffusion config paths (max 3).")
+    parser.add_argument("--two_stage_weight_config_paths", type=str, nargs="+", default=[], help="Two-stage WeightDiffusion config paths (max 2).")
+    parser.add_argument("--n_pca_samples", type=int, default=2000)
+    parser.add_argument("--n_interp_steps", type=int, default=10)
+    parser.add_argument("--seed", type=int, default=42)
 
     args = parser.parse_args()
 
     if len(args.latent_config_paths) > 3:
-        parser.error("You can provide a maximum of 3 latent_config_paths.")
+        parser.error("Max 3 --latent_config_paths.")
+    if len(args.two_stage_config_paths) > 2:
+        parser.error("Max 2 --two_stage_config_paths.")
     if len(args.weight_config_paths) > 3:
-        parser.error("You can provide a maximum of 3 weight_config_paths.")
+        parser.error("Max 3 --weight_config_paths.")
+    if len(args.two_stage_weight_config_paths) > 2:
+        parser.error("Max 2 --two_stage_weight_config_paths.")
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     from src.utility.dataset_builders import build_dataset
     from src.utility.general import _get_device
-    from src.utility.model_builders import build_model as build_ldm_model
+    from src.utility.model_builders.model_builder import build_model as build_ldm_model
+    from src.utility.model_builders.util.twostage_builder import build_ldm as build_two_stage_ldm
+    from src.scripts.two_stage_weight_training import build_full_wd_model
 
     device = _get_device()
-
     output_dir = os.path.join("src", "results", "weight_space_analysis")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -620,33 +599,27 @@ def main():
     )
     channels = data_config["channels"]
     img_size = data_config["img_size"]
+    data_dim = data_config["data_dim"]
     coord_grid = make_coord_grid((img_size, img_size), (-1, 1), device=device)
 
     pca_loader = torch.utils.data.DataLoader(val_dataset, batch_size=256, shuffle=True, drop_last=False, num_workers=0)
 
-    # ── Build + load VAE ───────────────────────────────────────────────────────
+    # ── Build VAE ─────────────────────────────────────────────────────────────
     print("--- Loading VAE-INR Model ---")
     vae_model = build_vae_model(vae_config, channels, img_size, device)
     vae_ckpt = torch.load(args.vae_checkpoint_path, map_location=device)
     vae_model.load_state_dict(vae_ckpt["model_state_dict"])
     vae_model.eval()
-
     models = [("vae", vae_model, "VAE-INR")]
 
-    # ── Build + load Latent Diffusion variants ─────────────────────────────────
+    # ── Build one-stage LDM variants ──────────────────────────────────────────
     if args.latent_config_paths:
-        print(f"--- Loading Latent Diffusion Suite ({len(args.latent_config_paths)} variants) ---")
+        print(f"--- Loading One-Stage LDM Suite ({len(args.latent_config_paths)} variants) ---")
         for p in args.latent_config_paths:
             with open(p) as f:
                 l_cfg = json.load(f)
             l_hparams = SimpleNamespace(**l_cfg["hparams"])
-            l_data_cfg = l_cfg["data"]
-            l_data_config = {
-                "dataset": l_cfg["dataset"],
-                "channels": l_data_cfg["channels"],
-                "img_size": l_data_cfg["img_size"],
-                "data_dim": l_data_cfg["data_dim"],
-            }
+            l_data_config = {"dataset": l_cfg["dataset"], "channels": l_cfg["data"]["channels"], "img_size": l_cfg["data"]["img_size"], "data_dim": l_cfg["data"]["data_dim"]}
             run_name = _extract_run_name(p)
             print(f"  Building & loading: {run_name} ...")
             l_model = build_ldm_model(l_hparams, l_data_config).to(device)
@@ -655,70 +628,103 @@ def main():
             l_model.eval()
             models.append(("ldm", l_model, run_name))
 
-    # ── Build + load Weight Diffusion variants ──────────────────────────────────
+    # ── Build two-stage LDM variants ──────────────────────────────────────────
+    if args.two_stage_config_paths:
+        print(f"--- Loading Two-Stage LDM Suite ({len(args.two_stage_config_paths)} variants) ---")
+        for p in args.two_stage_config_paths:
+            with open(p) as f:
+                ts_cfg = json.load(f)
+            run_name = ts_cfg["run_name"]
+            ckpt_path = os.path.join(os.path.dirname(os.path.abspath(p)), f"{run_name}_ldm_checkpoint.pt")
+            ts_args = SimpleNamespace(T=ts_cfg["T"], beta_1=ts_cfg["beta_1"], beta_T=ts_cfg["beta_T"])
+            print(f"  Building & loading: {run_name} ...")
+            ts_model = build_two_stage_ldm(hparams=ts_cfg, args=ts_args, channels=channels, img_size=img_size, device=device)
+            ts_ckpt = torch.load(ckpt_path, map_location=device)
+            ts_model.load_state_dict(ts_ckpt["model_state_dict"])
+            ts_model.eval()
+            models.append(("two_stage", ts_model, run_name))
+
+    # ── Build one-stage WeightDiffusion variants ───────────────────────────────
     if args.weight_config_paths:
-        print(f"--- Loading Weight Diffusion Suite ({len(args.weight_config_paths)} variants) ---")
+        print(f"--- Loading One-Stage WeightDiffusion Suite ({len(args.weight_config_paths)} variants) ---")
         for p in args.weight_config_paths:
             with open(p) as f:
                 w_cfg = json.load(f)
             w_hparams = SimpleNamespace(**w_cfg["hparams"])
-            w_data_cfg = w_cfg["data"]
-            w_data_config = {
-                "dataset": w_cfg["dataset"],
-                "channels": w_data_cfg["channels"],
-                "img_size": w_data_cfg["img_size"],
-                "data_dim": w_data_cfg["data_dim"],
-            }
+            w_data_config = {"dataset": w_cfg["dataset"], "channels": w_cfg["data"]["channels"], "img_size": w_cfg["data"]["img_size"], "data_dim": w_cfg["data"]["data_dim"]}
             run_name = _extract_run_name(p)
             print(f"  Building & loading: {run_name} ...")
             w_model = build_ldm_model(w_hparams, w_data_config).to(device)
             w_ckpt = torch.load(w_cfg["paths"]["weights"], map_location=device)
-            w_model.load_state_dict(w_ckpt["model_state_dict"])
+            state_dict = {k: v for k, v in w_ckpt["model_state_dict"].items() if k != "coords"}
+            w_model.load_state_dict(state_dict, strict=False)
             w_model.eval()
             models.append(("weight_diffusion", w_model, run_name))
 
-    # ── Shared setup: both modes are always computed ────────────────────────────
+    # ── Build two-stage WeightDiffusion variants ───────────────────────────────
+    if args.two_stage_weight_config_paths:
+        print(f"--- Loading Two-Stage WeightDiffusion Suite ({len(args.two_stage_weight_config_paths)} variants) ---")
+        for p in args.two_stage_weight_config_paths:
+            with open(p) as f:
+                tsw_cfg = json.load(f)
+            run_name = tsw_cfg["run_name"]
+            ckpt_path = _extract_two_stage_wd_checkpoint(p, run_name)
+            tsw_args = SimpleNamespace(T=tsw_cfg["T"], beta_1=tsw_cfg["beta_1"], beta_T=tsw_cfg["beta_T"])
+            print(f"  Building & loading: {run_name} ...")
+            tsw_model = build_full_wd_model(
+                hparams=tsw_cfg,
+                args=tsw_args,
+                channels=channels,
+                img_size=img_size,
+                data_dim=data_dim,
+                device=device,
+            )
+            tsw_ckpt = torch.load(ckpt_path, map_location=device)
+            state_dict = {k: v for k, v in tsw_ckpt["full_model_state_dict"].items() if k != "coords"}
+            tsw_model.load_state_dict(state_dict, strict=False)
+            tsw_model.eval()
+            models.append(("two_stage_weight", tsw_model, run_name))
+
+    # ── Shared setup ───────────────────────────────────────────────────────────
     print("\n--- Selecting interpolation pair (real images) ---")
     x1, x2 = get_interpolation_pair(val_dataset, channels, device)
 
     print(f"\n--- Drawing fixed PCA batch ({args.n_pca_samples} real images, shared across all models) ---")
     x_pca, y_pca = draw_fixed_pca_batch(pca_loader, args.n_pca_samples, channels)
 
-    # ── PCA (reconstruction + sample, shared basis) + interpolation rows ───────
+    # ── Per-model analysis loop ────────────────────────────────────────────────
     print("\n--- Computing weight-space PCA + interpolation ---")
+    alphas = torch.linspace(0, 1, args.n_interp_steps, device=device).view(-1, 1)
+
     for model_type, model, run_name in models:
-        # --- Reconstruction population: real images -> weight vectors ---
-        print(f"  Extracting weight vectors for {run_name} ({args.n_pca_samples} real images) ...")
+        print(f"\n[Model: {run_name}]")
+
+        print(f"  Extracting weight vectors ({args.n_pca_samples} real images)...")
         weight_flat_real, labels_real = collect_weight_vectors(model, model_type, x_pca, y_pca, coord_grid, device)
 
-        # theta1/theta2 (real): same two real images (x1, x2) for every model,
-        # each model encodes them into its OWN weight vectors
         w1_real = get_weight_vector(model, model_type, x1, coord_grid)
         w2_real = get_weight_vector(model, model_type, x2, coord_grid)
 
-        # --- Sample population: model's own generative process -> weight vectors ---
-        print(f"  Sampling {args.n_pca_samples} weight vectors from {run_name}'s generative process ...")
+        print(f"  Sampling {args.n_pca_samples} weight vectors from generative process...")
         weight_flat_sample = sample_weight_vectors(
-            model, model_type, args.n_pca_samples, coord_grid, device, vae_config=vae_config if model_type == "vae" else None
+            model, model_type, args.n_pca_samples, coord_grid, device,
+            vae_config=vae_config if model_type == "vae" else None,
         )
-        # theta1/theta2 (sample): two vectors drawn at random from the sampled pool above
+
         idx1, idx2 = random.sample(range(weight_flat_sample.shape[0]), 2)
         w1_sample = torch.from_numpy(weight_flat_sample[idx1 : idx1 + 1]).to(device)
         w2_sample = torch.from_numpy(weight_flat_sample[idx2 : idx2 + 1]).to(device)
 
-        print(f"  Interpolating in weight space with {run_name} (linear + slerp) ...")
-        alphas = torch.linspace(0, 1, args.n_interp_steps, device=device).view(-1, 1)
-        w_interp_real = (1 - alphas) * w1_real + alphas * w2_real  # (n_steps, D)
-        w_interp_sample = (1 - alphas) * w1_sample + alphas * w2_sample  # (n_steps, D)
+        print(f"  Interpolating in weight space (linear + slerp)...")
+        w_interp_real = (1 - alphas) * w1_real + alphas * w2_real
+        w_interp_sample = (1 - alphas) * w1_sample + alphas * w2_sample
+        w_slerp_real = slerp(w1_real, w2_real, alphas)
+        w_slerp_sample = slerp(w1_sample, w2_sample, alphas)
 
-        w_slerp_real = slerp(w1_real, w2_real, alphas)  # (n_steps, D), same endpoints as w_interp_real
-        w_slerp_sample = slerp(w1_sample, w2_sample, alphas)  # (n_steps, D), same endpoints as w_interp_sample
-
+        print(f"  Generating PCA figure...")
         plot_weight_pca_combined(
-            weight_flat_real,
-            labels_real,
-            w_interp_real.cpu().numpy(),
-            weight_flat_sample,
+            weight_flat_real, labels_real,
+            w_interp_real.cpu().numpy(), weight_flat_sample,
             w_interp_sample.cpu().numpy(),
             title=run_name,
             save_path=os.path.join(output_dir, f"weight_pca_{_safe_name(run_name)}.png"),
@@ -726,7 +732,6 @@ def main():
             slerp_path_sample_flat=w_slerp_sample.cpu().numpy(),
         )
 
-        # --- Decode + plot all four interpolation rows (linear/slerp x real/sample) ---
         rows = [
             (w_interp_real, "reconstruction_linear"),
             (w_interp_sample, "sample_linear"),
@@ -737,10 +742,8 @@ def main():
             x_hat = decode_weight_vector(model, model_type, w_interp, coord_grid)
             x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1).cpu().float()
             images = x_hat.squeeze(1).numpy() if channels == 1 else x_hat.permute(0, 2, 3, 1).numpy()
-
             plot_weight_interpolation_row(
-                images,
-                channels,
+                images, channels,
                 title=f"{run_name} ({tag})",
                 save_path=os.path.join(output_dir, f"weight_interp_{_safe_name(run_name)}_{tag}.png"),
             )

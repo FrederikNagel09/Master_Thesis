@@ -892,7 +892,7 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
     )
     decoder = TransInr(
         tokenizer={
-            "target": "src.models.trans_inr_helpers.LatentTokenizer",
+            "target": "src.models.tokenizers.latent_tokenizer.LatentTokenizer",
             "params": {
                 "latent_dim": latent_dim,
                 "latent_size": latent_size,
@@ -903,7 +903,7 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
             },
         },
         inr={
-            "target": "src.models.trans_inr_helpers.SIREN",
+            "target": "src.models.inr.siren.SIREN",
             "params": {
                 "depth": vae_config["inr_layers"],
                 "in_dim": 2,
@@ -915,7 +915,7 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
         data_shape=(img_size, img_size),
         n_groups=vae_config["dec_trans_n_groups"],
         transformer={
-            "target": "src.models.trans_inr_helpers.Transformer",
+            "target": "src.models.utils.transformer.Transformer",
             "params": {
                 "dim": vae_config["dec_trans_dim"],
                 "encoder_depth": vae_config["dec_trans_enc_depth"],

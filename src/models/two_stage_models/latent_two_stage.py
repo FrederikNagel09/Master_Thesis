@@ -62,6 +62,47 @@ class TwoStageLDM(nn.Module):
         else:
             coords = self.coord_grid.unsqueeze(0).repeat(B, 1, 1, 1).to(self.device)
         return self.decoder(z, coords)
+        
+    def encode(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Encode images into latent space, matching the VAEWrapper/LatentDiffusion interface.
+
+        Args:
+            x: (B, C, H, W) input images.
+        Returns:
+            z:      (B, latent_dim, H', W') latent sample via reparameterization.
+            mu:     (B, latent_dim, H', W') posterior mean.
+            logvar: (B, latent_dim, H', W') posterior log-variance.
+        """
+        mu, logvar = self.latent_encoder(x)
+        z = self.latent_encoder.reparameterize(mu, logvar)
+        return z, mu, logvar
+
+    @torch.no_grad()
+    def _sample_latent(self, n_samples: int) -> torch.Tensor:
+        """
+        Run reverse diffusion and return the final denoised latent z, without decoding.
+
+        Args:
+            n_samples: Number of latents to generate.
+        Returns:
+            z: (n_samples, latent_dim, H', W') denoised latent tensor.
+        """
+        H, W = self.latent_size
+        z = torch.randn(n_samples, self.latent_dim, H, W, device=self.device)
+        for t_idx in reversed(range(self.T)):
+            t_tensor = torch.full(
+                (n_samples, 1), t_idx / (self.T - 1), device=self.device, dtype=torch.float32
+            )
+            t_int = torch.full((n_samples,), t_idx, device=self.device, dtype=torch.long)
+            eps_pred = self.noise_predictor(z, t_tensor)
+            alpha_t = self.alpha[t_int].view(-1, 1, 1, 1)
+            beta_t = self.beta[t_int].view(-1, 1, 1, 1)
+            sigma_t = self.sigma[t_int].view(-1, 1, 1, 1)
+            z = (1.0 / alpha_t.sqrt()) * (z - (beta_t / sigma_t) * eps_pred)
+            if t_idx > 0:
+                z = z + beta_t.sqrt() * torch.randn_like(z)
+        return z
 
     @torch.no_grad()
     def compute_rec_loss(self, val_loader) -> float:
