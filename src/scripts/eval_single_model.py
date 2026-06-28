@@ -13,13 +13,13 @@ Original model usage:
 ---------------------
 ## LATENT DIFFUSION - ONE-STAGE - READY
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/latent-diffusion/metadata/config.json \
-    --n_fid_samples 16
+    --config_path src/train_results/latent-probability-3D-data/metadata/config.json \
+    --n_fid_samples 4096
 
 ## WEIGHT DIFFUSION - ONE-STAGE - READY
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/weight-diffusion/metadata/config.json \
-    --n_fid_samples 16
+    --config_path src/train_results/weight-probability-3D-data/metadata/config.json \
+    --n_fid_samples 4096
 
 
 Latent two-stage usage (2D):
@@ -56,9 +56,9 @@ python src/scripts/eval_single_model.py \
 Latent two-stage usage (3D ShapeNet):
 --------------------------------------
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/two_stage_shapenet/two_stage_shapenet_ldm_config.json \
-    --weights_path src/train_results/two_stage_shapenet/two_stage_shapenet_ldm_weights.pt \
-    --n_fid_samples 512
+    --config_path src/train_results/latent-probability-3D-data/metadata/config.json \
+    --weights_path src/train_results/latent-probability-3D-data/weights/weights.pt \
+    --n_fid_samples 12
 
 Weight diffusion two-stage usage (2D):
 ---------------------------------------
@@ -222,7 +222,7 @@ def main() -> None:
 
     device = torch.device(_get_device())
     family = _config_type(config)
-    subset_frac_temp = 0.1
+    subset_frac_temp = 1.0
     # 1. Initialize model, data_config, and params based on model family
     if family == "latent_two_stage":
         if args.weights_path is None:
