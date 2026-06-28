@@ -42,20 +42,6 @@ python src/scripts/VAE_Baseline_Training.py \
     --kl_warmup_frac 0.4 \
     --n_fid_samples 8 \
     --fid_batch_size 8
-
-Resume:
-python src/scripts/VAE_Baseline_Training.py \
-    --run_name vae-cifar10-baseline \
-    --ldm_config src/train_results/Latent-Diffusion-Deterministic/config.json \
-    --epochs 50 \
-    --batch_size 128 \
-    --lr 1e-4 \
-    --weight_decay 1e-5 \
-    --grad_clip 1.0 \
-    --subset_frac 1.0 \
-    --lambda_kl_max 0.1 \
-    --kl_warmup_frac 0.4 \
-    --resume src/results/vae-cifar10-baseline/vae-cifar10-baseline_checkpoint.pt
 """
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -6,8 +6,13 @@ and plots each metric as a function of training epoch.
 Usage
 -----
 python src/scripts/eval_submodels.py \
-    --config_path src/train_results/latent-diffusion-2/metadata/config.json \
-    --weights_dir  src/train_results/latent-diffusion-2/weights \
+    --config_path src/train_results/latent-diffusion/metadata/config.json \
+    --weights_dir  src/train_results/latent-diffusion/weights \
+    --n_fid_samples 16
+
+python src/scripts/eval_submodels.py \
+    --config_path src/train_results/weight-diffusion/metadata/config.json \
+    --weights_dir src/train_results/weight-diffusion/weights \
     --n_fid_samples 16
 """
 
@@ -32,22 +37,19 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col' is not cu
 # ── Weight loading ─────────────────────────────────────────────────────────────
 
 def _load_weights(model: torch.nn.Module, weights_path: str, device: str) -> None:
-    """
-    Load weights into model, handling both raw state dicts and wrapped checkpoints.
-
-    Args:
-        model:        Model to load weights into (modified in-place).
-        weights_path: Path to the .pt file.
-        device:       Device string for map_location.
-    Returns:
-        None
-    """
     checkpoint = torch.load(weights_path, map_location=device)
-    # Final weights.pt is wrapped; snapshots are raw state dicts
+    
+    # Determine the actual state_dict
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
+        state_dict = checkpoint["model_state_dict"]
     else:
-        model.load_state_dict(checkpoint)
+        state_dict = checkpoint
+
+    # Remove unexpected keys from the state_dict being loaded
+    if "coords" in state_dict:
+        del state_dict["coords"]
+        
+    model.load_state_dict(state_dict)
 
 
 def _epoch_from_path(path: str, fallback_epoch: int | None = None) -> int:
@@ -277,7 +279,7 @@ def main() -> None:
 
     from src.utility.dataset_builders import build_dataset
     from src.utility.general import _get_device
-    from src.utility.model_builders import build_model
+    from src.utility.model_builders.model_builder import build_model
 
     # ── Config ────────────────────────────────────────────────────────────────
     with open(args.config_path) as f:

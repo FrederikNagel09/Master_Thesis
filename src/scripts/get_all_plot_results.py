@@ -17,10 +17,10 @@ python src/scripts/get_results.py \
 Usage
 -----
 python src/scripts/get_all_plot_results.py \
-    --vae_config_path src/results/vae_testing_beta01/vae_testing_beta01_config.json \
-    --vae_checkpoint_path src/results/vae_testing_beta01/vae_testing_beta01_checkpoint.pt \
-    --latent_config_paths src/train_results/Latent-Diffusion-Deterministic/metadata/config.json src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json src/train_results/Latent-Probabilistic-two-stage/metadata/config.json\
-    --weight_config_paths src/train_results/Weight-Diffusion-Deterministic/metadata/config.json src/train_results/Weight-Diffusion-Probabilistic/metadata/config.json src/train_results/Weight-Diffusion-Probabilistic-twostage/metadata/config.json\
+    --vae_config_path src/results/VAE_Baseline/VAE_Baseline_config.json \
+    --vae_checkpoint_path src/results/VAE_Baseline/VAE_Baseline_checkpoint.pt \
+    --latent_config_paths src/train_results/latent-diffusion/metadata/config.json src/train_results/latent_two_stage_fixed/latent_two_stage_fixed_ldm_config.json src/train_results/two_stage_convergence/two_stage_convergence_ldm_config.json\
+    --weight_config_paths src/train_results/weight-diffusion/metadata/config.json src/train_results/wd_two_stage_fixed/wd_two_stage_fixed_wd_config.json src/train_results/wd_two_stage_convergence/wd_two_stage_convergence_wd_config.json \
     --sample_scale 128
 
 python src/scripts/get_all_plot_results.py \
@@ -50,6 +50,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 
+from src.models.two_stage_models.latent_two_stage import TwoStageLDM
+
 warnings.filterwarnings(
     "ignore",
     message="The operator 'aten::im2col' is not currently supported on the MPS backend",
@@ -60,33 +62,33 @@ HEADLINES_VAE = ["(a) Originals", "(b) VAE-INR Reconstructions"]
 
 HEADLINES_LATENT = [
     "(a) Originals",
-    "(b) Latent Deterministic Reconstructions",
-    "(c) Latent Probabilistic Reconstructions",
-    "(d) Latent Two-Stage Reconstructions",
+    "(b) Latent One-Stage",
+    "(c) Latent Two-Stage Fixed",
+    "(d) Latent Two-Stage Convergence",
 ]
 
 HEADLINES_WEIGHT = [
     "(a) Originals",
-    "(b) Weight-Deterministic Reconstructions",
-    "(c) Weight-Probabilistic Reconstructions",
-    "(d) Weight-Two-Stage Reconstructions",
+    "(b) Weight One-Stage",
+    "(c) Weight Two-Stage Fixed",
+    "(d) Weight Two-Stage Convergence",
 ]
 
 HEADLINE_VAE_SAMPLES = "VAE-INR Samples"
 
 HEADLINES_LATENT_SAMPLES = [
-    "(a) Latent Deterministic Samples",
-    "(b) Latent Probabilistic Samples",
-    "(c) Latent Two-Stage Samples",
+    "(a) Latent One-Stage",
+    "(b) Latent Two-Stage Fixed",
+    "(c) Latent Two-Stage Convergence",
 ]
 
 HEADLINES_WEIGHT_SAMPLES = [
-    "(a) Weight Deterministic Samples",
-    "(b) Weight Probabilistic Samples",
-    "(c) Weight Two-Stage Samples",
+    "(a) Weight One-Stage",
+    "(b) Weight Two-Stage Fixed",
+    "(c) Weight Two-Stage Convergence",
 ]
 
-NAMES = ["Deterministic", "Probabilistic", "Two-Stage"]
+NAMES = ["One-Stage", "Two-Stage Fixed", "Two-Stage Convergence"]
 
 
 # ── VAE 3-Panel Generation Comparison Grid ────────────────────────────────────
@@ -186,7 +188,6 @@ def plot_vae_sample_grid(
 
 
 # ── Multi-Model Variant Generation Grid ────────────────────────────────────────
-# ── Multi-Model Variant 5x5 Grid ──────────────────────────────────────────────
 def plot_multi_sample_grid(
     model,
     cfg: dict,
@@ -197,21 +198,47 @@ def plot_multi_sample_grid(
     save_path: str,
 ) -> None:
     """
-    Generates a 5x5 scale comparison grid for a specific variant.
+    Generates a 6x6 scale comparison grid for a specific variant.
+    Samples once, decodes at three scales so images are identical across panels.
     """
     GRID_SIDE = 6  # noqa: N806
-    N_GRID = GRID_SIDE * GRID_SIDE  # 36 samples  # noqa: N806
+    N_GRID = GRID_SIDE * GRID_SIDE  # noqa: N806
 
     base_res = cfg.get("data", {}).get("img_size", 28)
     hparams = cfg.get("hparams", cfg)
-
     scales = [base_res, input_scale, input_scale * 2]
-    panel_imgs = []
 
-    for s in scales:
-        imgs = sample_at_scale(model, model_type, N_GRID, s, device, channels, hparams)
-        panel_imgs.append(imgs)
+    # ── Sample ONCE, decode at each scale ─────────────────────────────────────
+    with torch.no_grad():
+        if model_type == "ldm":
+            z = model._sample_latent(N_GRID) if isinstance(model, TwoStageLDM) \
+                else model._sample_latent(N_GRID, collect_snapshots=False, debug=False)
+        elif model_type == "weight_diffusion":
+            theta_prime = model.sample_weight(N_GRID)
+            theta = model.weight_encoder.decode_modulations(theta_prime)
+        else:
+            # VAE: sample z ~ N(0, I)
+            latent_dim = hparams["latent_dim"] if isinstance(hparams, dict) else hparams.latent_dim
+            latent_size = hparams["latent_size"] if isinstance(hparams, dict) else hparams.latent_size
+            z = torch.randn(N_GRID, latent_dim, latent_size, latent_size, device=device)
 
+        panel_imgs = []
+        for s in scales:
+            coord = make_coord_grid((s, s), (-1, 1), device=device)
+            if model_type == "ldm":
+                x_hat = model.decoder(z, coord)
+                x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1)
+            elif model_type == "weight_diffusion":
+                coord_batched = coord.unsqueeze(0).expand(N_GRID, -1, -1, -1)
+                pixels = model._inr_decode(theta, coords=coord_batched)
+                x_hat = pixels.reshape(N_GRID, channels, s, s)
+                x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1)
+            else:
+                x_hat = model.decoder(z, coord)
+                x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1)
+            panel_imgs.append(_to_numpy_images(x_hat, channels))
+
+    # ── Render figure ──────────────────────────────────────────────────────────
     fig = plt.figure(figsize=(20, 5.8))
     outer_gs = gridspec.GridSpec(1, 3, figure=fig, wspace=0.18)
 
@@ -219,57 +246,24 @@ def plot_multi_sample_grid(
         inner_gs = gridspec.GridSpecFromSubplotSpec(
             GRID_SIDE, GRID_SIDE, subplot_spec=outer_gs[p_idx], wspace=0.0, hspace=0.0
         )
-
         for idx in range(N_GRID):
             r = idx // GRID_SIDE
             c = idx % GRID_SIDE
             ax = fig.add_subplot(inner_gs[r, c])
             img = panel_imgs[p_idx][idx]
-
             if channels == 1:
-                ax.imshow(
-                    img,
-                    cmap="gray",
-                    vmin=0,
-                    vmax=1,
-                    interpolation="nearest",
-                    aspect="auto",
-                )
+                ax.imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="nearest", aspect="auto")
             else:
                 ax.imshow(img, vmin=0, vmax=1, interpolation="nearest", aspect="auto")
             ax.axis("off")
 
-    fig.text(
-        0.24,
-        0.08,
-        f"{base_res}x{base_res}",
-        ha="center",
-        va="center",
-        fontsize=11,
-        fontweight="bold",
-    )
-    fig.text(
-        0.515,
-        0.08,
-        f"{input_scale}x{input_scale}",
-        ha="center",
-        va="center",
-        fontsize=11,
-        fontweight="bold",
-    )
-    fig.text(
-        0.79,
-        0.08,
-        f"{input_scale*2}x{input_scale*2}",
-        ha="center",
-        va="center",
-        fontsize=11,
-        fontweight="bold",
-    )
+    fig.text(0.24, 0.08, f"{base_res}x{base_res}", ha="center", va="center", fontsize=11, fontweight="bold")
+    fig.text(0.515, 0.08, f"{input_scale}x{input_scale}", ha="center", va="center", fontsize=11, fontweight="bold")
+    fig.text(0.79, 0.08, f"{input_scale*2}x{input_scale*2}", ha="center", va="center", fontsize=11, fontweight="bold")
 
     fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.0)
     plt.close(fig)
-    print(f"  Variant 5x5 grid saved → {save_path}")
+    print(f"  Variant 6x6 grid saved → {save_path}")
 
 
 # ── Multi-Variant Training Curves (Dynamic Min/Max Y-limits) ──────────────────
@@ -976,11 +970,9 @@ def sample_at_scale(
     coord = make_coord_grid((scale, scale), (-1, 1), device=device)  # (scale, scale, 2)
 
     if model_type == "ldm":
-        # Use diffusion sampler then decode at custom scale via TransInr decoder
-        z = model._sample_latent(n_samples, collect_snapshots=False, debug=False)
-        if model._normalize:
-            z = model._denormalize_z(z)
-        x_hat = model.decoder(z, coord)  # (B, C, scale, scale)
+        z = model._sample_latent(n_samples) if isinstance(model, TwoStageLDM) else model._sample_latent(n_samples, collect_snapshots=False, debug=False)
+        
+        x_hat = model.decoder(z, coord)
         x_hat = (x_hat * 0.5 + 0.5).clamp(0, 1)
 
     elif model_type == "weight_diffusion":
@@ -1425,37 +1417,54 @@ def main():
         print(
             f"\n--- Processing Latent Diffusion Suite ({len(args.latent_config_paths)} variants) ---"
         )
-        from src.utility.model_builders import build_model as build_ldm_model
+        from src.utility.model_builders.model_builder import build_model as build_ldm_model
+        from src.utility.model_builders.util.twostage_builder import build_ldm as build_two_stage_ldm
 
         latent_models = []
         latent_configs = []
 
-        for p in args.latent_config_paths:
+        for idx, p in enumerate(args.latent_config_paths):
             with open(p) as f:
                 l_cfg = json.load(f)
 
-            l_hparams = SimpleNamespace(**l_cfg["hparams"])
-            l_data_cfg = l_cfg["data"]
-            l_data_config = {
-                "dataset": l_cfg["dataset"],
-                "channels": l_data_cfg["channels"],
-                "img_size": l_data_cfg["img_size"],
-                "data_dim": l_data_cfg["data_dim"],
-            }
+            if idx == 0:
+                # One-stage: nested config with hparams/data/paths
+                l_hparams = SimpleNamespace(**l_cfg["hparams"])
+                l_data_cfg = l_cfg["data"]
+                l_data_config = {
+                    "dataset": l_cfg["dataset"],
+                    "channels": l_data_cfg["channels"],
+                    "img_size": l_data_cfg["img_size"],
+                    "data_dim": l_data_cfg["data_dim"],
+                }
+                l_cfg["run_name"] = _extract_run_name(p)
+                print(f"  Building & loading (one-stage): {l_cfg['run_name']} ...")
+                l_model = build_ldm_model(l_hparams, l_data_config).to(device)
+                l_ckpt = torch.load(l_cfg["paths"]["weights"], map_location=device)
+                l_model.load_state_dict(l_ckpt["model_state_dict"])
+            else:
+                # Two-stage: flat config, checkpoint in same dir as config
+                run_name = l_cfg["run_name"]
+                ckpt_path = os.path.join(
+                    os.path.dirname(os.path.abspath(p)),
+                    f"{run_name}_ldm_checkpoint.pt"
+                )
+                ts_args = SimpleNamespace(
+                    T=l_cfg["T"], beta_1=l_cfg["beta_1"], beta_T=l_cfg["beta_T"]
+                )
+                print(f"  Building & loading (two-stage): {run_name} ...")
+                l_model = build_two_stage_ldm(
+                    hparams=l_cfg, args=ts_args, channels=channels, img_size=img_size, device=device
+                )
+                l_ckpt = torch.load(ckpt_path, map_location=device)
+                l_model.load_state_dict(l_ckpt["model_state_dict"])
+                # Normalise cfg shape so downstream plot functions can read run_name/hparams
+                l_cfg = {"run_name": run_name, "hparams": l_cfg, "data": {"img_size": img_size}}
 
-            l_cfg["run_name"] = _extract_run_name(p)
-
-            print(f"  Building & loading: {l_cfg['run_name']} ...")
-            l_model = build_ldm_model(l_hparams, l_data_config).to(device)
-
-            weights_path = l_cfg["paths"]["weights"]
-            l_ckpt = torch.load(weights_path, map_location=device)
-            l_model.load_state_dict(l_ckpt["model_state_dict"])
             l_model.eval()
-
             latent_models.append(l_model)
             latent_configs.append(l_cfg)
-
+        
         # Generate Composite Visuals
         plot_multi_training_curves(
             config_paths=args.latent_config_paths,
@@ -1514,34 +1523,58 @@ def main():
         print(
             f"\n--- Processing Weight Diffusion Suite ({len(args.weight_config_paths)} variants) ---"
         )
-        from src.utility.model_builders import build_model as build_ldm_model
+        from src.utility.model_builders.model_builder import build_model as build_ldm_model
+        from src.scripts.two_stage_weight_training import build_full_wd_model
 
         weight_models = []
         weight_configs = []
 
-        for p in args.weight_config_paths:
+        for idx, p in enumerate(args.weight_config_paths):
             with open(p) as f:
                 w_cfg = json.load(f)
 
-            w_hparams = SimpleNamespace(**w_cfg["hparams"])
-            w_data_cfg = w_cfg["data"]
-            w_data_config = {
-                "dataset": w_cfg["dataset"],
-                "channels": w_data_cfg["channels"],
-                "img_size": w_data_cfg["img_size"],
-                "data_dim": w_data_cfg["data_dim"],
-            }
+            if idx == 0:
+                # One-stage: nested config with hparams/data/paths
+                w_hparams = SimpleNamespace(**w_cfg["hparams"])
+                w_data_cfg = w_cfg["data"]
+                w_data_config = {
+                    "dataset": w_cfg["dataset"],
+                    "channels": w_data_cfg["channels"],
+                    "img_size": w_data_cfg["img_size"],
+                    "data_dim": w_data_cfg["data_dim"],
+                }
+                w_cfg["run_name"] = _extract_run_name(p)
+                print(f"  Building & loading (one-stage): {w_cfg['run_name']} ...")
+                w_model = build_ldm_model(w_hparams, w_data_config).to(device)
+                w_ckpt = torch.load(w_cfg["paths"]["weights"], map_location=device)
+                state_dict = {k: v for k, v in w_ckpt["model_state_dict"].items() if k != "coords"}
+                w_model.load_state_dict(state_dict, strict=False)
+            else:
+                # Two-stage: flat config, checkpoint in same dir as config
+                run_name = w_cfg["run_name"]
+                ckpt_path = os.path.join(
+                    os.path.dirname(os.path.abspath(p)),
+                    f"{run_name}_wd_weights.pt"
+                )
+                tsw_args = SimpleNamespace(
+                    T=w_cfg["T"], beta_1=w_cfg["beta_1"], beta_T=w_cfg["beta_T"]
+                )
+                print(f"  Building & loading (two-stage): {run_name} ...")
+                w_model = build_full_wd_model(
+                    hparams=w_cfg,
+                    args=tsw_args,
+                    channels=channels,
+                    img_size=img_size,
+                    data_dim=data_config["data_dim"],
+                    device=device,
+                )
+                w_ckpt = torch.load(ckpt_path, map_location=device)
+                state_dict = {k: v for k, v in w_ckpt["full_model_state_dict"].items() if k != "coords"}
+                w_model.load_state_dict(state_dict, strict=False)
+                # Normalise cfg shape so downstream plot functions can read run_name/hparams
+                w_cfg = {"run_name": run_name, "hparams": w_cfg, "data": {"img_size": img_size}}
 
-            w_cfg["run_name"] = _extract_run_name(p)
-
-            print(f"  Building & loading: {w_cfg['run_name']} ...")
-            w_model = build_ldm_model(w_hparams, w_data_config).to(device)
-
-            weights_path = w_cfg["paths"]["weights"]
-            w_ckpt = torch.load(weights_path, map_location=device)
-            w_model.load_state_dict(w_ckpt["model_state_dict"])
             w_model.eval()
-
             weight_models.append(w_model)
             weight_configs.append(w_cfg)
 
