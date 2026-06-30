@@ -100,6 +100,7 @@ class LatentDiffusion(nn.Module):
         T: int = 1000,  # noqa: N803
         data_dim: int = 784,
         img_size: int = 28,
+        is_3d: bool = False,
     ):
         super().__init__()
         self.data_dim = data_dim
@@ -119,6 +120,7 @@ class LatentDiffusion(nn.Module):
         self.beta_1 = beta_1
         self.beta_T = beta_T
         self.T = T
+        self.is_3d = is_3d
 
         self.i = 0
 
@@ -443,21 +445,28 @@ class LatentDiffusion(nn.Module):
         self, x: torch.Tensor, z: torch.Tensor, debug: bool = True
     ) -> torch.Tensor:
         """
-        Pixel-space reconstruction loss.
+        Pixel/voxel-space reconstruction loss.
+        Uses BCE for binary 3D data, MSE for continuous 2D (MNIST) data.
 
         Args:
-            x: (B, C, H, W) original images
-            z: (B, latent_dim, H', W') clean latent (attached to encoder graph)
+            x: (B, C, H, W) or (B, C, D, H, W) original data
+            z: (B, latent_dim, H', W') clean latent
         Returns:
-            (B,) per-sample MSE
+            (B,) per-sample reconstruction loss
         """
-        x_hat = self._decode_latent(z)
-
-        x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
+        x_hat = self._decode_latent(z)  # (B, data_dim), already sigmoid-activated
+        x_flat = x.reshape(x.shape[0], -1)
 
         self.print_l_rec_stats(x_flat, x_hat, debug=debug)
 
-        return 0.5 * ((x_flat - x_hat) ** 2).sum(dim=-1)
+        if self.is_3d:
+            # Binary occupancy: BCE is the correct likelihood
+            eps = 1e-7
+            x_hat_clamped = x_hat.clamp(eps, 1 - eps)
+            return F.binary_cross_entropy(x_hat_clamped, x_flat, reduction="none").sum(dim=-1)
+        else:
+            x_flat = x_flat.clamp(-1, 1)
+            return 0.5 * ((x_flat - x_hat) ** 2).sum(dim=-1)
 
     def _l_latent_rec(
         self,

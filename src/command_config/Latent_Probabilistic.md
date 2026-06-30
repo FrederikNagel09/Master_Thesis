@@ -1,9 +1,9 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name latent-diffusion-VOXEL \
-    --epochs 5 \
+    --run_name latent-diffusion-VOXEL-TESTING \
+    --epochs 20 \
     --batch_size 64 \
     --subset_frac 1.0 \
-    --n_fid_samples 4096 \
+    --n_fid_samples 128 \
     --model latent_inr_diffusion \
     --dataset shapenet_voxels \
     --lr 1e-4 \
@@ -15,10 +15,10 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
     --inr_layers 5 \
-    --latent_dim 128 \
+    --latent_dim 64 \
     --latent_size 8 \
-    --latent_patch_size 4 \
-    --latent_enc_hidden_dim 128\
+    --latent_patch_size 1 \
+    --latent_enc_hidden_dim 64\
     --pred_d_model 128 \
     --pred_n_heads 8 \
     --pred_n_layers 8 \
@@ -26,7 +26,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --pred_t_embed_dim 128 \
     --dec_trans_dim 128 \
     --dec_trans_n_head 8 \
-    --dec_trans_head_dim 64 \
+    --dec_trans_head_dim 32 \
     --dec_trans_ff_dim 1024 \
     --dec_trans_enc_depth 6 \
     --dec_trans_dec_depth 6 \

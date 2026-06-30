@@ -138,6 +138,7 @@ def _build_latent_diffusion(args, data_config: dict):
         T=args.T,
         data_dim=data_dim,
         img_size=img_size,
+        is_3d=is_3d
     )
 
     # Final print of total model params (encoder + decoder + predictor)

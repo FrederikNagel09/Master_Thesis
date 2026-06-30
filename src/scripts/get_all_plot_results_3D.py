@@ -2,22 +2,18 @@
 get_all_plots_3d.py
 Evaluation visualizations for INR-based models trained on 3D voxel data.
 Produces two plots per model family (VAE, Latent Diffusion, Weight Diffusion):
-
-  1. Scale row: one sample decoded at 6 different resolutions
+  1. Scale row: the SAME sample decoded at 6 different resolutions
      [0.125, 0.25, 0.5, 1, 2, 4] × base_res (32), rendered as marching-cubes meshes.
-
-  2. Reconstruction plot: 10 validation images (top row) vs their reconstructions
-     (bottom row), rendered as marching-cubes meshes.
-
+  2. Reconstruction plot: the SAME 10 validation volumes across all models.
+     Top row: originals. Bottom row: reconstructions. Row labels below each row.
 Model loading convention (same as get_all_plot_results.py):
   - First config path in each group  → one-stage model (nested hparams/data/paths config)
   - Second and third config paths    → two-stage models (flat config, checkpoint in same dir)
-
 Usage
 -----
-CUDA_VISIBLE_DEVICES=0 python src/scripts/get_all_plot_results_3D.py \
-    --vae_config_path src/train_results/Latent-two_stage_convergence-VOXEL/Latent-two_stage_convergence-VOXEL_vae_config.json \
-    --vae_checkpoint_path src/train_results/Latent-two_stage_convergence-VOXEL/Latent-two_stage_convergence-VOXEL_vae_checkpoint.pt \
+CUDA_VISIBLE_DEVICES=1 python src/scripts/get_all_plot_results_3D.py \
+    --vae_config_path src/results/vae_3d_baseline/vae_3d_baseline_config.json \
+    --vae_checkpoint_path src/results/vae_3d_baseline/vae_3d_baseline_checkpoint.pt \
     --latent_config_paths \
         src/train_results/latent-probability-3D-data/metadata/config.json \
         src/train_results/Latent-two_stage_fixed-VOXEL/Latent-two_stage_fixed-VOXEL_ldm_config.json \
@@ -28,37 +24,33 @@ CUDA_VISIBLE_DEVICES=0 python src/scripts/get_all_plot_results_3D.py \
         src/train_results/wd_two_stage_convergence-VOXEL/wd_two_stage_convergence-VOXEL_wd_config.json \
     --base_res 32
 """
-
 from __future__ import annotations
-
 import argparse
 import json
 import os
 import sys
 from types import SimpleNamespace
-
 sys.path.append(".")
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
 from src.models.latent_diffusion.modules.trans_inr import make_coord_grid
 from src.utility.plotting import _render_mesh_on_ax, _samples_to_voxel_grids
 
+_AZIM_OFFSETS = [120, 120, 120, 120, 120, 120, 120, 120, 120, 120]
+_ELEV = 25
 
-# Azimuth offsets per column so meshes are viewed from slightly different angles
-_AZIM_OFFSETS = [-60, -30, 0, 30, 60, 90, 120, 150, 180, 210]
-
-# Scale multipliers applied to base_res
+# Scale multipliers and their display labels
 SCALE_FACTORS = [0.125, 0.25, 0.5, 1, 2, 4]
+SCALE_LABELS  = ["0.125x", "0.25x", "0.5x", "1x", "2x", "4x"]
+
+N_RECON = 10  # fixed validation volumes shared across all models
 
 
-# ── Path helpers ───────────────────────────────────────────────────────────────
+# -- Path helpers --------------------------------------------------------------
 def _extract_run_name(config_path: str) -> str:
     """
     Extract run name from .../<run_name>/metadata/config.json.
-
     Args:
         config_path: Path to config JSON.
     Returns:
@@ -78,7 +70,6 @@ def _extract_run_name(config_path: str) -> str:
 def _safe_name(run_name: str) -> str:
     """
     Sanitize a run name for use in a filename.
-
     Args:
         run_name: Arbitrary run name string.
     Returns:
@@ -87,47 +78,29 @@ def _safe_name(run_name: str) -> str:
     return run_name.lower().replace(" ", "_").replace("-", "_")
 
 
-# ── VAE model builder (identical to get_all_plot_results but with 3D INR) ─────
+# -- VAE model builder ---------------------------------------------------------
 def build_vae_model_3d(vae_config: dict, channels: int, img_size: int, device: str):
     """
-    Build and return a VAEWrapper for 3D voxel data from a saved config dict.
-
+    Build and return a VAEWrapper3D from a saved 3D VAE config dict.
     Args:
         vae_config: Flat config dict loaded from <run_name>_config.json.
         channels:   Number of voxel channels.
         img_size:   Spatial size per dimension (D=H=W).
         device:     Device string.
     Returns:
-        VAEWrapper on device, weights NOT yet loaded.
+        VAEWrapper3D on device, weights NOT yet loaded.
     """
-    import torch.nn as nn
-
-    from src.models.latent_diffusion.modules.LatentEncoder import ResNetLatentEncoder
+    from src.models.latent_diffusion.modules.LatentEncoder3D import Conv3DEncoder
     from src.models.latent_diffusion.modules.trans_inr import TransInr
-
-    class VAEWrapper(nn.Module):
-        """Thin wrapper combining ResNetLatentEncoder + TransInr decoder for 3D."""
-
-        def __init__(self, encoder, decoder, img_size, device):
-            super().__init__()
-            self.latent_encoder = encoder
-            self.decoder = decoder
-            self.img_size = img_size
-            self.device = device
-
-        def encode(self, x):
-            """Returns (mu, None, None) — deterministic latent during eval."""
-            mu, _ = self.latent_encoder(x)
-            return mu, None, None
 
     latent_dim = vae_config["latent_dim"]
     latent_size = vae_config["latent_size"]
 
-    encoder = ResNetLatentEncoder(
+    encoder = Conv3DEncoder(
         in_channels=channels,
-        latent_dim=latent_dim,
-        latent_size=(latent_size, latent_size),
-        hidden_dim=vae_config["latent_enc_hidden_dim"],
+        dim_z=latent_dim,
+        base_channels=vae_config.get("enc_base_channels", 64),
+        dropout=vae_config.get("enc_dropout", 0.0),
     )
     decoder = TransInr(
         tokenizer={
@@ -145,11 +118,11 @@ def build_vae_model_3d(vae_config: dict, channels: int, img_size: int, device: s
             "target": "src.models.inr.siren.SIREN",
             "params": {
                 "depth": vae_config["inr_layers"],
-                "in_dim": 3,  # 3D coords
+                "in_dim": 3,
                 "out_dim": channels,
                 "hidden_dim": vae_config["inr_hidden_dim"],
                 "out_bias": 0.5,
-                "out_activation": "sigmoid",  # voxels are binary [0,1]
+                "out_activation": "sigmoid",
             },
         },
         data_shape=(img_size, img_size, img_size),
@@ -167,14 +140,14 @@ def build_vae_model_3d(vae_config: dict, channels: int, img_size: int, device: s
         },
         update_strategy=vae_config["dec_trans_update_strategy"],
     )
-    return VAEWrapper(encoder, decoder, img_size, device).to(device)
+    from src.scripts.VAE_Baseline_Training_3D import VAEWrapper3D
+    return VAEWrapper3D(encoder, decoder, img_size, device).to(device)
 
 
-# ── 3D coord grid at a given resolution ───────────────────────────────────────
+# -- 3D coord grid -------------------------------------------------------------
 def _make_3d_coord_grid(res: int, device: str) -> torch.Tensor:
     """
     Build a (D, H, W, 3) coordinate grid at a given cubic resolution.
-
     Args:
         res:    Spatial resolution per dimension.
         device: Device string.
@@ -184,57 +157,38 @@ def _make_3d_coord_grid(res: int, device: str) -> torch.Tensor:
     return make_coord_grid((res, res, res), (-1, 1), device=device)
 
 
-# ── Sample one volume from a model at a given resolution ──────────────────────
-@torch.no_grad()
-def _sample_single_3d(
-    model,
-    model_type: str,
-    res: int,
-    device: str,
+# -- Draw fixed validation batch (shared across all models) --------------------
+def draw_fixed_val_batch(
+    val_loader: torch.utils.data.DataLoader,
+    n: int,
     channels: int,
-    vae_config: dict | None = None,
-) -> np.ndarray:
+    img_size: int,
+    device: str,
+) -> torch.Tensor:
     """
-    Sample one volume from the model and decode at resolution res^3.
-    For INR-based models the same latent/weight is decoded at arbitrary resolution.
-    For weight diffusion models the SIREN is queried at the new coord grid.
-
+    Draw a fixed batch of N validation volumes, shared across all models.
     Args:
-        model:      Trained model.
-        model_type: "vae", "ldm", or "weight_diffusion".
-        res:        Target resolution per spatial dimension.
-        device:     Device string.
+        val_loader: DataLoader yielding (volume, label) batches.
+        n:          Number of volumes to collect.
         channels:   Number of voxel channels.
-        vae_config: Required when model_type == "vae".
+        img_size:   Spatial size per dimension.
+        device:     Device string.
     Returns:
-        voxels: (D, H, W) numpy array from marching-cubes rendering.
+        x_fixed: (N, C, D, H, W) tensor on device.
     """
-    coord = _make_3d_coord_grid(res, device)  # (res, res, res, 3)
-
-    if model_type == "vae":
-        latent_dim = vae_config["latent_dim"]
-        latent_size = vae_config["latent_size"]
-        z = torch.randn(1, latent_dim, latent_size, latent_size, device=device)
-        x_hat = model.decoder(z, coord)  # (1, C, res, res, res) or flat
-    elif model_type == "ldm":
-        from src.models.latent_diffusion.TwoStageLDM import TwoStageLDM
-        z = model._sample_latent(1) if isinstance(model, TwoStageLDM) \
-            else model._sample_latent(1, collect_snapshots=False, debug=False)
-        if hasattr(model, "_normalize") and model._normalize:
-            z = model._denormalize_z(z)
-        x_hat = model.decoder(z, coord)
-    else:  # weight_diffusion
-        theta_prime = model.sample_weight(1)
-        theta = model.weight_encoder.decode_modulations(theta_prime)
-        coord_batched = coord.unsqueeze(0)  # (1, res, res, res, 3)
-        x_hat = model._inr_decode(theta, coords=coord_batched)
-
-    # Reshape to (1, C, res, res, res) then squeeze to (D, H, W)
-    x_hat = x_hat.reshape(1, channels, res, res, res)
-    return _samples_to_voxel_grids(x_hat, channels, res)[0]  # (D, H, W)
+    x_list = []
+    for batch in val_loader:
+        x = batch[0] if isinstance(batch, (list, tuple)) else batch
+        x_list.append(x)
+        if sum(b.shape[0] for b in x_list) >= n:
+            break
+    x = torch.cat(x_list, dim=0)[:n]
+    if x.dim() == 2:
+        x = x.view(x.shape[0], channels, img_size, img_size, img_size)
+    return x.to(device)
 
 
-# ── Plot 1: scale row ─────────────────────────────────────────────────────────
+# -- Plot 1: scale row ---------------------------------------------------------
 def plot_scale_row_3d(
     model,
     model_type: str,
@@ -246,16 +200,15 @@ def plot_scale_row_3d(
     vae_config: dict | None = None,
 ) -> None:
     """
-    Sample ONCE per scale factor and render each as a marching-cubes mesh.
-    Produces a single row of 6 subplots with scale labels below.
-
+    Sample ONCE then decode the same latent/weight at each scale factor.
+    Scale label centered below each panel via ax.set_title, no parenthetical.
     Args:
         model:      Trained model.
         model_type: "vae", "ldm", or "weight_diffusion".
         base_res:   Native training resolution (e.g. 32).
         device:     Device string.
         channels:   Number of voxel channels.
-        title:      Figure suptitle (model name).
+        title:      Figure suptitle.
         save_path:  Output PNG path.
         vae_config: Required when model_type == "vae".
     Returns:
@@ -264,23 +217,54 @@ def plot_scale_row_3d(
     n_scales = len(SCALE_FACTORS)
     fig = plt.figure(figsize=(n_scales * 2.5, 3.0))
 
-    for col, factor in enumerate(SCALE_FACTORS):
-        res = max(4, round(base_res * factor))  # floor at 4 to avoid degenerate grids
-        voxels = _sample_single_3d(model, model_type, res, device, channels, vae_config)
+    # Sample latent/weight ONCE
+    with torch.no_grad():
+        if model_type == "vae":
+            latent_dim = vae_config["latent_dim"]
+            latent_size = vae_config["latent_size"]
+            z = torch.randn(1, latent_dim, latent_size, latent_size, device=device)
+        elif model_type == "ldm":
+            from src.models.two_stage_models.latent_two_stage import TwoStageLDM
+            z = model._sample_latent(1) if isinstance(model, TwoStageLDM) \
+                else model._sample_latent(1, collect_snapshots=False, debug=False)
+            if hasattr(model, "_normalize") and model._normalize:
+                z = model._denormalize_z(z)
+        else:  # weight_diffusion
+            theta_prime = model.sample_weight(1)
+            theta = model.weight_encoder.decode_modulations(theta_prime)
+
+    # Decode the same latent at each scale
+    for col, (factor, label) in enumerate(zip(SCALE_FACTORS, SCALE_LABELS, strict=False)):
+        res = max(4, round(base_res * factor))
+
+        with torch.no_grad():
+            if model_type in ("vae", "ldm"):
+                coord = _make_3d_coord_grid(res, device)
+                slices = []
+                for d_start in range(0, res, 8):
+                    d_end = min(d_start + 8, res)
+                    x_chunk = model.decoder(z, coord[d_start:d_end])
+                    slices.append(x_chunk.cpu())
+                x_hat = torch.cat(slices, dim=2).reshape(1, channels, res, res, res)
+            else:
+                coord = _make_3d_coord_grid(res, device)
+                slices = []
+                for d_start in range(0, res, 8):
+                    d_end = min(d_start + 8, res)
+                    coord_chunk = coord[d_start:d_end].unsqueeze(0)
+                    x_chunk = model._inr_decode(theta, coords=coord_chunk)
+                    x_chunk = x_chunk.reshape(1, channels, d_end - d_start, res, res)
+                    slices.append(x_chunk.cpu())
+                x_hat = torch.cat(slices, dim=2)
+
+        voxels = _samples_to_voxel_grids(x_hat, channels, res)[0]
+        voxels = voxels.transpose(2, 0, 1)
 
         ax = fig.add_subplot(1, n_scales, col + 1, projection="3d")
-        _render_mesh_on_ax(ax, voxels, azim=_AZIM_OFFSETS[col % len(_AZIM_OFFSETS)])
+        _render_mesh_on_ax(ax, voxels, azim=_AZIM_OFFSETS[col % len(_AZIM_OFFSETS)], elev=_ELEV)
 
-        # Scale label below each panel
-        fig.text(
-            (col + 0.5) / n_scales,
-            0.02,
-            f"{factor}× ({res}³)",
-            ha="center",
-            va="bottom",
-            fontsize=8,
-            fontweight="bold",
-        )
+        # Centered label via ax.set_title — no parenthetical resolution
+        ax.set_title(label, fontsize=9, fontweight="bold", pad=2)
 
     fig.suptitle(f"3D Scale Row: {title}", fontsize=11, fontweight="bold", y=1.01)
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -288,81 +272,71 @@ def plot_scale_row_3d(
     print(f"  Scale row saved -> {save_path}")
 
 
-# ── Plot 2: reconstruction comparison ─────────────────────────────────────────
+# -- Plot 2: reconstruction comparison -----------------------------------------
 @torch.no_grad()
 def plot_reconstruction_3d(
     model,
     model_type: str,
-    val_loader: torch.utils.data.DataLoader,
+    x_fixed: torch.Tensor,
     base_res: int,
-    device: str,
     channels: int,
     title: str,
     save_path: str,
 ) -> None:
     """
-    Pick 10 validation volumes, reconstruct them, render both rows as meshes.
-    Top row: originals. Bottom row: reconstructions. 10 columns.
-
+    Reconstruct a fixed set of validation volumes shared across all models.
+    Top row: originals. Bottom row: reconstructions. Labels centered below rows.
     Args:
         model:      Trained model.
         model_type: "vae", "ldm", or "weight_diffusion".
-        val_loader: DataLoader yielding (volume, label) batches.
+        x_fixed:    (N, C, D, H, W) fixed validation volumes on device.
         base_res:   Native training resolution.
-        device:     Device string.
         channels:   Number of voxel channels.
-        title:      Figure suptitle (model name).
+        title:      Figure suptitle.
         save_path:  Output PNG path.
     Returns:
         None
     """
-    N = 10  # noqa: N806
-    x_list = []
-    for batch in val_loader:
-        x = batch[0] if isinstance(batch, (list, tuple)) else batch
-        x_list.append(x)
-        if sum(b.shape[0] for b in x_list) >= N:
-            break
-    x = torch.cat(x_list, dim=0)[:N].to(device)
+    N = x_fixed.shape[0]  # noqa: N806
+    coord = _make_3d_coord_grid(base_res, str(x_fixed.device))
 
-    # Ensure (B, C, D, H, W)
-    if x.dim() == 2:
-        x = x.view(x.shape[0], channels, base_res, base_res, base_res)
+    # Reconstruct each volume individually to stay within VRAM
+    recon_list = []
+    for i in range(N):
+        xi = x_fixed[i : i + 1]
+        if model_type == "weight_diffusion":
+            theta_prime, _, _ = model.encode(xi)
+            theta = model.weight_encoder.decode_modulations(theta_prime)
+            x_hat = model._inr_decode(theta, coords=coord.unsqueeze(0))
+            x_hat = x_hat.reshape(1, channels, base_res, base_res, base_res)
+        else:
+            z, _, _ = model.encode(xi)
+            x_hat = model.decoder(z, coord)
+            x_hat = x_hat.reshape(1, channels, base_res, base_res, base_res)
+        recon_list.append(x_hat.cpu())
 
-    coord = _make_3d_coord_grid(base_res, device)
+    x_hat_all = torch.cat(recon_list, dim=0)  # (N, C, D, H, W)
 
-    # Reconstruct
-    if model_type == "weight_diffusion":
-        theta_prime, _, _ = model.encode(x)
-        theta = model.weight_encoder.decode_modulations(theta_prime)
-        coord_batched = coord.unsqueeze(0).expand(N, -1, -1, -1, -1)
-        x_hat = model._inr_decode(theta, coords=coord_batched)
-    else:
-        # vae and ldm share encode() -> (z, _, _) and decoder(z, coord)
-        z, _, _ = model.encode(x)
-        x_hat = model.decoder(z, coord)
+    orig_grids  = _samples_to_voxel_grids(x_fixed.cpu(), channels, base_res)  # (N, D, H, W)
+    recon_grids = _samples_to_voxel_grids(x_hat_all,     channels, base_res)  # (N, D, H, W)
 
-    x_hat = x_hat.reshape(N, channels, base_res, base_res, base_res)
-
-    orig_grids = _samples_to_voxel_grids(x, channels, base_res)      # (N, D, H, W)
-    recon_grids = _samples_to_voxel_grids(x_hat, channels, base_res)  # (N, D, H, W)
+    orig_grids  = orig_grids.transpose(0, 3, 1, 2)   # (N, W, H, D)
+    recon_grids = recon_grids.transpose(0, 3, 1, 2)  # (N, W, H, D)
 
     fig = plt.figure(figsize=(N * 2.0, 5.0))
 
     for col in range(N):
         azim = _AZIM_OFFSETS[col % len(_AZIM_OFFSETS)]
 
-        # Top row: original
         ax_orig = fig.add_subplot(2, N, col + 1, projection="3d")
-        _render_mesh_on_ax(ax_orig, orig_grids[col], azim=azim)
+        _render_mesh_on_ax(ax_orig, orig_grids[col], azim=azim, elev=_ELEV)
 
-        # Bottom row: reconstruction
         ax_recon = fig.add_subplot(2, N, N + col + 1, projection="3d")
-        _render_mesh_on_ax(ax_recon, recon_grids[col], azim=azim)
+        _render_mesh_on_ax(ax_recon, recon_grids[col], azim=azim, elev=_ELEV)
 
-    # Row labels on the left
-    fig.text(0.01, 0.75, "Originals", va="center", ha="left", fontsize=9, fontweight="bold", rotation=90)
-    fig.text(0.01, 0.25, "Reconstructions", va="center", ha="left", fontsize=9, fontweight="bold", rotation=90)
+    # Row labels centered below each row
+    fig.text(0.5, 0.52, "Originals",       ha="center", va="top",    fontsize=10, fontweight="bold")
+    fig.text(0.5, 0.02, "Reconstructions", ha="center", va="bottom", fontsize=10, fontweight="bold")
 
     fig.suptitle(f"3D Reconstructions: {title}", fontsize=11, fontweight="bold", y=1.01)
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -370,16 +344,14 @@ def plot_reconstruction_3d(
     print(f"  Reconstruction plot saved -> {save_path}")
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# -- Entry point ---------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="3D eval plots for INR-based voxel models.")
-
     parser.add_argument("--vae_config_path", type=str, required=True)
     parser.add_argument("--vae_checkpoint_path", type=str, required=True)
     parser.add_argument("--latent_config_paths", type=str, nargs="+", default=[], help="One-stage then two-stage LDM configs (max 3).")
     parser.add_argument("--weight_config_paths", type=str, nargs="+", default=[], help="One-stage then two-stage WD configs (max 3).")
     parser.add_argument("--base_res", type=int, default=32, help="Native training resolution per spatial dimension.")
-
     args = parser.parse_args()
 
     if len(args.latent_config_paths) > 3:
@@ -398,7 +370,6 @@ def main():
     print(f"  3D Eval Plots  |  Output: {output_dir}")
     print(f"{'=' * 60}\n")
 
-    # ── Load VAE config + dataset ─────────────────────────────────────────────
     with open(args.vae_config_path) as f:
         vae_config = json.load(f)
 
@@ -416,7 +387,11 @@ def main():
         val_dataset, batch_size=16, shuffle=True, drop_last=False, num_workers=0
     )
 
-    # ── VAE ───────────────────────────────────────────────────────────────────
+    # Draw fixed validation batch ONCE — shared across all models
+    print(f"  Drawing {N_RECON} fixed validation volumes (shared across all models) ...")
+    x_fixed = draw_fixed_val_batch(val_loader, N_RECON, channels, img_size, device)
+
+    # -- VAE -------------------------------------------------------------------
     print("--- Processing VAE Model ---")
     vae_model = build_vae_model_3d(vae_config, channels, img_size, device)
     vae_ckpt = torch.load(args.vae_checkpoint_path, map_location=device)
@@ -430,24 +405,23 @@ def main():
         vae_config=vae_config,
     )
     plot_reconstruction_3d(
-        vae_model, "vae", val_loader, args.base_res, device, channels,
+        vae_model, "vae", x_fixed, args.base_res, channels,
         title="VAE-INR",
         save_path=os.path.join(output_dir, "vae_reconstructions.png"),
     )
 
-    # ── Latent Diffusion models ────────────────────────────────────────────────
+    # -- Latent Diffusion models -----------------------------------------------
     if args.latent_config_paths:
         print(f"\n--- Processing Latent Diffusion Suite ({len(args.latent_config_paths)} variants) ---")
-        from src.utility.model_builders import build_model as build_ldm_model
-        from src.utility.model_builders.two_stage_builder import build_ldm as build_two_stage_ldm
-        from src.models.latent_diffusion.TwoStageLDM import TwoStageLDM
+        from src.utility.model_builders.model_builder import build_model as build_ldm_model
+        from src.utility.model_builders.util.twostage_builder import build_ldm as build_two_stage_ldm
+        from src.models.two_stage_models.latent_two_stage import TwoStageLDM
 
         for idx, p in enumerate(args.latent_config_paths):
             with open(p) as f:
                 l_cfg = json.load(f)
 
             if idx == 0:
-                # One-stage: nested config
                 l_hparams = SimpleNamespace(**l_cfg["hparams"])
                 l_data_cfg = l_cfg["data"]
                 l_data_config = {
@@ -455,6 +429,7 @@ def main():
                     "channels": l_data_cfg["channels"],
                     "img_size": l_data_cfg["img_size"],
                     "data_dim": l_data_cfg["data_dim"],
+                    "is_3d": True,
                 }
                 run_name = _extract_run_name(p)
                 print(f"  Building & loading (one-stage): {run_name} ...")
@@ -462,7 +437,6 @@ def main():
                 l_ckpt = torch.load(l_cfg["paths"]["weights"], map_location=device)
                 l_model.load_state_dict(l_ckpt["model_state_dict"])
             else:
-                # Two-stage: flat config
                 run_name = l_cfg["run_name"]
                 ckpt_path = os.path.join(
                     os.path.dirname(os.path.abspath(p)),
@@ -471,7 +445,8 @@ def main():
                 ts_args = SimpleNamespace(T=l_cfg["T"], beta_1=l_cfg["beta_1"], beta_T=l_cfg["beta_T"])
                 print(f"  Building & loading (two-stage): {run_name} ...")
                 l_model = build_two_stage_ldm(
-                    hparams=l_cfg, args=ts_args, channels=channels, img_size=img_size, device=device
+                    hparams=l_cfg, args=ts_args, channels=channels, img_size=img_size,
+                    device=device, is_3d=True,
                 )
                 l_ckpt = torch.load(ckpt_path, map_location=device)
                 l_model.load_state_dict(l_ckpt["model_state_dict"])
@@ -485,15 +460,15 @@ def main():
                 save_path=os.path.join(output_dir, f"latent_scale_row_{safe}.png"),
             )
             plot_reconstruction_3d(
-                l_model, "ldm", val_loader, args.base_res, device, channels,
+                l_model, "ldm", x_fixed, args.base_res, channels,
                 title=run_name,
                 save_path=os.path.join(output_dir, f"latent_reconstructions_{safe}.png"),
             )
 
-    # ── Weight Diffusion models ────────────────────────────────────────────────
+    # -- Weight Diffusion models -----------------------------------------------
     if args.weight_config_paths:
         print(f"\n--- Processing Weight Diffusion Suite ({len(args.weight_config_paths)} variants) ---")
-        from src.utility.model_builders import build_model as build_ldm_model
+        from src.utility.model_builders.model_builder import build_model as build_ldm_model
         from src.scripts.two_stage_weight_training import build_full_wd_model
 
         for idx, p in enumerate(args.weight_config_paths):
@@ -501,7 +476,6 @@ def main():
                 w_cfg = json.load(f)
 
             if idx == 0:
-                # One-stage: nested config
                 w_hparams = SimpleNamespace(**w_cfg["hparams"])
                 w_data_cfg = w_cfg["data"]
                 w_data_config = {
@@ -509,6 +483,7 @@ def main():
                     "channels": w_data_cfg["channels"],
                     "img_size": w_data_cfg["img_size"],
                     "data_dim": w_data_cfg["data_dim"],
+                    "is_3d": True,
                 }
                 run_name = _extract_run_name(p)
                 print(f"  Building & loading (one-stage): {run_name} ...")
@@ -517,7 +492,6 @@ def main():
                 state_dict = {k: v for k, v in w_ckpt["model_state_dict"].items() if k != "coords"}
                 w_model.load_state_dict(state_dict, strict=False)
             else:
-                # Two-stage: flat config
                 run_name = w_cfg["run_name"]
                 ckpt_path = os.path.join(
                     os.path.dirname(os.path.abspath(p)),
@@ -547,7 +521,7 @@ def main():
                 save_path=os.path.join(output_dir, f"weight_scale_row_{safe}.png"),
             )
             plot_reconstruction_3d(
-                w_model, "weight_diffusion", val_loader, args.base_res, device, channels,
+                w_model, "weight_diffusion", x_fixed, args.base_res, channels,
                 title=run_name,
                 save_path=os.path.join(output_dir, f"weight_reconstructions_{safe}.png"),
             )
