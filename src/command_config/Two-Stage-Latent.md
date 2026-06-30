@@ -2,14 +2,14 @@
 python src/scripts/train_two_stage.py \
     --run_name TESTING-two_stage_fixed-MNIST \
     --mode fixed \
-    --ldm_config src/train_results/TESTING-latent-diffusion-MNIST/metadata/config.json \
+    --ldm_config src/train_results/latent-diffusion/metadata/config.json \
     --total_epochs 2 \
     --vae_epochs 1 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 0.1 \
+    --lambda_kl_max 0.000001 \
     --kl_warmup_frac 0.4 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -71,14 +71,14 @@ python src/scripts/train_two_stage.py \
 python src/scripts/train_two_stage.py \
     --run_name TESTING-two_stage_sfixed-VOXEL \
     --mode fixed \
-    --ldm_config src/train_results/TESTING-latent-diffusion-VOXEL/metadata/config.json \
+    --ldm_config src/train_results/latent-probability-3D-data/metadata/config.json \
     --total_epochs 5 \
     --vae_epochs 2 \
-    --batch_size 64 \
+    --batch_size 8 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 0.1 \
+    --lambda_kl_max 0.000001 \
     --kl_warmup_frac 0.4 \
     --T 1000 \
     --beta_1 1e-4 \

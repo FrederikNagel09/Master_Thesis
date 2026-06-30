@@ -118,6 +118,7 @@ class WeightDiffusion(nn.Module):
         img_size: int = 28,
         stop_gradient_flow: bool = True,
         normalize: bool = True,
+        is_3d: bool = False,
     ):
         super().__init__()
         # Initialize model components and noise schedule buffers
@@ -133,7 +134,7 @@ class WeightDiffusion(nn.Module):
         self.sigma_tilde_factor = sigma_tilde_factor
 
         self.stop_gradient_flow = stop_gradient_flow
-
+        self.is_3d = is_3d
         # --- Noise schedule ---
         beta = torch.linspace(beta_1, beta_T, T)
         alpha = 1.0 - beta
@@ -396,21 +397,28 @@ class WeightDiffusion(nn.Module):
     # -------------------------------------------------------------------------
     def _l_rec(self, x, theta_prime_raw, debug=True) -> torch.Tensor:
         """
-        Reconstruction is done my taking Theta Prime, decoding it to pixel space, and comparing to the original image x.
+        Reconstruction loss: BCE for binary 3D voxel data, MSE for continuous 2D (MNIST) data.
 
-        The idea is for this loss term to push the Weight Encoder to produce Theta prime weights that create good reconstructed images.
-        Essentially we want the weight encoder to procuse good weights that the diffusion process, then can learn to recreate.
+        Args:
+            x: (B, C, H, W) or (B, C, D, H, W) original data
+            theta_prime_raw: (B, weight_dim) latent weight vector to decode
+        Returns:
+            (B,) per-sample reconstruction loss
         """
-        # Send theta_prime through the shared SIREN decoder to get reconstructed images.
         x_recon = self._inr_decode(theta_prime_raw)
-        # Flatten original images and to make comparison easier.
-        x_flat = x.reshape(x.shape[0], -1).clamp(-1, 1)
+        x_flat = x.reshape(x.shape[0], -1)
         if x_recon.shape != x_flat.shape:
             x_recon = x_recon.view_as(x_flat)
 
         self.print_l_rec_stats(x_flat, x_recon, debug)
 
-        return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
+        if self.is_3d:
+            eps = 1e-7
+            x_recon_clamped = x_recon.clamp(eps, 1 - eps)
+            return F.binary_cross_entropy(x_recon_clamped, x_flat, reduction="none").sum(dim=-1)
+        else:
+            x_flat = x_flat.clamp(-1, 1)
+            return 0.5 * ((x_flat - x_recon) ** 2).sum(dim=-1)
 
     def _l_diff(self, theta_t, t_norm, epsilon, x0, t_idx, debug=True) -> torch.Tensor:
         """

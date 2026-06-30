@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
+import torch.nn.functional as F
 sys.path.append(".")
 
 from src.models.weight_diffusion.modules.WeightnoisePredictor import (
@@ -33,17 +33,17 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 
 """
 Fixed-budget mode:
-python src/scripts/two-stage-weight-training.py \
-    --run_name wd_two_stage_fixed \
+python src/scripts/two_stage_weight_training.py \
+    --run_name wd_two_stage_fixed-TEST \
     --mode fixed \
-    --wd_config src/train_results/Weight-Diffusion-Probabilistic-test/metadata/config.json \
-    --total_epochs 300 \
-    --vae_epochs 150 \
+    --wd_config src/train_results/weight-diffusion/metadata/config.json \
+    --total_epochs 5 \
+    --vae_epochs 3 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 0.1 \
+    --lambda_kl_max 0.000001 \
     --kl_warmup_frac 0.4 \
     --T 1000 \
     --beta_1 1e-4 \
@@ -97,8 +97,8 @@ python src/scripts/two-stage-weight-training.py \
     --fid_batch_size 64
 
 3D ShapeNet voxels mode (convergence):
-python src/scripts/two-stage-weight-training.py \
-    --run_name wd_two_stage_shapenet \
+python src/scripts/two_stage_weight_training.py \
+    --run_name wd_two_stage_shapenet-TEST \
     --mode convergence \
     --wd_config src/train_results/weight-diffusion-shapenet/metadata/config.json \
     --batch_size 16 \
@@ -118,6 +118,25 @@ python src/scripts/two-stage-weight-training.py \
     --beta_1 1e-4 \
     --beta_T 0.02 \
     --n_fid_samples 128 \
+    --fid_batch_size 16
+
+Fixed-budget mode:
+python src/scripts/two_stage_weight_training.py \
+    --run_name wd_two_stage_fixed-shapenet-TEST \
+    --mode fixed \
+    --wd_config src/train_results/weight-probability-3D-data/metadata/config.json \
+    --total_epochs 5 \
+    --vae_epochs 3 \
+    --batch_size 16 \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --lambda_kl_max 0.000001 \
+    --kl_warmup_frac 0.4 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 0.02 \
+    --n_fid_samples 16 \
     --fid_batch_size 16
 """
 
@@ -1188,23 +1207,26 @@ def train_weight_encoder(
             x = batch[0].to(device)
             x_in = _prepare_input(x, is_3d)
             B = x.shape[0]
-
             optimizer.zero_grad()
             beta_kl = _get_beta_kl(global_step, args.lambda_kl_max, kl_warmup_steps)
-
             mu, logvar = model.weight_encoder(x_in)
             theta_prime = model.weight_encoder._reparameterize(mu, logvar)
             theta = model.weight_encoder.decode_modulations(theta_prime)
             x_recon = model._inr_decode(theta)
-
-            # Flatten target for loss; clamp only for 2D (images are [-1,1])
             x_target = x.reshape(B, -1)
-            if not is_3d:
-                x_target = x_target.clamp(-1, 1)
             if x_recon.shape != x_target.shape:
                 x_recon = x_recon.view_as(x_target)
 
-            loss_recon = 0.5 * ((x_target - x_recon) ** 2).sum(dim=-1).mean()
+            if is_3d:
+                eps = 1e-7
+                x_recon_clamped = x_recon.clamp(eps, 1 - eps)
+                loss_recon = F.binary_cross_entropy(
+                    x_recon_clamped, x_target, reduction="none"
+                ).sum(dim=-1).mean()
+            else:
+                x_target = x_target.clamp(-1, 1)
+                loss_recon = 0.5 * ((x_target - x_recon) ** 2).sum(dim=-1).mean()
+
             loss_kl = -0.5 * torch.mean(
                 torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
             )
@@ -1254,19 +1276,24 @@ def train_weight_encoder(
                     x = batch[0].to(device)
                     x_in = _prepare_input(x, is_3d)
                     B = x.shape[0]
-
                     mu, logvar = model.weight_encoder(x_in)
                     theta_prime = model.weight_encoder._reparameterize(mu, logvar)
                     theta = model.weight_encoder.decode_modulations(theta_prime)
                     x_recon = model._inr_decode(theta)
-
                     x_target = x.reshape(B, -1)
-                    if not is_3d:
-                        x_target = x_target.clamp(-1, 1)
                     if x_recon.shape != x_target.shape:
                         x_recon = x_recon.view_as(x_target)
 
-                    recon = 0.5 * ((x_target - x_recon) ** 2).sum(dim=-1).mean()
+                    if is_3d:
+                        eps = 1e-7
+                        x_recon_clamped = x_recon.clamp(eps, 1 - eps)
+                        recon = F.binary_cross_entropy(
+                            x_recon_clamped, x_target, reduction="none"
+                        ).sum(dim=-1).mean()
+                    else:
+                        x_target = x_target.clamp(-1, 1)
+                        recon = 0.5 * ((x_target - x_recon) ** 2).sum(dim=-1).mean()
+
                     kl = -0.5 * torch.mean(
                         torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
                     )
@@ -1541,21 +1568,17 @@ def compute_final_eval(
                 x = batch[0].to(device)
                 x_in = _prepare_input(x, is_3d)
                 B = x.shape[0]
-
                 mu, logvar = model.weight_encoder(x_in)
                 theta_prime = model.weight_encoder._reparameterize(mu, logvar)
                 theta = model.weight_encoder.decode_modulations(theta_prime)
                 x_recon = model._inr_decode(theta)
-
                 x_target = x.reshape(B, -1)
                 if not is_3d:
                     x_target = x_target.clamp(-1, 1)
                 if x_recon.shape != x_target.shape:
                     x_recon = x_recon.view_as(x_target)
-
                 total_mse += ((x_target - x_recon) ** 2).sum(dim=-1).sum().item()
                 n_seen += B
-
         enc_recon_mse = total_mse / n_seen
 
         # Encoder prior samples — 2D only

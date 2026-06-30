@@ -39,11 +39,11 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
 
 
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name weight-diffusion-VOXEL \
+    --run_name weight-diffusion-VOXEL-newLoss \
     --epochs 5 \
-    --batch_size 64 \
+    --batch_size 8 \
     --subset_frac 1.0 \
-    --n_fid_samples 4096 \
+    --n_fid_samples 128 \
     --stop_gradient_flow True \
     --normalize True \
     --model weight_inr_diffusion\
@@ -57,7 +57,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
     --inr_hidden_dim 128 \
-    --inr_layers 5 \
+    --inr_layers 2 \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 8 \
     --encoder_trans_head_dim 64 \

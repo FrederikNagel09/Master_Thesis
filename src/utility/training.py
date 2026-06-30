@@ -17,7 +17,7 @@ from torch import optim
 import torch.nn as nn
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-
+import torch.nn.functional as F
 from src.models.two_stage_models.latent_two_stage import TwoStageLDM
 from src.models.vae.vae_wrapper import VAEWrapper, _get_beta
 from src.configs.general_config import GLOBAL_DEBUG_BOOL
@@ -330,7 +330,6 @@ def train_vae(
 ) -> VAEWrapper:
     """
     Train the VAE stage and save weights. Returns the trained VAEWrapper.
-
     Args:
         args        (argparse.Namespace): CLI args
         hparams     (dict):               LDM arch hparams
@@ -347,15 +346,12 @@ def train_vae(
     print("\n" + "=" * 60)
     print("  STAGE 1 — VAE TRAINING")
     print("=" * 60)
-
     model = build_vae(hparams, channels, img_size, device, is_3d=is_3d)
     optimizer = optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
-
     history = {"elbo": [], "recon": [], "kl": []}
     graph_path = os.path.join(results_dir, f"{args.run_name}_vae_training_curves.png")
-
     if args.mode == "fixed":
         max_epochs = args.vae_epochs
         detector = None
@@ -364,74 +360,70 @@ def train_vae(
         detector = SmoothedPlateauDetector(
             patience=args.vae_patience, delta=args.vae_delta
         )
-
     steps_per_epoch = len(dataloader)
     kl_warmup_steps = max(1, int(args.kl_warmup_frac * max_epochs)) * steps_per_epoch
     global_step = 0
-
     progress = tqdm(
         total=max_epochs * steps_per_epoch, desc="VAE Training", unit="step"
     )
-
     for epoch in range(1, max_epochs + 1):
         model.train()
-        running_mse = 0.0
+        running_recon = 0.0
         running_kl = 0.0
-
         for batch in dataloader:
             x = batch[0].to(device)
             if not is_3d and x.dim() == 2:
                 x = x.view(x.shape[0], channels, img_size, img_size)
-
             optimizer.zero_grad()
             beta_kl = _get_beta(global_step, args.lambda_kl_max, kl_warmup_steps)
-
             x_recon, mu, logvar = model(x)
             x_hat_flat = x_recon.reshape(x_recon.shape[0], -1)
-            # Voxels are [0,1] binary; images are [-1,1] — clamp only for 2D
             x_flat = x.reshape(x.shape[0], -1)
-            if not is_3d:
-                x_flat = x_flat.clamp(-1, 1)
 
-            loss_recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
+            if is_3d:
+                # Binary voxels: BCE against sigmoid output
+                eps = 1e-7
+                x_hat_flat = x_hat_flat.clamp(eps, 1 - eps)
+                loss_recon = F.binary_cross_entropy(
+                    x_hat_flat, x_flat, reduction="none"
+                ).sum(dim=-1).mean()
+            else:
+                # Continuous pixels in [-1,1]: Gaussian MSE
+                x_flat = x_flat.clamp(-1, 1)
+                loss_recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
+
             loss_kl = -0.5 * torch.mean(
                 torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3])
             )
             total_loss = loss_recon + beta_kl * loss_kl
             total_loss.backward()
-
             if args.grad_clip > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
-
             history["elbo"].append(total_loss.item())
             history["recon"].append(loss_recon.item())
             history["kl"].append(loss_kl.item())
-            running_mse += loss_recon.item()
+            running_recon += loss_recon.item()
             running_kl += loss_kl.item()
-
             progress.set_postfix(
                 {
                     "epoch": f"{epoch}/{max_epochs}",
-                    "MSE": f"{loss_recon.item():.4f}",
+                    "Recon": f"{loss_recon.item():.4f}",
                     "KL": f"{loss_kl.item():.2f}",
                     "β": f"{beta_kl:.3f}",
                 }
             )
             progress.update(1)
             global_step += 1
-
-        epoch_mse = running_mse / steps_per_epoch
+        epoch_recon = running_recon / steps_per_epoch
         epoch_kl = running_kl / steps_per_epoch
         print(
-            f"  [VAE epoch {epoch}] MSE: {epoch_mse:.5f} | KL: {epoch_kl:.3f} | β: {beta_kl:.4f}"
+            f"  [VAE epoch {epoch}] Recon: {epoch_recon:.5f} | KL: {epoch_kl:.3f} | β: {beta_kl:.4f}"
         )
-
         save_vae_checkpoint(
             model, optimizer, epoch, history, results_dir, args.run_name
         )
         save_vae_training_graph(history, steps_per_epoch, epoch, graph_path)
-
         if detector is not None and epoch % args.vae_check_every == 0:
             model.eval()
             val_elbo = 0.0
@@ -444,9 +436,17 @@ def train_vae(
                     x_recon, mu, logvar = model(x)
                     x_hat_flat = x_recon.reshape(x_recon.shape[0], -1)
                     x_flat = x.reshape(x.shape[0], -1)
-                    if not is_3d:
+
+                    if is_3d:
+                        eps = 1e-7
+                        x_hat_flat = x_hat_flat.clamp(eps, 1 - eps)
+                        recon = F.binary_cross_entropy(
+                            x_hat_flat, x_flat, reduction="none"
+                        ).sum(dim=-1).mean()
+                    else:
                         x_flat = x_flat.clamp(-1, 1)
-                    recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
+                        recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
+
                     kl = -0.5 * torch.mean(
                         torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3])
                     )
@@ -454,15 +454,12 @@ def train_vae(
                     n_seen += x.shape[0]
             val_elbo /= n_seen
             print(f"  [VAE convergence check @ epoch {epoch}] Val ELBO: {val_elbo:.5f}")
-
             if detector.step(val_elbo):
                 print(f"  VAE converged at epoch {epoch} — switching to DDPM stage.")
                 break
-
     progress.close()
     save_vae_weights(model, hparams, results_dir, args.run_name)
     return model
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # DDPM TRAINING STAGE

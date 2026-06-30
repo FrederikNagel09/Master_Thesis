@@ -173,6 +173,7 @@ def _build_weight_diffusion(args, data_config: dict):
         img_size=data_shape if is_3d else img_size,  # Updated to tuple
         stop_gradient_flow=args.stop_gradient_flow,
         normalize=args.normalize,
+        is_3d=is_3d,
     )
 
     total_params = sum(p.numel() for p in model.parameters())
