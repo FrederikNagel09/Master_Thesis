@@ -13,8 +13,8 @@ from tqdm import tqdm
 sys.path.append(".")
 import warnings
 
-from models.latent_diffusion.modules.LatentEncoder import ResNetLatentEncoder
-from models.latent_diffusion.modules.trans_inr import TransInr, make_coord_grid
+from src.models.latent_diffusion.modules.LatentEncoder import ResNetLatentEncoder
+from src.models.latent_diffusion.modules.trans_inr import TransInr, make_coord_grid
 
 from src.utility.classifier_utils import (
     _get_inception,
@@ -31,8 +31,8 @@ warnings.filterwarnings("ignore", message="The operator 'aten::im2col'")
 """
 python src/scripts/VAE_Baseline_Training.py \
     --run_name vae_testing_new \
-    --ldm_config src/train_results/Latent-Diffusion-Probabilistic-1616/metadata/config.json \
-    --epochs 400 \
+    --ldm_config src/train_results/latent-diffusion/metadata/config.json \
+    --epochs 5 \
     --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
@@ -493,7 +493,7 @@ def build_model(
 
     decoder = TransInr(
         tokenizer={
-            "target": "src.models.trans_inr_helpers.LatentTokenizer",
+            "target": "src.models.tokenizers.latent_tokenizer.LatentTokenizer",
             "params": {
                 "latent_dim": latent_dim,
                 "latent_size": latent_size,
@@ -504,7 +504,7 @@ def build_model(
             },
         },
         inr={
-            "target": "src.models.trans_inr_helpers.SIREN",
+            "target": "src.models.inr.siren.SIREN",
             "params": {
                 "depth": hparams["inr_layers"],
                 "in_dim": 2,
@@ -516,7 +516,7 @@ def build_model(
         data_shape=(img_size, img_size),
         n_groups=hparams["dec_trans_n_groups"],
         transformer={
-            "target": "src.models.trans_inr_helpers.Transformer",
+            "target": "src.models.utils.transformer.Transformer",
             "params": {
                 "dim": hparams["dec_trans_dim"],
                 "encoder_depth": hparams["dec_trans_enc_depth"],

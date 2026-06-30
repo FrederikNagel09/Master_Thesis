@@ -266,7 +266,7 @@ def plot_scale_row_3d(
         # Centered label via ax.set_title — no parenthetical resolution
         ax.set_title(label, fontsize=9, fontweight="bold", pad=2)
 
-    fig.suptitle(f"3D Scale Row: {title}", fontsize=11, fontweight="bold", y=1.01)
+    #fig.suptitle(f"3D Scale Row: {title}", fontsize=11, fontweight="bold", y=1.01)
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"  Scale row saved -> {save_path}")
@@ -335,10 +335,10 @@ def plot_reconstruction_3d(
         _render_mesh_on_ax(ax_recon, recon_grids[col], azim=azim, elev=_ELEV)
 
     # Row labels centered below each row
-    fig.text(0.5, 0.52, "Originals",       ha="center", va="top",    fontsize=10, fontweight="bold")
-    fig.text(0.5, 0.02, "Reconstructions", ha="center", va="bottom", fontsize=10, fontweight="bold")
+    fig.text(0.5, 0.60, "(a) Originals",       ha="center", va="top",    fontsize=12, fontweight="bold")
+    fig.text(0.5, 0.15, "(b) Reconstructions", ha="center", va="bottom", fontsize=12, fontweight="bold")
 
-    fig.suptitle(f"3D Reconstructions: {title}", fontsize=11, fontweight="bold", y=1.01)
+    #fig.suptitle(f"3D Reconstructions: {title}", fontsize=11, fontweight="bold", y=1.01)
     fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"  Reconstruction plot saved -> {save_path}")
@@ -409,7 +409,7 @@ def main():
         title="VAE-INR",
         save_path=os.path.join(output_dir, "vae_reconstructions.png"),
     )
-
+    
     # -- Latent Diffusion models -----------------------------------------------
     if args.latent_config_paths:
         print(f"\n--- Processing Latent Diffusion Suite ({len(args.latent_config_paths)} variants) ---")
@@ -525,7 +525,7 @@ def main():
                 title=run_name,
                 save_path=os.path.join(output_dir, f"weight_reconstructions_{safe}.png"),
             )
-
+    
     print("\n3D Eval Plots Complete.")
 
 

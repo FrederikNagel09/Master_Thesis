@@ -10,12 +10,12 @@ python src/scripts/VAE_Baseline_Training_3D.py \
     --run_name vae_3d_baseline \
     --ldm_config src/train_results/latent-probability-3D-data/metadata/config.json \
     --epochs 5 \
-    --batch_size 64 \
+    --batch_size 32 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
     --subset_frac 1.0 \
-    --lambda_kl_max 0.1 \
+    --lambda_kl_max 1.0 \
     --kl_warmup_frac 0.4 \
     --n_eval_samples 128 \
     --eval_batch_size 128
@@ -34,6 +34,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import torch.nn.functional as F
 
 sys.path.append(".")
 
@@ -611,15 +612,16 @@ def run_training(args: argparse.Namespace) -> None:
 
             x_recon, mu, logvar = model(x)
 
-            # MSE loss — no clamping for voxels (binary [0,1])
+            # BCE loss for binary voxel occupancy
             x_flat = x.reshape(x.shape[0], -1)
             x_hat_flat = x_recon.reshape(x_recon.shape[0], -1)
-            loss_recon = 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1).mean()
+            eps = 1e-7
+            x_hat_flat = x_hat_flat.clamp(eps, 1 - eps)
+            loss_recon = F.binary_cross_entropy(x_hat_flat, x_flat, reduction="none").sum(dim=-1).mean()
 
             loss_kl = -0.5 * torch.mean(
                 torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2, 3])
             )
-
             total_loss = loss_recon + beta * loss_kl
             total_loss.backward()
 
