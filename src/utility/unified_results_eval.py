@@ -169,7 +169,7 @@ def prepare_model(model_type: str, config_path: str, weights_path: str, is_3d: b
     dataset_name = config["dataset"]
     stage = "vae" if model_type == "vae" else _detect_stage(config)
     _, val_dataset, data_config = build_dataset(
-        dataset_name=dataset_name, data_root="data/", subset_frac=0.05, single_class=False,
+        dataset_name=dataset_name, data_root="data/", subset_frac=1.0, single_class=False,
     )
     channels = data_config["channels"]
     img_size = data_config["img_size"]

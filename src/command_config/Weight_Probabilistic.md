@@ -1,8 +1,8 @@
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name VOXEL-Weight-Diffusion-TEST \
+    --run_name VOXEL-Weight-Diffusion-TEST-test \
     --epochs 5 \
     --batch_size 32 \
-    --subset_frac 1.0 \
+    --subset_frac 0.5 \
     --n_fid_samples 16 \
     --stop_gradient_flow True \
     --normalize True \

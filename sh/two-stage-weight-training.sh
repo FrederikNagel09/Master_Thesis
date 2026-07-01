@@ -19,7 +19,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 python /zhome/66/4/156534/Master_Thesis/src/scripts/two_stage_weight_training.py\
     --run_name VOXEL-Weight-Fixed-TEST \
     --mode fixed \
-    --wd_config src/train_results/VOXEL-Weight-Diffusion-TEST/metadata/config.json \
+    --wd_config /zhome/66/4/156534/Master_Thesis/src/train_results/VOXEL-Weight-Diffusion-TEST-test/metadata/config.json \
     --total_epochs 1400 \
     --vae_epochs 560 \
     --batch_size 64 \
