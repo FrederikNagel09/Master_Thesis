@@ -1,13 +1,13 @@
 #!/bin/bash
-#BSUB -J wd_two_stage_convergence-VOXEL      # Job name
+#BSUB -J weight-two-stage-fixed     # Job name
 #BSUB -q gpuv100                          # Queue to submit the job to
 #BSUB -W 1440                             # Wall time limit (6 hours)
 #BSUB -n 4                                 # Request 8 cores
 #BSUB -R "rusage[mem=2GB]"                 # Request 2 GB of memory per core
 #BSUB -R "span[hosts=1]"                   # Request all cores on the same host
 #BSUB -gpu "num=1:mode=exclusive_process"  # Request 1 GPU in exclusive mode
-#BSUB -o src/outputs/wd_two_stage_convergence-VOXEL.out                        # Standard output redirection
-#BSUB -e src/outputs/wd_two_stage_convergence-VOXEL.err                        # Standard error redirection
+#BSUB -o src/outputs/weight-two-stage-fixed.out                        # Standard output redirection
+#BSUB -e src/outputs/weight-two-stage-fixed.err                        # Standard error redirection
 #BSUB -N                                   # send email when job finishes
 #BSUB -B                                   # Send email when job begins
 
@@ -17,23 +17,17 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/src/scripts/two_stage_weight_training.py\
-    --run_name wd_two_stage_convergence-VOXEL \
-    --mode convergence \
-    --wd_config /zhome/66/4/156534/Master_Thesis/src/train_results/weight-probability-3D-data/metadata/config.json \
-    --batch_size 64 \
+    --run_name weight-two-stage-fixed \
+    --mode fixed \
+    --wd_config /zhome/66/4/156534/Master_Thesis/src/train_results/weight-diffusion/metadata/config.json \
+    --total_epochs 450 \
+    --vae_epochs 180 \
+    --batch_size 128 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 0.1 \
+    --lambda_kl_max 0.000001 \
     --kl_warmup_frac 0.4 \
-    --vae_check_every 10 \
-    --vae_patience 20 \
-    --vae_delta 1e-5 \
-    --ddpm_check_every 10 \
-    --ddpm_patience 20 \
-    --ddpm_delta 1e-5 \
-    --ddpm_max_epochs 1000 \
-    --vae_max_epochs 1000 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 0.02 \

@@ -189,12 +189,16 @@ class WeightDiffusion(nn.Module):
         """
         return self.negative_elbo(x)
 
-    def compute_rec_loss(self, val_loader: torch.utils.data.DataLoader) -> float:
+    def compute_rec_loss(
+        self, val_loader: torch.utils.data.DataLoader, num_samples: int = 10
+    ) -> float:
         """
-        Computes average reconstruction loss over the full validation set.
+        Computes average reconstruction loss over the full validation set,
+        averaging over multiple latent samples per image to reduce sampling noise.
 
         Args:
             val_loader: Validation DataLoader yielding (x, _) batches. Shape (B, data_dim).
+            num_samples: number of theta samples drawn per image via reparameterization.
         Returns:
             Mean reconstruction loss (scalar float) across all batches.
         """
@@ -205,12 +209,21 @@ class WeightDiffusion(nn.Module):
         with torch.no_grad():
             for x, _ in val_loader:
                 x = x.to(next(self.parameters()).device)
+                B = x.shape[0]  # noqa: N806
 
+                # Encode once per batch to get distribution params
                 mean, logvar = self.weight_encoder(x)
-                theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
 
-                theta = self.weight_encoder.decode_modulations(theta_prime_raw)
-                total_loss += self._l_rec(x, theta).mean().item()
+                # Sample num_samples theta's per image, accumulate per-image loss
+                batch_loss = torch.zeros(B, device=x.device)
+                for _ in range(num_samples):
+                    theta_prime_raw = self.weight_encoder._reparameterize(mean, logvar)
+                    theta = self.weight_encoder.decode_modulations(theta_prime_raw)
+                    batch_loss += self._l_rec(x, theta, debug=False)
+
+                batch_loss /= num_samples
+
+                total_loss += batch_loss.mean().item()
                 n_batches += 1
 
         return total_loss / n_batches

@@ -859,14 +859,26 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
     class VAEWrapper(nn.Module):
         """Thin wrapper combining ResNetLatentEncoder + TransInr decoder."""
 
-        def __init__(self, encoder, decoder, img_size, device):
+        def __init__(self, encoder, decoder, img_size, device, latent_dim, latent_size):
             super().__init__()
             self.latent_encoder = encoder
             self.decoder = decoder
             self.img_size = img_size
             self.device = device
+            self.latent_dim = latent_dim
+            self.latent_size = latent_size
             self.register_buffer(
                 "coord_grid", make_coord_grid((img_size, img_size), (-1, 1))
+            )
+        
+        def _sample_latent(self, batch_size, **kwargs):
+            """Samples a 4D spatial latent tensor from the standard normal prior."""
+            return torch.randn(
+                batch_size, 
+                self.latent_dim, 
+                self.latent_size, 
+                self.latent_size, 
+                device=self.device
             )
 
         def encode(self, x):
@@ -921,7 +933,7 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
         },
         update_strategy=vae_config["dec_trans_update_strategy"],
     )
-    return VAEWrapper(encoder, decoder, img_size, device).to(device)
+    return VAEWrapper(encoder, decoder, img_size, device, latent_dim, latent_size).to(device)
 
 
 # ── Sampling at custom resolution ─────────────────────────────────────────────

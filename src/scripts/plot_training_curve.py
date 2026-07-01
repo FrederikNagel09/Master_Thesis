@@ -2,7 +2,8 @@
 Replot training curves from a VAE checkpoint with a y-axis cap at 100.
 
 Usage:
-    python src/scripts/plot_training_curve.py --checkpoint src/results/vae_baseline/vae_baseline_checkpoint.pt
+    python src/scripts/plot_training_curve.py --checkpoint src/results/vae_baseline_0.000001/vae_baseline_0.000001_checkpoint.pt
+
     python src/scripts/plot_training_curves.py --checkpoint Master_Thesis/src/results/vae_baseline/vae_baseline_checkpoint.pt --steps_per_epoch 391
 """
 
@@ -29,7 +30,7 @@ def parse_args() -> argparse.Namespace:
         help="Steps per epoch for x-axis tick labels. Inferred from history length / epoch_reached if omitted.",
     )
     p.add_argument("--plot_every_n", type=int, default=100, help="Downsample factor for plotting (default: 100)")
-    p.add_argument("--y_lim", type=float, default=100.0, help="Upper y-axis limit (default: 100)")
+    p.add_argument("--y_lim", type=float, default=20, help="Upper y-axis limit (default: 100)")
     return p.parse_args()
 
 

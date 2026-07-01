@@ -21,7 +21,7 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --epochs 700 \
     --batch_size 64 \
     --subset_frac 1.0 \
-    --n_fid_samples 4096 \
+    --n_fid_samples 128 \
     --model latent_inr_diffusion \
     --dataset shapenet_voxels \
     --lr 1e-4 \
@@ -49,4 +49,5 @@ python /zhome/66/4/156534/Master_Thesis/main.py\
     --dec_trans_enc_depth 6 \
     --dec_trans_dec_depth 6 \
     --dec_trans_n_groups 32 \
-    --dec_trans_update_strategy scale
+    --dec_trans_update_strategy scale \
+    --resume /zhome/66/4/156534/Master_Thesis/src/train_results/latent-diffusion-VOXEL-newLoss/weights/weights.pt

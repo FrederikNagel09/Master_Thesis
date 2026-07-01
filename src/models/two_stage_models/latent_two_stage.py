@@ -105,7 +105,18 @@ class TwoStageLDM(nn.Module):
         return z
 
     @torch.no_grad()
-    def compute_rec_loss(self, val_loader) -> float:
+    def compute_rec_loss(self, val_loader, num_samples: int = 10) -> float:
+        """
+        Compute reconstruction MSE loss over a validation set, averaging over
+        multiple latent samples per image to reduce sampling noise.
+
+        Args:
+            val_loader: DataLoader yielding batches of (x, ...) validation data.
+            num_samples: number of z samples drawn per image via reparameterization.
+        Returns:
+            avg_loss: mean reconstruction MSE loss, scalar, averaged over all
+                    images and all batches.
+        """
         self.eval()
         total_loss = 0.0
         num_batches = 0
@@ -121,22 +132,19 @@ class TwoStageLDM(nn.Module):
                 else:
                     x = x.view(B, -1, self.img_size, self.img_size)
 
-            # 1. Encode
-            encoded = self.latent_encoder(x)
-            
-            if hasattr(encoded, "sample"):
-                z = encoded.sample()
-            elif isinstance(encoded, tuple):
-                z = encoded[0]
-            else:
-                z = encoded
+            # 1. Encode once per image to get distribution params
+            mu, logvar = self.latent_encoder(x)
 
-            # 2. Decode
-            x_reconstructed = self._decode_latent(z)
+            # 2. Sample num_samples z's per image, decode each, accumulate per-image MSE
+            batch_loss = 0.0
+            for _ in range(num_samples):
+                z = self.latent_encoder.reparameterize(mu, logvar)
+                x_reconstructed = self._decode_latent(z)
+                loss = torch.nn.functional.mse_loss(x_reconstructed.view_as(x), x)
+                batch_loss += loss.item()
 
-            # 3. MSE Loss
-            loss = torch.nn.functional.mse_loss(x_reconstructed.view_as(x), x)
-            total_loss += loss.item()
+            batch_loss /= num_samples
+            total_loss += batch_loss
             num_batches += 1
 
         if num_batches == 0:

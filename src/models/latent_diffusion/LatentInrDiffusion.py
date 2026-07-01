@@ -193,12 +193,16 @@ class LatentDiffusion(nn.Module):
     # Metric Computations
     # -------------------------------------------------------------------------
 
-    def compute_rec_loss(self, val_loader: torch.utils.data.DataLoader) -> float:
+    def compute_rec_loss(
+        self, val_loader: torch.utils.data.DataLoader, num_samples: int = 10
+    ) -> float:
         """
-        Computes average reconstruction loss over the full validation set.
+        Computes average reconstruction loss over the full validation set,
+        averaging over multiple latent samples per image to reduce sampling noise.
 
         Args:
             val_loader: Validation DataLoader yielding (x, _) batches. Shape (B, C, H, W).
+            num_samples: number of z samples drawn per image via reparameterization.
         Returns:
             Mean reconstruction loss (scalar float) across all batches.
         """
@@ -215,12 +219,22 @@ class LatentDiffusion(nn.Module):
 
                 x = x.to(next(self.parameters()).device)
 
-                z_raw, _, _ = self.encode(x)
+                # Encode once per batch to get distribution params
+                mu, logvar = self.latent_encoder(x)
 
-                total_loss += self._l_rec(x, z_raw).mean().item()
+                # Sample num_samples z's per image, accumulate per-image loss
+                batch_loss = torch.zeros(B, device=x.device)
+                for _ in range(num_samples):
+                    z = self.latent_encoder.reparameterize(mu, logvar)
+                    batch_loss += self._l_rec(x, z, debug=False)
+
+                batch_loss /= num_samples
+
+                total_loss += batch_loss.mean().item()
                 n_batches += 1
 
         return total_loss / n_batches
+
 
     @torch.no_grad()
     def compute_full_elbo(self, val_loader: torch.utils.data.DataLoader) -> float:
