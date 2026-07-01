@@ -69,7 +69,7 @@ class ImageTokenizer(nn.Module):
         """
         p = self.patch_size
 
-        print(f"patch size: {p}, padding: {self.padding}")
+        #print(f"patch size: {p}, padding: {self.padding}")
         # F.unfold → (B, C*ph*pw, L)
         x = F.unfold(x, p, stride=p, padding=self.padding)
         x = x.permute(0, 2, 1).contiguous()  # (B, N, C*ph*pw)

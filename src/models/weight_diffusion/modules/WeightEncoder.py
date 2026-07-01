@@ -159,12 +159,12 @@ class TransInrEncoder(nn.Module):
     # --- 1. TOKENIZATION & TRANSFORMER CORE ---
     def _run_transformer(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """Processes image through tokenizer and transformer."""
-        print(f"Running transformer with input shape: {x.shape}")
-        print(f"Image size: {self.img_size}, In channels: {self.in_channels}")
+        #print(f"Running transformer with input shape: {x.shape}")
+        #print(f"Image size: {self.img_size}, In channels: {self.in_channels}")
         if x.dim() == 2:
             x = x.view(x.shape[0], self.in_channels, self.img_size, self.img_size)
 
-        print(f"Image shape after reshape: {x.shape}")
+        #print(f"Image shape after reshape: {x.shape}")
 
         dtokens = self.tokenizer(x, **kwargs)
         B = dtokens.shape[0]  # noqa: N806

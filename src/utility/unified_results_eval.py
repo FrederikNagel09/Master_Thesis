@@ -13,7 +13,7 @@ Outputs (written to <output_root>/<run_name>_<model_type>/):
 
 Usage
 -----
-### VAE ###
+############ VAE #######################################
 python src/utility/unified_results_eval.py \
     --model_type vae \
     --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
@@ -22,18 +22,10 @@ python src/utility/unified_results_eval.py \
     --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
     --run_name vae_baseline_suite \
     --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
-
-### Latent one stage ##########################
-python src/utility/unified_results_eval.py \
-    --model_type latent \
-    --config_path_2d src/train_results/latent-diffusion/metadata/config.json \
-    --weights_path_2d src/train_results/latent-diffusion/weights/weights.pt \
-    --config_path_3d src/train_results/latent-probability-3D-data/metadata/config.json \
-    --weights_path_3d src/train_results/latent-probability-3D-data/weights/weights.pt \
-    --run_name latent_one_stage_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+############################################################
 
 
+############ Latent one stage ##########################
 python src/utility/unified_results_eval.py \
     --model_type latent \
     --config_path_2d src/train_results/latent-diffusion/metadata/config.json \
@@ -42,72 +34,77 @@ python src/utility/unified_results_eval.py \
     --weights_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/weights/weights.pt \
     --run_name latent_one_stage_suite \
     --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
-####################################################
+#########################################################
 
 
-
-### Latent Fixed ###
+############ Latent Fixed #######################################
 python src/utility/unified_results_eval.py \
     --model_type latent \
-    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
-    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
-    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
-    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
+    --config_path_2d src/train_results/Latent-two_stage_fixed/Latent-two_stage_fixed_ldm_config.json \
+    --weights_path_2d src/train_results/Latent-two_stage_fixed/Latent-two_stage_fixed_ldm_checkpoint.pt \
+    --config_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_config.json \
+    --weights_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_checkpoint.pt \
     --run_name latent_fixed_suite \
     --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+########################################################################
 
 
-### Latent Converged ###
+############ Latent Converged ####################################
 python src/utility/unified_results_eval.py \
     --model_type latent \
-    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
-    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
-    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
-    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
+    --config_path_2d src/train_results/Latent-two_stage_convergence/Latent-two_stage_convergence_ldm_config.json \
+    --weights_path_2d src/train_results/Latent-two_stage_convergence/Latent-two_stage_convergence_ldm_checkpoint.pt \
+    --config_path_3d src/train_results/VOXEL-Latent-Converge-TEST/VOXEL-Latent-Converge-TEST_ldm_config.json \
+    --weights_path_3d src/train_results/VOXEL-Latent-Converge-TEST/VOXEL-Latent-Converge-TEST_ldm_checkpoint.pt \
     --run_name latent_converged_suite \
     --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+########################################################################
 
-### Weight one stage ###
-python src/utility/unified_results_eval.py \
-    --model_type weight \
-    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
-    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
-    --config_path_3d src/train_results/weight-diffusion-VOXEL/metadata/config.json \
-    --weights_path_3d src/train_results/weight-diffusion-VOXEL/weights/weights.pt \
-    --run_name weight_one_stage_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
 
-### Weight Fixed ###
+############ Weight one stage ###############################
 python src/utility/unified_results_eval.py \
     --model_type weight \
     --config_path_2d src/train_results/weight-diffusion/metadata/config.json \
     --weights_path_2d src/train_results/weight-diffusion/weights/weights.pt \
-    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
-    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
-    --run_name weight_fixed_suite \
+    --config_path_3d src/train_results/weight-probability-3D-data/metadata/config.json \
+    --weights_path_3d src/train_results/weight-probability-3D-data/weights/weights.pt \
+    --run_name weight_one_stage_suite \
     --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+############################################################
 
 
-### Weight Converged ###
+############ Weight Fixed ####################################
 python src/utility/unified_results_eval.py \
     --model_type weight \
-    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
-    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
-    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
-    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
+    --config_path_2d src/train_results/weight-two-stage-fixed/weight-two-stage-fixed_wd_config.json \
+    --weights_path_2d src/train_results/weight-two-stage-fixed/weight-two-stage-fixed_wd_weights.pt \
+    --config_path_3d src/train_results/VOXEL-Weight-Fixed-TEST/VOXEL-Weight-Fixed-TEST_wd_config.json \
+    --weights_path_3d src/train_results/VOXEL-Weight-Fixed-TEST/VOXEL-Weight-Fixed-TEST_wd_weights.pt \
+    --run_name weight_fixed_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+########################################################################
+
+
+############ Weight Converged ########################################
+python src/utility/unified_results_eval.py \
+    --model_type weight \
+    --config_path_2d src/train_results/weight-two-stage-convergence/weight-two-stage-convergence_wd_config.json \
+    --weights_path_2d src/train_results/weight-two-stage-convergence/weight-two-stage-convergence_wd_weights.pt \
+    --config_path_3d src/train_results/VOXEL-Weight-Converge-TEST/VOXEL-Weight-Converge-TEST_wd_config.json\
+    --weights_path_3d src/train_results/VOXEL-Weight-Converge-TEST/VOXEL-Weight-Converge-TEST_wd_weights.pt \
     --run_name weight_converged_suite \
     --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
-
+####################################################################################
 """
 from __future__ import annotations
-
+import math
 import argparse
 import json
 import os
 import random
 import sys
 from types import SimpleNamespace
-
+from tqdm import tqdm
 sys.path.append(".")
 
 import matplotlib.pyplot as plt
@@ -171,9 +168,8 @@ def prepare_model(model_type: str, config_path: str, weights_path: str, is_3d: b
     config = _load_json(config_path)
     dataset_name = config["dataset"]
     stage = "vae" if model_type == "vae" else _detect_stage(config)
-
     _, val_dataset, data_config = build_dataset(
-        dataset_name=dataset_name, data_root="data/", subset_frac=1.0, single_class=False,
+        dataset_name=dataset_name, data_root="data/", subset_frac=0.05, single_class=False,
     )
     channels = data_config["channels"]
     img_size = data_config["img_size"]
@@ -327,7 +323,7 @@ def decode_weight_3d_chunked(model, theta: torch.Tensor, coord_grid: torch.Tenso
     slices = []
     for d_start in range(0, res, depth_chunk):
         d_end = min(d_start + depth_chunk, res)
-        coord_chunk = coord_grid[d_start:d_end].unsqueeze(0).expand(B, -1, -1, -1)
+        coord_chunk = coord_grid[d_start:d_end].unsqueeze(0).expand(B, -1, -1, -1, -1)
         x_chunk = model._inr_decode(theta, coords=coord_chunk).reshape(B, channels, d_end - d_start, res, res)
         slices.append(x_chunk.cpu())
     return torch.cat(slices, dim=2)
@@ -544,9 +540,8 @@ def plot_vector_space_pca(real_vecs: np.ndarray, real_labels: np.ndarray, gen_ve
     axes[0].contourf(xx, yy, density, levels=8, cmap="summer")
     scatter = axes[0].scatter(real_2d[:, 0], real_2d[:, 1], c=real_labels, cmap="tab10", vmin=0, vmax=n_classes - 1, s=8, alpha=0.85, linewidths=0)
     #axes[0].plot(interp_2d[:, 0], interp_2d[:, 1], color="darkorange", linewidth=1.4, zorder=4)
-    axes[0].scatter(interp_2d[[0, -1], 0], interp_2d[[0, -1], 1], color="black", s=28, edgecolors="white", zorder=5)
+    #axes[0].scatter(interp_2d[[0, -1], 0], interp_2d[[0, -1], 1], color="black", s=28, edgecolors="white", zorder=5)
     
-
     axes[1].contourf(xx, yy, density, levels=8, cmap="summer")
     axes[1].scatter(gen_2d[:, 0], gen_2d[:, 1], color="black", s=8, alpha=0.6, linewidths=0)
 
@@ -821,21 +816,30 @@ def process_slot(model_type: str, bundle: dict, is_3d: bool, args: argparse.Name
     print(f"  Sampling {args.n_metric_samples} generated vectors ...")
     gen_vecs, latent_shape = sample_vectors(bundle, model_type, args.n_metric_samples, args.metric_batch_size, device)
     gen_decoded = decode_vectors(bundle, model_type, gen_vecs, latent_shape, bundle["base_coord_grid"], args.metric_batch_size, device)
-    gen_decoded = (gen_decoded * 0.5 + 0.5).clamp(0, 1)
+    if not is_3d:
+        gen_decoded = (gen_decoded * 0.5 + 0.5).clamp(0, 1)
 
     print(f"  Encoding {args.n_metric_samples} real samples for reconstruction ...")
     real_vecs, real_shape = encode_vectors(bundle, model_type, x_real, args.metric_batch_size, device)
     recon_decoded = decode_vectors(bundle, model_type, real_vecs, real_shape, bundle["base_coord_grid"], args.metric_batch_size, device)
-    recon_decoded = (recon_decoded * 0.5 + 0.5).clamp(0, 1)
-    x_real_unnorm = (x_real.float() * 0.5 + 0.5).clamp(0, 1)
+    if not is_3d:
+        recon_decoded = (recon_decoded * 0.5 + 0.5).clamp(0, 1)
+        x_real_unnorm = (x_real.float() * 0.5 + 0.5).clamp(0, 1)
+    else:
+        x_real_unnorm = x_real.float()
 
     print("  Computing metrics ...")
-    metrics = {"recon_mse": compute_recon_mse(recon_decoded, x_real_unnorm)}
+    metrics = {}
     if is_3d:
         mmd, cov = compute_mmd_cov_metric(gen_decoded, x_real_unnorm)
         metrics["mmd"], metrics["cov"] = mmd, cov
     else:
         metrics["fid"] = compute_fid_metric(gen_decoded, bundle["dataset_name"], device)
+
+    metrics["recon_loss"] = compute_reconstruction_loss(
+        bundle, model_type, bundle["val_dataset"], args.n_recon_samples, args.metric_batch_size, device
+    )
+    metrics["elbo"] = compute_elbo(bundle, model_type, bundle["val_dataset"], args.metric_batch_size, device)
 
     grid_imgs = _to_display_list(gen_decoded[:64], bundle["channels"], is_3d)
     plot_sample_grid(grid_imgs, is_3d, bundle["channels"], os.path.join(output_dir, f"sample_grid_{dim_tag}.png"))
@@ -858,6 +862,184 @@ def process_slot(model_type: str, bundle: dict, is_3d: bool, args: argparse.Name
     return {"metrics": metrics, "gen_first4": gen_first4, "real_first4": real_first4, "recon_first4": recon_first4}
 
 
+# ── ELBO and Reconstruction metric functions ──────────────────────────────────
+
+def _get_mu_logvar(bundle: dict, model_type: str, is_3d: bool, x: torch.Tensor, device: str) -> tuple[torch.Tensor, torch.Tensor]:
+    """Dispatches to the correct encode() output slots for mu/logvar across model types.
+    2D VAE returns (mu, logvar, None); all other model/dim combos return (sample, mu, logvar).
+    Args: bundle - model bundle. model_type - 'vae'|'latent'|'weight'. is_3d - whether 3D slot.
+          x - (B,C,*spatial) input batch, already on device. device - torch device string.
+    Returns: (mu, logvar) matching shape, on device.
+    """
+    model = bundle["model"]
+    
+    out = model.encode(x)
+    if model_type == "vae" and not is_3d:
+        return out[0], out[1]
+    return out[1], out[2]
+
+
+def _reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    """Draws one reparameterized sample z = mu + std * eps, eps ~ N(0,I).
+    Args: mu - mean tensor, any shape. logvar - log-variance tensor, same shape as mu.
+    Returns: sampled tensor, same shape as mu.
+    """
+    std = torch.exp(0.5 * logvar)
+    return mu + std * torch.randn_like(std)
+
+
+def compute_recon_term(x: torch.Tensor, x_hat: torch.Tensor, is_3d: bool) -> torch.Tensor:
+    """Per-sample reconstruction loss matching the training convention: BCE for binary 3D
+    occupancy, scaled MSE for continuous 2D data in [-1,1]. No renormalization — x and
+    x_hat are used in their raw decoder/dataset range, matching _l_rec exactly.
+    Args: x - (B,*) target, raw scale. x_hat - (B,*) decoded output, same raw scale.
+          is_3d - whether data is binary voxel occupancy.
+    Returns: (B,) per-sample summed reconstruction loss.
+    """
+    b = x.shape[0]
+    x_flat = x.reshape(b, -1)
+    x_hat_flat = x_hat.reshape(b, -1)
+    if is_3d:
+        eps = 1e-7
+        x_hat_clamped = x_hat_flat.clamp(eps, 1 - eps)
+        return F.binary_cross_entropy(x_hat_clamped, x_flat, reduction="none").sum(dim=-1)
+    x_flat = x_flat.clamp(-1, 1)
+    return 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1)
+
+@torch.no_grad()
+def compute_reconstruction_loss(bundle: dict, model_type: str, val_dataset, n_samples: int, batch_size: int, device: str) -> float:
+    """Average validation reconstruction loss. Per image: encode once for (mu, logvar),
+    draw n_samples reparameterized latents/weights, decode each, apply compute_recon_term,
+    average the n_samples per-image losses, then average over the full validation set.
+    Args: bundle - model bundle (must have 'is_3d' set). model_type - 'vae'|'latent'|'weight'.
+          val_dataset - validation dataset. n_samples - reparam draws per image (use 10).
+          batch_size - encode/decode sub-batch size. device - torch device string.
+    Returns: scalar reconstruction loss (sum-over-elements per sample, mean over dataset).
+    """
+    is_3d = bundle["is_3d"]
+    coord_grid = bundle["base_coord_grid"]
+    channels = bundle["channels"]
+    ndim = 3 if is_3d else 2
+
+    loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+    total_loss, n_total = 0.0, 0
+
+    for x, _ in tqdm(loader, desc="Reconstruction loss"):
+        if x.dim() == 2:
+            side = round((x.shape[1] // channels) ** (1.0 / ndim))
+            x = x.view(x.shape[0], channels, *([side] * ndim))
+        b = x.shape[0]
+        x_dev = x.to(device)
+
+        mu, logvar = _get_mu_logvar(bundle, model_type, is_3d, x_dev, device)
+        mu_flat, logvar_flat = mu.reshape(b, -1), logvar.reshape(b, -1)
+        latent_shape = None if model_type == "weight" else tuple(mu.shape[1:])
+
+        sample_losses = torch.zeros(b, device=device)
+        for _ in range(n_samples):
+            z = _reparameterize(mu_flat, logvar_flat)
+            if model_type == "weight":
+                z = bundle["model"].weight_encoder.decode_modulations(z)  # code -> full flat weight vector
+            x_hat = decode_vectors(bundle, model_type, z.cpu(), latent_shape, coord_grid, b, device).to(device)
+            sample_losses += compute_recon_term(x_dev, x_hat, is_3d)
+
+        sample_losses /= n_samples
+        total_loss += sample_losses.sum().item()
+        n_total += b
+
+    return total_loss / n_total
+
+
+def _entropy_term(logvar: torch.Tensor) -> torch.Tensor:
+    """Total differential entropy of diagonal Gaussian q(z|x)=N(mu,exp(logvar)), summed
+    over latent dims (valid since dims are independent under the diagonal assumption).
+    Args: logvar - (B,*latent_dims) log-variance.
+    Returns: (B,) per-sample entropy in nats.
+    """
+    entropy_per_dim = 0.5 * (1.0 + math.log(2.0 * math.pi) + logvar)
+    return entropy_per_dim.reshape(logvar.shape[0], -1).sum(dim=-1)
+
+
+def _kl_to_standard_normal(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    """Closed-form KL(N(mu,exp(logvar)) || N(0,I)), summed over latent dims.
+    Args: mu - (B,*latent_dims) mean. logvar - (B,*latent_dims) log-variance.
+    Returns: (B,) per-sample KL divergence in nats.
+    """
+    kl_per_dim = 0.5 * (mu.pow(2) + logvar.exp() - 1.0 - logvar)
+    return kl_per_dim.reshape(mu.shape[0], -1).sum(dim=-1)
+
+
+@torch.no_grad()
+def compute_elbo(bundle: dict, model_type: str, val_dataset, batch_size: int, device: str) -> float:
+    """Average validation ELBO (positive, higher-is-better). VAE: -L_rec - KL(q||N(0,I)).
+    Diffusion (latent/weight): -(L_rec + sum_{t=0}^{T-1} L_diff(t) - H[q(z|x)]), with
+    L_diff(t) reweighted to the true VLB term per timestep (one eps draw per t).
+    Args: bundle - model bundle (must have 'is_3d' set). model_type - 'vae'|'latent'|'weight'.
+          val_dataset - validation dataset. batch_size - sub-batch size. device - torch device.
+    Returns: scalar average ELBO in nats.
+    """
+    model = bundle["model"]
+    is_3d = bundle["is_3d"]
+    channels = bundle["channels"]
+    ndim = 3 if is_3d else 2
+
+    loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+    total_elbo, n_total = 0.0, 0
+
+    for x, _ in tqdm(loader, desc="ELBO"):
+        if x.dim() == 2:
+            side = round((x.shape[1] // channels) ** (1.0 / ndim))
+            x = x.view(x.shape[0], channels, *([side] * ndim))
+        b = x.shape[0]
+        x_dev = x.to(device)
+        mu, logvar = _get_mu_logvar(bundle, model_type, is_3d, x_dev, device)
+        x0 = _reparameterize(mu, logvar)  # single sample, reused for L_rec and diffusion x0
+
+        if model_type == "vae":
+            x_hat = model.decoder(x0, bundle["base_coord_grid"]) if not is_3d else decode_latent_3d_chunked(model, x0, bundle["base_coord_grid"], bundle["channels"])
+            l_rec = compute_recon_term(x_dev, x_hat.to(device), is_3d)
+            kl = _kl_to_standard_normal(mu, logvar)
+            elbo = -(l_rec + kl)
+        else:
+            if model_type == "weight":
+                theta = model.weight_encoder.decode_modulations(x0)  # code -> full flat weight vector
+                x_hat = model._inr_decode(theta)
+                l_rec = compute_recon_term(x_dev, x_hat, is_3d)
+
+            else:
+                x_hat = model.decoder(x0, bundle["base_coord_grid"])
+                l_rec = compute_recon_term(x_dev, x_hat.to(device), is_3d)
+
+            T = model.beta.shape[0]
+            l_diff_sum = torch.zeros(b, device=device)
+            for t in tqdm(range(T), desc="  diffusion sum", leave=False):
+                t_idx = torch.full((b,), t, device=device, dtype=torch.long)
+                t_norm = t_idx.float().unsqueeze(-1) / (T - 1)
+                eps = torch.randn_like(x0)
+                sqrt_ab = model.alpha_cumprod[t_idx].sqrt().view(b, *([1] * (x0.dim() - 1)))
+                sqrt_1mab = (1 - model.alpha_cumprod[t_idx]).sqrt().view(b, *([1] * (x0.dim() - 1)))
+                x_t = sqrt_ab * x0 + sqrt_1mab * eps
+                scaling = model.beta[t_idx] / (2 * model.alpha[t_idx] * (1 - model.alpha_cumprod[t_idx]))
+
+                if model_type == "latent":
+                    eps_hat = model.noise_predictor(x_t, t_norm)
+                    mse_sum = (eps_hat - eps).pow(2).reshape(b, -1).sum(dim=-1)
+                    l_diff_sum += scaling * mse_sum
+                else:
+                    v_target = sqrt_ab.view(b, -1) * eps - sqrt_1mab.view(b, -1) * x0
+                    v_hat = model.denoiser(x_t, t_norm)
+                    mse_sum = (v_hat - v_target).pow(2).sum(dim=-1)
+                    l_diff_sum += scaling * model.alpha_cumprod[t_idx] * mse_sum
+
+            h_q = _entropy_term(logvar)
+            elbo = -(l_rec + l_diff_sum - h_q)
+
+        total_elbo += elbo.sum().item()
+        n_total += b
+
+    return total_elbo / n_total
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unified results/eval script across VAE, Latent, and Weight diffusion models, 2D+3D.")
@@ -869,6 +1051,7 @@ def main() -> None:
     parser.add_argument("--n_metric_samples", type=int, default=1024)
     parser.add_argument("--metric_batch_size", type=int, default=128)
     parser.add_argument("--n_pca_samples", type=int, default=512)
+    parser.add_argument("--n_recon_samples", type=int, default=10)
     parser.add_argument("--n_interp_steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--run_name", type=str, required=True)
