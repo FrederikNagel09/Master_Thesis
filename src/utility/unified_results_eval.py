@@ -13,6 +13,7 @@ Outputs (written to <output_root>/<run_name>_<model_type>/):
 
 Usage
 -----
+### VAE ###
 python src/utility/unified_results_eval.py \
     --model_type vae \
     --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
@@ -22,15 +23,81 @@ python src/utility/unified_results_eval.py \
     --run_name vae_baseline_suite \
     --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
 
+### Latent one stage ##########################
+python src/utility/unified_results_eval.py \
+    --model_type latent \
+    --config_path_2d src/train_results/latent-diffusion/metadata/config.json \
+    --weights_path_2d src/train_results/latent-diffusion/weights/weights.pt \
+    --config_path_3d src/train_results/latent-probability-3D-data/metadata/config.json \
+    --weights_path_3d src/train_results/latent-probability-3D-data/weights/weights.pt \
+    --run_name latent_one_stage_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
 
-python src/scripts/unified_results_eval.py \
+
+python src/utility/unified_results_eval.py \
+    --model_type latent \
+    --config_path_2d src/train_results/latent-diffusion/metadata/config.json \
+    --weights_path_2d src/train_results/latent-diffusion/weights/weights.pt \
+    --config_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/metadata/config.json \
+    --weights_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/weights/weights.pt \
+    --run_name latent_one_stage_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+####################################################
+
+
+
+### Latent Fixed ###
+python src/utility/unified_results_eval.py \
+    --model_type latent \
+    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
+    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
+    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
+    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
+    --run_name latent_fixed_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+
+
+### Latent Converged ###
+python src/utility/unified_results_eval.py \
+    --model_type latent \
+    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
+    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
+    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
+    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
+    --run_name latent_converged_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+
+### Weight one stage ###
+python src/utility/unified_results_eval.py \
+    --model_type weight \
+    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
+    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
+    --config_path_3d src/train_results/weight-diffusion-VOXEL/metadata/config.json \
+    --weights_path_3d src/train_results/weight-diffusion-VOXEL/weights/weights.pt \
+    --run_name weight_one_stage_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+
+### Weight Fixed ###
+python src/utility/unified_results_eval.py \
     --model_type weight \
     --config_path_2d src/train_results/weight-diffusion/metadata/config.json \
-    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
-    --config_path_3d src/train_results/weight-probability-3D-data/metadata/config.json \
+    --weights_path_2d src/train_results/weight-diffusion/weights/weights.pt \
+    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
     --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
-    --run_name weight_diffusion_suite \
-    --n_metric_samples 1024 --metric_batch_size 128 --n_pca_samples 512
+    --run_name weight_fixed_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+
+
+### Weight Converged ###
+python src/utility/unified_results_eval.py \
+    --model_type weight \
+    --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
+    --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
+    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
+    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
+    --run_name weight_converged_suite \
+    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+
 """
 from __future__ import annotations
 
@@ -476,7 +543,7 @@ def plot_vector_space_pca(real_vecs: np.ndarray, real_labels: np.ndarray, gen_ve
 
     axes[0].contourf(xx, yy, density, levels=8, cmap="summer")
     scatter = axes[0].scatter(real_2d[:, 0], real_2d[:, 1], c=real_labels, cmap="tab10", vmin=0, vmax=n_classes - 1, s=8, alpha=0.85, linewidths=0)
-    axes[0].plot(interp_2d[:, 0], interp_2d[:, 1], color="darkorange", linewidth=1.4, zorder=4)
+    #axes[0].plot(interp_2d[:, 0], interp_2d[:, 1], color="darkorange", linewidth=1.4, zorder=4)
     axes[0].scatter(interp_2d[[0, -1], 0], interp_2d[[0, -1], 1], color="black", s=28, edgecolors="white", zorder=5)
     
 

@@ -885,7 +885,7 @@ def build_vae_model(vae_config: dict, channels: int, img_size: int, device: str)
             """Returns (mu, logvar) — mirrors LDM encode() signature for reconstruct_at_scale."""
             mu, logvar = self.latent_encoder(x)  # noqa: RUF059
             # Return mu as the deterministic latent (no sampling during eval)
-            return mu, None, None
+            return mu, logvar, None
 
     latent_dim = vae_config["latent_dim"]
     latent_size = vae_config["latent_size"]

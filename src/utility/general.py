@@ -364,6 +364,10 @@ class SmoothedPlateauDetector:
 
         window = self._window[-self.patience :]
         mid = len(window) // 2
+        # Guard against ZeroDivisionError if patience is too small to split
+        if mid == 0:
+            return False
+            
         first_half_avg = sum(window[:mid]) / mid
         second_half_avg = sum(window[mid:]) / (len(window) - mid)
         improvement = first_half_avg - second_half_avg

@@ -1,19 +1,19 @@
 """
 
 python src/scripts/eval_two_stage_latent.py \
-    --run_name latent_two_stage_fixed \
-    --run_dir src/train_results/latent_two_stage_fixed \
-    --ldm_config src/train_results/latent_two_stage_fixed/latent_two_stage_fixed_ldm_config.json \
-    --n_fid_samples 128 \
-    --fid_batch_size 128
+    --run_name Latent-two_stage_fixed \
+    --run_dir src/train_results/Latent-two_stage_fixed \
+    --ldm_config src/train_results/Latent-two_stage_fixed/Latent-two_stage_fixed_ldm_config.json \
+    --n_fid_samples 4096 \
+    --fid_batch_size 1024
 
 
 python src/scripts/eval_two_stage_latent.py \
-    --run_name two_stage_convergence \
-    --run_dir src/train_results/two_stage_convergence \
-    --ldm_config src/train_results/two_stage_convergence/two_stage_convergence_ldm_config.json \
-    --n_fid_samples 128 \
-    --fid_batch_size 128
+    --run_name Latent-two_stage_convergence \
+    --run_dir src/train_results/Latent-two_stage_convergence \
+    --ldm_config src/train_results/Latent-two_stage_convergence/Latent-two_stage_convergence_ldm_config.json \
+    --n_fid_samples 4096 \
+    --fid_batch_size 1024
 
 
 """

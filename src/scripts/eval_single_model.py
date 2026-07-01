@@ -56,8 +56,8 @@ python src/scripts/eval_single_model.py \
 Latent two-stage usage (3D ShapeNet):
 --------------------------------------
 python src/scripts/eval_single_model.py \
-    --config_path src/train_results/latent-probability-3D-data/metadata/config.json \
-    --weights_path src/train_results/latent-probability-3D-data/weights/weights.pt \
+    --config_path src/train_results/latent-diffusion-VOXEL-newLoss/metadata/config.json \
+    --weights_path src/train_results/latent-diffusion-VOXEL-newLoss/weights/weights.pt \
     --n_fid_samples 12
 
 Weight diffusion two-stage usage (2D):
