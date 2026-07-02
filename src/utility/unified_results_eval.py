@@ -21,7 +21,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
     --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
     --run_name vae_baseline_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
 ############################################################
 
 
@@ -33,7 +33,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/metadata/config.json \
     --weights_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/weights/weights.pt \
     --run_name latent_one_stage_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+    --n_metric_samples 5120 --metric_batch_size 128 --n_pca_samples 2024
 #########################################################
 
 
@@ -45,7 +45,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_config.json \
     --weights_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_checkpoint.pt \
     --run_name latent_fixed_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
 ########################################################################
 
 
@@ -57,7 +57,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/VOXEL-Latent-Converge-TEST/VOXEL-Latent-Converge-TEST_ldm_config.json \
     --weights_path_3d src/train_results/VOXEL-Latent-Converge-TEST/VOXEL-Latent-Converge-TEST_ldm_checkpoint.pt \
     --run_name latent_converged_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
 ########################################################################
 
 
@@ -69,7 +69,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/weight-probability-3D-data/metadata/config.json \
     --weights_path_3d src/train_results/weight-probability-3D-data/weights/weights.pt \
     --run_name weight_one_stage_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
 ############################################################
 
 
@@ -81,7 +81,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/VOXEL-Weight-Fixed-TEST/VOXEL-Weight-Fixed-TEST_wd_config.json \
     --weights_path_3d src/train_results/VOXEL-Weight-Fixed-TEST/VOXEL-Weight-Fixed-TEST_wd_weights.pt \
     --run_name weight_fixed_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
 ########################################################################
 
 
@@ -93,7 +93,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/VOXEL-Weight-Converge-TEST/VOXEL-Weight-Converge-TEST_wd_config.json\
     --weights_path_3d src/train_results/VOXEL-Weight-Converge-TEST/VOXEL-Weight-Converge-TEST_wd_weights.pt \
     --run_name weight_converged_suite \
-    --n_metric_samples 64 --metric_batch_size 16 --n_pca_samples 64
+    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
 ####################################################################################
 """
 from __future__ import annotations

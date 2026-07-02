@@ -18,7 +18,7 @@ source /zhome/66/4/156534/Master_Thesis/.venv/bin/activate
 # --- Phase 1+2+3: Training ---
 python /zhome/66/4/156534/Master_Thesis/src/scripts/VAE_Baseline_Training_3D.py \
     --run_name vae_3d_baseline_1.0_newLoss \
-    --ldm_config src/train_results/latent-probability-3D-data/metadata/config.json \
+    --ldm_config /zhome/66/4/156534/Master_Thesis/src/train_results/latent-diffusion-VOXEL-newLoss/metadata/config.json \
     --epochs 1400 \
     --batch_size 64 \
     --lr 1e-4 \
