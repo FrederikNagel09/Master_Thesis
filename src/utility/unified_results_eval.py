@@ -18,10 +18,10 @@ python src/utility/unified_results_eval.py \
     --model_type vae \
     --config_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_config.json \
     --weights_path_2d src/results/vae_baseline_1.0/vae_baseline_1.0_checkpoint.pt \
-    --config_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_config.json \
-    --weights_path_3d src/results/vae_3d_baseline_1.0/vae_3d_baseline_1.0_checkpoint.pt \
+    --config_path_3d src/results/vae_3d_baseline_1.0_newLoss/vae_3d_baseline_1.0_newLoss_config.json \
+    --weights_path_3d src/results/vae_3d_baseline_1.0_newLoss/vae_3d_baseline_1.0_newLoss_checkpoint.pt \
     --run_name vae_baseline_suite \
-    --n_metric_samples 64 --metric_batch_size 64 --n_pca_samples 64
+    --n_metric_samples 5000 --metric_batch_size 512 --n_pca_samples 5000
 ############################################################
 
 
@@ -45,7 +45,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_config.json \
     --weights_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_checkpoint.pt \
     --run_name latent_fixed_suite \
-    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
+    --n_metric_samples 64 --metric_batch_size 64 --n_pca_samples 64
 ########################################################################
 
 
@@ -66,8 +66,8 @@ python src/utility/unified_results_eval.py \
     --model_type weight \
     --config_path_2d src/train_results/weight-diffusion/metadata/config.json \
     --weights_path_2d src/train_results/weight-diffusion/weights/weights.pt \
-    --config_path_3d src/train_results/weight-probability-3D-data/metadata/config.json \
-    --weights_path_3d src/train_results/weight-probability-3D-data/weights/weights.pt \
+    --config_path_3d src/train_results/VOXEL-Weight-Diffusion-TEST/metadata/config.json \
+    --weights_path_3d src/train_results/VOXEL-Weight-Diffusion-TEST/weights/weights.pt \
     --run_name weight_one_stage_suite \
     --n_metric_samples 64 --metric_batch_size 64 --n_pca_samples 64
 ############################################################
@@ -179,7 +179,7 @@ def prepare_model(
     _, val_dataset, data_config = build_dataset(
         dataset_name=dataset_name,
         data_root="data/",
-        subset_frac=0.1,
+        subset_frac=1.0,
         single_class=False,
     )
     channels = data_config["channels"]
@@ -1133,9 +1133,9 @@ def process_slot(
             args.metric_batch_size,
             device,
         )
-    metrics["elbo"] = compute_elbo(
-        bundle, model_type, bundle["val_dataset"], args.metric_batch_size, device
-    )
+    #metrics["elbo"] = compute_elbo(
+        #bundle, model_type, bundle["val_dataset"], args.metric_batch_size, device
+    #)
 
     grid_imgs = _to_display_list(gen_decoded[:64], bundle["channels"], is_3d)
     plot_sample_grid(
