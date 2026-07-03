@@ -97,37 +97,40 @@ python src/scripts/two-stage-weight-training.py \
     --fid_batch_size 64
 
 3D ShapeNet voxels mode (convergence):
-python src/scripts/two_stage_weight_training.py \
-    --run_name wd_two_stage_shapenet-TEST \
+CUDA_VISIBLE_DEVICES=1 python src/scripts/two_stage_weight_training.py \
+    --run_name VOXEL-Weight-Converge-TEST \
     --mode convergence \
-    --wd_config src/train_results/weight-diffusion-shapenet/metadata/config.json \
-    --batch_size 16 \
+    --stage vae \
+    --wd_config /zhome/66/4/156534/Master_Thesis/src/train_results/VOXEL-Weight-Diffusion-TEST-test/metadata/config.json \
+    --batch_size 64 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
-    --lambda_kl_max 0.1 \
+    --lambda_kl_max 0.000001 \
     --kl_warmup_frac 0.4 \
-    --vae_check_every 5 \
-    --vae_patience 10 \
+    --vae_check_every 10 \
+    --vae_patience 20 \
     --vae_delta 1e-4 \
-    --ddpm_check_every 5 \
+    --ddpm_check_every 10 \
     --ddpm_patience 20 \
     --ddpm_delta 1e-4 \
-    --ddpm_max_epochs 2000 \
+    --ddpm_max_epochs 2 \
+    --vae_max_epochs 2 \
     --T 1000 \
     --beta_1 1e-4 \
     --beta_T 0.02 \
-    --n_fid_samples 128 \
+    --n_fid_samples 16 \
     --fid_batch_size 16
 
 Fixed-budget mode:
-python src/scripts/two_stage_weight_training.py \
-    --run_name wd_two_stage_fixed-shapenet-TEST \
+CUDA_VISIBLE_DEVICES=1 python src/scripts/two_stage_weight_training.py \
+    --run_name VOXEL-Weight-Fixed-TEST \
     --mode fixed \
-    --wd_config src/train_results/weight-probability-3D-data/metadata/config.json \
-    --total_epochs 5 \
-    --vae_epochs 3 \
-    --batch_size 16 \
+    --stage ddpm \
+    --wd_config /zhome/66/4/156534/Master_Thesis/src/train_results/VOXEL-Weight-Diffusion-TEST-test/metadata/config.json \
+    --total_epochs 1400 \
+    --vae_epochs 560 \
+    --batch_size 64 \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
@@ -186,6 +189,17 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Path to _encoder_weights.pt (required when --skip_vae is set)",
+    )
+    p.add_argument(
+        "--stage",
+        type=str,
+        default="both",
+        choices=["vae", "ddpm", "both"],
+        help=(
+            "'vae': train encoder only and exit; "
+            "'ddpm': load saved encoder and train diffusion only; "
+            "'both': full two-stage run (default)"
+        ),
     )
 
     # Shared training
@@ -1698,24 +1712,36 @@ def compute_final_eval(
 # MAIN ORCHESTRATION
 # ──────────────────────────────────────────────────────────────────────────────
 
-
 def run_training(args: argparse.Namespace) -> None:
     """
     Orchestrate two-stage training: WeightEncoder → Diffusion, then final eval.
-    When --skip_vae is set, loads pre-trained encoder and runs only Stage 2.
+
+    Controlled by --stage:
+      'vae'  : train encoder only, save weights, exit
+      'ddpm' : auto-load saved encoder, train diffusion + eval
+      'both' : full sequential run (default)
 
     Args:
         args (argparse.Namespace): parsed CLI arguments
     Returns:
         None
     """
+    # Resolve stage into skip_vae / encoder_weights so downstream logic is unchanged
+    if args.stage == "ddpm":
+        args.skip_vae = True
+        if not args.encoder_weights:
+            args.encoder_weights = os.path.join(
+                args.results_dir, args.run_name, f"{args.run_name}_encoder_weights.pt"
+            )
+            print(f"  --stage ddpm: auto-located encoder weights at {args.encoder_weights}")
+    elif args.stage == "vae":
+        args.skip_vae = False
+
     if args.skip_vae and not args.encoder_weights:
         raise ValueError("--encoder_weights must be provided when --skip_vae is set.")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps")
-    print(
-        f"--- Two-Stage WeightDiffusion Training: {args.run_name} | mode={args.mode} ---"
-    )
+    print(f"--- Two-Stage WeightDiffusion Training: {args.run_name} | mode={args.mode} ---")
 
     hparams = load_wd_config(args.wd_config)
     print(f"Dataset: {hparams['dataset']}")
@@ -1726,9 +1752,7 @@ def run_training(args: argparse.Namespace) -> None:
         subset_frac=args.subset_frac,
         single_class=False,
     )
-    dataloader = DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=True, drop_last=True
-    )
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
     channels = data_config["channels"]
@@ -1742,14 +1766,13 @@ def run_training(args: argparse.Namespace) -> None:
         if not os.path.exists(results_dir):
             raise FileNotFoundError(
                 f"Results directory '{results_dir}' not found. "
-                "Run full training first before using --skip_vae."
+                "Run with --stage vae first before using --stage ddpm."
             )
-        print(f"  --skip_vae: clearing stale diffusion outputs from {results_dir}")
+        print(f"  --stage ddpm: clearing stale diffusion outputs from {results_dir}")
         _clear_diffusion_files(results_dir, args.run_name)
     else:
         if os.path.exists(results_dir):
             import shutil
-
             shutil.rmtree(results_dir)
         os.makedirs(results_dir, exist_ok=True)
 
@@ -1759,29 +1782,13 @@ def run_training(args: argparse.Namespace) -> None:
         print("  STAGE 1 — ENCODER TRAINING SKIPPED (loading pre-trained weights)")
         print("=" * 60)
         stage1_model = load_pretrained_encoder(
-            args.encoder_weights,
-            hparams,
-            args,
-            channels,
-            img_size,
-            data_dim,
-            device,
-            is_3d=is_3d,
+            args.encoder_weights, hparams, args, channels, img_size, data_dim, device, is_3d=is_3d,
         )
         encoder_epochs_done = 0
     else:
         stage1_model = train_weight_encoder(
-            args,
-            hparams,
-            dataloader,
-            val_loader,
-            channels,
-            img_size,
-            data_dim,
-            data_config,
-            results_dir,
-            device,
-            is_3d=is_3d,
+            args, hparams, dataloader, val_loader, channels, img_size,
+            data_dim, data_config, results_dir, device, is_3d=is_3d,
         )
         enc_ckpt = torch.load(
             os.path.join(results_dir, f"{args.run_name}_encoder_checkpoint.pt"),
@@ -1789,23 +1796,17 @@ def run_training(args: argparse.Namespace) -> None:
         )
         encoder_epochs_done = enc_ckpt["epoch"]
 
+    # Exit here if only VAE stage was requested
+    if args.stage == "vae":
+        print("\n  --stage vae complete. Run with --stage ddpm to train diffusion.")
+        return
+
     # ── Stage 2: Diffusion ────────────────────────────────────────────────────
     final_model = train_diffusion(
-        args,
-        hparams,
-        stage1_model,
-        dataloader,
-        val_loader,
-        channels,
-        img_size,
-        data_dim,
-        data_config,
-        results_dir,
-        device,
-        encoder_epochs_done=encoder_epochs_done,
-        is_3d=is_3d,
+        args, hparams, stage1_model, dataloader, val_loader, channels,
+        img_size, data_dim, data_config, results_dir, device,
+        encoder_epochs_done=encoder_epochs_done, is_3d=is_3d,
     )
-
     diff_ckpt = torch.load(
         os.path.join(results_dir, f"{args.run_name}_diffusion_checkpoint.pt"),
         map_location=device,
@@ -1814,17 +1815,9 @@ def run_training(args: argparse.Namespace) -> None:
 
     # ── Final eval ────────────────────────────────────────────────────────────
     compute_final_eval(
-        final_model,
-        hparams,
-        val_loader,
-        data_config,
-        args,
-        results_dir,
-        device,
-        encoder_epochs=encoder_epochs_done,
-        diffusion_epochs=diffusion_epochs_done,
-        is_3d=is_3d,
-        skip_encoder_eval=args.skip_vae,
+        final_model, hparams, val_loader, data_config, args, results_dir, device,
+        encoder_epochs=encoder_epochs_done, diffusion_epochs=diffusion_epochs_done,
+        is_3d=is_3d, skip_encoder_eval=args.skip_vae,
     )
 
 

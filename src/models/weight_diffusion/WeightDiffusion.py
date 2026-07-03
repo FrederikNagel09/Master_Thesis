@@ -330,9 +330,11 @@ class WeightDiffusion(nn.Module):
             scale = self.T - 2  # Continuous interval weight for t > 0 steps
             total = scale * l_diff + l_weight_rec + l_rec - l_prior
         else:
-            scale = self.T - 1  # Continuous interval weight for t > 0 steps
+            ramp = self.i / 10000.0 if self.i < 10000 else 1.0
+            scale = (self.T - 1) * ramp  # Continuous interval weight for t > 0 steps
             total = scale * l_diff + l_rec - l_prior
 
+        self.i += 1
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()
 
     @torch.no_grad()

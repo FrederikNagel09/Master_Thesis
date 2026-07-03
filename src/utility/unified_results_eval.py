@@ -33,7 +33,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/metadata/config.json \
     --weights_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/weights/weights.pt \
     --run_name latent_one_stage_suite \
-    --n_metric_samples 5120 --metric_batch_size 128 --n_pca_samples 2024
+    --n_metric_samples 64 --metric_batch_size 64 --n_pca_samples 64
 #########################################################
 
 
@@ -1416,17 +1416,17 @@ def compute_elbo(
                 if model_type == "latent":
                     eps_hat = model.noise_predictor(x_t, t_norm)
                     mse_sum = (eps_hat - eps).pow(2).reshape(b, -1).sum(dim=-1)
-                    l_diff_sum += scaling * mse_sum
+                    l_diff_sum +=  mse_sum
                 else:
                     v_target = sqrt_ab.view(b, -1) * eps - sqrt_1mab.view(b, -1) * x0
                     v_hat = model.denoiser(x_t, t_norm)
                     mse_sum = (v_hat - v_target).pow(2).sum(dim=-1)
-                    l_diff_sum += scaling * model.alpha_cumprod[t_idx] * mse_sum
+                    l_diff_sum += mse_sum
 
             h_q = _entropy_term(logvar)
             if n_elements is None:
                 n_elements = x_dev[0].numel()
-            elbo = l_rec + l_diff_sum - h_q
+            elbo = l_diff_sum 
             elbo = elbo  # / n_elements  # nats per element
 
         total_elbo += elbo.sum().item()

@@ -40,14 +40,14 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
 
 CUDA_VISIBLE_DEVICES=1 python main.py \
     --run_name TESTING \
-    --epochs 5 \
-    --batch_size 8 \
-    --subset_frac 0.01 \
+    --epochs 15 \
+    --batch_size 128 \
+    --subset_frac 1.0 \
     --n_fid_samples 8 \
-    --stop_gradient_flow True \
-    --normalize True \
+    --stop_gradient_flow False \
+    --normalize False \
     --model weight_inr_diffusion\
-    --dataset shapenet_voxels \
+    --dataset mnist \
     --lr 1e-4 \
     --weight_decay 1e-5 \
     --grad_clip 1.0 \
@@ -57,13 +57,13 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --beta_T 2e-2 \
     --sigma_tilde 1.0 \
     --inr_hidden_dim 128 \
-    --inr_layers 6 \
+    --inr_layers 3 \
     --encoder_trans_dim 128 \
     --encoder_trans_n_head 8 \
     --encoder_trans_head_dim 32 \
     --encoder_trans_ff_dim 1024 \
-    --encoder_trans_enc_depth 6 \
-    --encoder_trans_dec_depth 6 \
+    --encoder_trans_enc_depth 4 \
+    --encoder_trans_dec_depth 4 \
     --encoder_trans_patch_size 8 \
     --encoder_trans_n_groups 32 \
     --encoder_trans_update_strategy scale \
@@ -72,7 +72,7 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --noise_predictor_n_head 8 \
     --noise_predictor_head_dim 32 \
     --noise_predictor_ff_dim 1024 \
-    --noise_predictor_depth 6 \
+    --noise_predictor_depth 4 \
     --noise_predictor_dropout 0.1 \
-    --noise_predictor_chunk_size 64 \
+    --noise_predictor_chunk_size 16 \
     --noise_predictor_t_embed_dim 128
