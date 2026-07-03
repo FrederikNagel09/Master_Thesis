@@ -179,7 +179,7 @@ def prepare_model(
     _, val_dataset, data_config = build_dataset(
         dataset_name=dataset_name,
         data_root="data/",
-        subset_frac=1.0,
+        subset_frac=0.1,
         single_class=False,
     )
     channels = data_config["channels"]
@@ -1115,17 +1115,24 @@ def process_slot(
     if is_3d:
         mmd, cov = compute_mmd_cov_metric(gen_decoded, x_real_unnorm)
         metrics["mmd"], metrics["cov"] = mmd, cov
+        metrics["voxel_acc"] = compute_reconstruction_loss(
+            bundle,
+            model_type,
+            bundle["val_dataset"],
+            args.n_recon_samples,
+            args.metric_batch_size,
+            device,
+        )
     else:
         metrics["fid"] = compute_fid_metric(gen_decoded, bundle["dataset_name"], device)
-
-    metrics["recon_loss"] = compute_reconstruction_loss(
-        bundle,
-        model_type,
-        bundle["val_dataset"],
-        args.n_recon_samples,
-        args.metric_batch_size,
-        device,
-    )
+        metrics["psnr"] = compute_reconstruction_loss(
+            bundle,
+            model_type,
+            bundle["val_dataset"],
+            args.n_recon_samples,
+            args.metric_batch_size,
+            device,
+        )
     metrics["elbo"] = compute_elbo(
         bundle, model_type, bundle["val_dataset"], args.metric_batch_size, device
     )
@@ -1224,6 +1231,33 @@ def compute_recon_term(
     return 0.5 * ((x_flat - x_hat_flat) ** 2).sum(dim=-1)
 
 
+def compute_eval_recon_term(
+    x: torch.Tensor, x_hat: torch.Tensor, is_3d: bool
+) -> torch.Tensor:
+    """Per-sample evaluation reconstruction metric.
+    PSNR (dB) for continuous 2D data in [-1,1], voxel accuracy (%) for binary 3D occupancy.
+    Args: x     - (B, *) target, raw scale.
+          x_hat - (B, *) decoded output, same raw scale.
+          is_3d - whether data is binary voxel occupancy.
+    Returns: (B,) per-sample metric. Higher is better for both.
+    """
+    b = x.shape[0]
+    x_flat = x.reshape(b, -1)
+    x_hat_flat = x_hat.reshape(b, -1)
+    n_elements = x_flat.shape[1]
+
+    if is_3d:
+        # voxel accuracy: fraction of correctly predicted binary voxels
+        predicted = (x_hat_flat >= 0.5).float()
+        return (predicted == x_flat).float().sum(dim=-1) / n_elements * 100
+
+    # PSNR: data range is 2.0 for [-1,1], clamp target to valid range
+    x_flat = x_flat.clamp(-1, 1)
+    mse = ((x_flat - x_hat_flat) ** 2).mean(dim=-1)
+    # clamp mse to avoid log(0) for perfect reconstructions
+    return 10 * torch.log10(4.0 / mse.clamp(min=1e-10))
+
+
 @torch.no_grad()
 def compute_reconstruction_loss(
     bundle: dict,
@@ -1272,7 +1306,7 @@ def compute_reconstruction_loss(
             x_hat = decode_vectors(
                 bundle, model_type, z.cpu(), latent_shape, coord_grid, b, device
             ).to(device)
-            sample_losses += compute_recon_term(x_dev, x_hat, is_3d)
+            sample_losses += compute_eval_recon_term(x_dev, x_hat, is_3d)
 
         sample_losses /= n_samples
         total_loss += sample_losses.sum().item()
@@ -1320,13 +1354,15 @@ def compute_elbo(
         val_dataset, batch_size=batch_size, shuffle=False, drop_last=False
     )
     total_elbo, n_total = 0.0, 0
-
+    n_elements = None
     for x, _ in tqdm(loader, desc="ELBO"):
         if x.dim() == 2:
             side = round((x.shape[1] // channels) ** (1.0 / ndim))
             x = x.view(x.shape[0], channels, *([side] * ndim))
         b = x.shape[0]
         x_dev = x.to(device)
+        if n_elements is None:
+            n_elements = x_dev[0].numel()
         mu, logvar = _get_mu_logvar(bundle, model_type, is_3d, x_dev, device)
         x0 = _reparameterize(
             mu, logvar
@@ -1342,7 +1378,10 @@ def compute_elbo(
             )
             l_rec = compute_recon_term(x_dev, x_hat.to(device), is_3d)
             kl = _kl_to_standard_normal(mu, logvar)
-            elbo = -(l_rec + kl)
+            elbo = l_rec + kl
+            if n_elements is None:
+                n_elements = x_dev[0].numel()
+            elbo = elbo  # / n_elements  # nats per element
         else:
             if model_type == "weight":
                 theta = model.weight_encoder.decode_modulations(
@@ -1385,12 +1424,16 @@ def compute_elbo(
                     l_diff_sum += scaling * model.alpha_cumprod[t_idx] * mse_sum
 
             h_q = _entropy_term(logvar)
-            elbo = -(l_rec + l_diff_sum - h_q)
+            if n_elements is None:
+                n_elements = x_dev[0].numel()
+            elbo = l_rec + l_diff_sum - h_q
+            elbo = elbo  # / n_elements  # nats per element
 
         total_elbo += elbo.sum().item()
         n_total += b
 
-    return total_elbo / n_total
+    final_elbo = total_elbo / n_total
+    return final_elbo
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
