@@ -35,11 +35,11 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
 
 
 CUDA_VISIBLE_DEVICES=1 python main.py \
-    --run_name TESTING-latent-diffusion-VOXEL \
+    --run_name TESTING \
     --epochs 5 \
-    --batch_size 64 \
-    --subset_frac 0.2 \
-    --n_fid_samples 128 \
+    --batch_size 8 \
+    --subset_frac 0.02 \
+    --n_fid_samples 8 \
     --model latent_inr_diffusion \
     --dataset shapenet_voxels \
     --lr 1e-4 \
@@ -50,11 +50,47 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --beta_1 1e-4 \
     --beta_T 2e-2 \
     --inr_hidden_dim 128 \
-    --inr_layers 3 \
+    --inr_layers 6 \
     --latent_dim 64 \
     --latent_size 8 \
     --latent_patch_size 2 \
-    --latent_enc_hidden_dim 32\
+    --latent_enc_hidden_dim 64\
+    --pred_d_model 128 \
+    --pred_n_heads 8 \
+    --pred_n_layers 8 \
+    --pred_d_ff 1024 \
+    --pred_t_embed_dim 128 \
+    --dec_trans_dim 128 \
+    --dec_trans_n_head 8 \
+    --dec_trans_head_dim 32 \
+    --dec_trans_ff_dim 1024 \
+    --dec_trans_enc_depth 6 \
+    --dec_trans_dec_depth 6 \
+    --dec_trans_n_groups 32 \
+    --dec_trans_update_strategy scale
+
+
+CUDA_VISIBLE_DEVICES=1 python main.py \
+    --run_name TESTING \
+    --epochs 5 \
+    --batch_size 8 \
+    --subset_frac 0.02 \
+    --n_fid_samples 8 \
+    --model latent_inr_diffusion \
+    --dataset mnist \
+    --lr 1e-4 \
+    --weight_decay 1e-5 \
+    --grad_clip 1.0 \
+    --log_every_n_steps 1 \
+    --T 1000 \
+    --beta_1 1e-4 \
+    --beta_T 2e-2 \
+    --inr_hidden_dim 128 \
+    --inr_layers 3 \
+    --latent_dim 16 \
+    --latent_size 16 \
+    --latent_patch_size 2 \
+    --latent_enc_hidden_dim 20\
     --pred_d_model 128 \
     --pred_n_heads 8 \
     --pred_n_layers 6 \
