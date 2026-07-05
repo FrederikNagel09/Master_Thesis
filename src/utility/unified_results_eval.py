@@ -64,12 +64,12 @@ python src/utility/unified_results_eval.py \
 ############ Weight one stage ###############################
 python src/utility/unified_results_eval.py \
     --model_type weight \
-    --config_path_2d src/train_results/weight-diffusion/metadata/config.json \
-    --weights_path_2d src/train_results/weight-diffusion/weights/weights.pt \
+    --config_path_2d src/train_results/Weight-Diffusion-newMethoda40/metadata/config.json \
+    --weights_path_2d src/train_results/Weight-Diffusion-newMethoda40/weights/weights.pt \
     --config_path_3d src/train_results/VOXEL-Weight-Diffusion-TEST/metadata/config.json \
     --weights_path_3d src/train_results/VOXEL-Weight-Diffusion-TEST/weights/weights.pt \
-    --run_name weight_one_stage_suite \
-    --n_metric_samples 64 --metric_batch_size 64 --n_pca_samples 64
+    --run_name weight_one_stage_bad_version \
+    --n_metric_samples 2024 --metric_batch_size 1024 --n_pca_samples 2024
 ############################################################
 
 

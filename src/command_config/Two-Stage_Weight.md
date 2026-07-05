@@ -47,6 +47,7 @@ python src/scripts/two-stage-weight-training.py \
 CUDA_VISIBLE_DEVICES=1 python src/scripts/two_stage_weight_training.py \
     --run_name VOXEL-Weight-Converge-TEST \
     --mode convergence \
+    --stage ddpm \
     --wd_config src/train_results/VOXEL-Weight-Diffusion-TEST/metadata/config.json \
     --batch_size 64 \
     --lr 1e-4 \
@@ -55,11 +56,11 @@ CUDA_VISIBLE_DEVICES=1 python src/scripts/two_stage_weight_training.py \
     --lambda_kl_max 0.000001 \
     --kl_warmup_frac 0.4 \
     --vae_check_every 10 \
-    --vae_patience 20 \
-    --vae_delta 1e-4 \
+    --vae_patience 15 \
+    --vae_delta 8e-3 \
     --ddpm_check_every 10 \
-    --ddpm_patience 20 \
-    --ddpm_delta 1e-4 \
+    --ddpm_patience 15 \
+    --ddpm_delta 8e-3 \
     --ddpm_max_epochs 2000 \
     --vae_max_epochs 2000 \
     --T 1000 \
@@ -72,6 +73,7 @@ CUDA_VISIBLE_DEVICES=1 python src/scripts/two_stage_weight_training.py \
 CUDA_VISIBLE_DEVICES=1 python src/scripts/two_stage_weight_training.py \
     --run_name VOXEL-Weight-Fixed-TEST \
     --mode fixed \
+    --stage vae \
     --wd_config src/train_results/VOXEL-Weight-Diffusion-TEST/metadata/config.json \
     --total_epochs 1400 \
     --vae_epochs 560 \

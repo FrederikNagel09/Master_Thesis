@@ -332,7 +332,7 @@ class WeightDiffusion(nn.Module):
         else:
             ramp = self.i / 10000.0 if self.i < 10000 else 1.0
             scale = (self.T - 1) * ramp  # Continuous interval weight for t > 0 steps
-            total = scale * l_diff + l_rec - l_prior
+            total = scale * l_diff + l_rec - ramp*200 * l_prior
 
         self.i += 1
         return total.mean(), l_diff.mean(), l_prior.mean(), l_rec.mean()

@@ -1784,7 +1784,7 @@ def run_training(args: argparse.Namespace) -> None:
         stage1_model = load_pretrained_encoder(
             args.encoder_weights, hparams, args, channels, img_size, data_dim, device, is_3d=is_3d,
         )
-        encoder_epochs_done = 0
+        encoder_epochs_done = args.vae_epochs  # assume pre-trained encoder was trained for full vae_epochs
     else:
         stage1_model = train_weight_encoder(
             args, hparams, dataloader, val_loader, channels, img_size,

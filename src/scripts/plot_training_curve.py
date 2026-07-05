@@ -2,7 +2,9 @@
 Replot training curves from a VAE checkpoint with a y-axis cap at 100.
 
 Usage:
-    python src/scripts/plot_training_curve.py --checkpoint src/results/vae_baseline_0.000001/vae_baseline_0.000001_checkpoint.pt
+    python src/scripts/plot_training_curve.py \
+        --checkpoint src/train_results/Latent-two_stage_fixed/Latent-two_stage_fixed_vae_checkpoint.pt \
+        --y_lim 50 
 
     python src/scripts/plot_training_curves.py --checkpoint Master_Thesis/src/results/vae_baseline/vae_baseline_checkpoint.pt --steps_per_epoch 391
 """
