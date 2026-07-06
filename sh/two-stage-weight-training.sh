@@ -28,12 +28,12 @@ python /zhome/66/4/156534/Master_Thesis/src/scripts/two_stage_weight_training.py
     --lambda_kl_max 0.000001 \
     --kl_warmup_frac 0.4 \
     --vae_check_every 10 \
-    --vae_patience 15 \
-    --vae_delta 8e-3 \
-    --ddpm_check_every 10 \
-    --ddpm_patience 15 \
-    --ddpm_delta 8e-3 \
-    --ddpm_max_epochs 2000 \
+    --vae_patience 10 \
+    --vae_delta 1e-4 \
+    --ddpm_check_every 20 \
+    --ddpm_patience 10 \
+    --ddpm_delta 1e-4 \
+    --ddpm_max_epochs 1600 \
     --vae_max_epochs 2000 \
     --T 1000 \
     --beta_1 1e-4 \

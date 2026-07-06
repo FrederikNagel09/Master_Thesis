@@ -21,7 +21,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/results/vae_3d_baseline_1.0_newLoss/vae_3d_baseline_1.0_newLoss_config.json \
     --weights_path_3d src/results/vae_3d_baseline_1.0_newLoss/vae_3d_baseline_1.0_newLoss_checkpoint.pt \
     --run_name vae_baseline_suite \
-    --n_metric_samples 5000 --metric_batch_size 512 --n_pca_samples 5000
+    --n_metric_samples 10 --metric_batch_size 10 --n_pca_samples 10
 ############################################################
 
 
@@ -33,7 +33,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/metadata/config.json \
     --weights_path_3d src/train_results/latent-diffusion-VOXEL-newLoss/weights/weights.pt \
     --run_name latent_one_stage_suite \
-    --n_metric_samples 64 --metric_batch_size 64 --n_pca_samples 64
+    --n_metric_samples 10 --metric_batch_size 10 --n_pca_samples 10
 #########################################################
 
 
@@ -45,7 +45,7 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_config.json \
     --weights_path_3d src/train_results/VOXEL-Latent-Fixed-TEST/VOXEL-Latent-Fixed-TEST_ldm_checkpoint.pt \
     --run_name latent_fixed_suite \
-    --n_metric_samples 64 --metric_batch_size 64 --n_pca_samples 64
+    --n_metric_samples 10 --metric_batch_size 10 --n_pca_samples 10
 ########################################################################
 
 
@@ -57,19 +57,19 @@ python src/utility/unified_results_eval.py \
     --config_path_3d src/train_results/VOXEL-Latent-Converge-TEST/VOXEL-Latent-Converge-TEST_ldm_config.json \
     --weights_path_3d src/train_results/VOXEL-Latent-Converge-TEST/VOXEL-Latent-Converge-TEST_ldm_checkpoint.pt \
     --run_name latent_converged_suite \
-    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
+    --n_metric_samples 10 --metric_batch_size 10 --n_pca_samples 10
 ########################################################################
 
 
 ############ Weight one stage ###############################
 python src/utility/unified_results_eval.py \
     --model_type weight \
-    --config_path_2d src/train_results/Weight-Diffusion-newMethoda40/metadata/config.json \
-    --weights_path_2d src/train_results/Weight-Diffusion-newMethoda40/weights/weights.pt \
+    --config_path_2d src/train_results/weight-diffusion/metadata/config.json \
+    --weights_path_2d src/train_results/weight-diffusion/weights/weights.pt \
     --config_path_3d src/train_results/VOXEL-Weight-Diffusion-TEST/metadata/config.json \
     --weights_path_3d src/train_results/VOXEL-Weight-Diffusion-TEST/weights/weights.pt \
     --run_name weight_one_stage_bad_version \
-    --n_metric_samples 2024 --metric_batch_size 1024 --n_pca_samples 2024
+    --n_metric_samples 10 --metric_batch_size 10 --n_pca_samples 10
 ############################################################
 
 
@@ -80,8 +80,8 @@ python src/utility/unified_results_eval.py \
     --weights_path_2d src/train_results/weight-two-stage-fixed/weight-two-stage-fixed_wd_weights.pt \
     --config_path_3d src/train_results/VOXEL-Weight-Fixed-TEST/VOXEL-Weight-Fixed-TEST_wd_config.json \
     --weights_path_3d src/train_results/VOXEL-Weight-Fixed-TEST/VOXEL-Weight-Fixed-TEST_wd_weights.pt \
-    --run_name weight_fixed_suite \
-    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
+    --run_name weight_fixed_temp \
+    --n_metric_samples 1024 --metric_batch_size 512 --n_pca_samples 1024
 ########################################################################
 
 
@@ -92,8 +92,8 @@ python src/utility/unified_results_eval.py \
     --weights_path_2d src/train_results/weight-two-stage-convergence/weight-two-stage-convergence_wd_weights.pt \
     --config_path_3d src/train_results/VOXEL-Weight-Converge-TEST/VOXEL-Weight-Converge-TEST_wd_config.json\
     --weights_path_3d src/train_results/VOXEL-Weight-Converge-TEST/VOXEL-Weight-Converge-TEST_wd_weights.pt \
-    --run_name weight_converged_suite \
-    --n_metric_samples 5120 --metric_batch_size 64 --n_pca_samples 2024
+    --run_name weight_converged_tesmp \
+    --n_metric_samples 2024 --metric_batch_size 512 --n_pca_samples 2024
 ####################################################################################
 """
 
@@ -137,8 +137,12 @@ from src.utility.classifier_utils import (
 from src.utility.metrics_util import _fid
 from src.utility.voxel_metrics import compute_mmd_cov
 from src.utility.plotting import _render_mesh_on_ax, _samples_to_voxel_grids
-
-
+# ── Fixed indices for reproducible comparison plots ────────────────────────────
+RECON_INDICES   = [2, 9, 8, 3]   # 4 val-set indices for reconstruction plots
+INTERP_IDX1     = 2                # val-set index for interpolation start point
+INTERP_IDX2     = 7                # val-set index for interpolation end point (different class)
+# ──────────────────────────────────────────────────────────────────────────────
+# 3 adn 2
 # ── Config / path helpers ──────────────────────────────────────────────────────
 def _load_json(path: str) -> dict:
     """Loads a JSON config file.
@@ -801,7 +805,7 @@ def run_space_analysis(
     )
 
     for space, d in vecs.items():
-        idx1, idx2 = pick_interp_pair(y_real)
+        idx1, idx2 = INTERP_IDX1, INTERP_IDX2
         alphas = torch.linspace(0, 1, args.n_interp_steps).view(
             -1, *([1] * (d["real_raw"].dim() - 1))
         )
@@ -809,16 +813,20 @@ def run_space_analysis(
         path = (1 - alphas) * w1 + alphas * w2
         path_flat = path.reshape(path.shape[0], -1)
 
-        plot_vector_space_pca(
-            d["real_vecs"],
-            y_real,
-            d["gen_vecs"],
-            path_flat.numpy(),
-            space.capitalize(),
-            run_name,
-            os.path.join(output_dir, f"{space}_pca.png"),
-            model_type,
-        )
+        pca_path = os.path.join(output_dir, f"{space}_pca.png")
+        if not os.path.exists(pca_path):
+            plot_vector_space_pca(
+                d["real_vecs"],
+                y_real,
+                d["gen_vecs"],
+                path_flat.numpy(),
+                space.capitalize(),
+                run_name,
+                os.path.join(output_dir, f"{space}_pca.png"),
+                model_type,
+            )
+        else:
+            print(f"  Skipping PCA plot (already exists): {pca_path}")
 
         if space == "latent":
             decoded = decode_latent_path(
@@ -1060,7 +1068,7 @@ def process_slot(
     ndim = 3 if is_3d else 2
 
     val_loader = torch.utils.data.DataLoader(
-        bundle["val_dataset"], batch_size=256, shuffle=True, drop_last=False
+        bundle["val_dataset"], batch_size=256, shuffle=False, drop_last=False
     )
     x_list, y_list, n_collected = [], [], 0
     for x, y in val_loader:
@@ -1070,7 +1078,7 @@ def process_slot(
         x_list.append(x)
         y_list.append(y)
         n_collected += x.shape[0]
-        if n_collected >= args.n_metric_samples:
+        if n_collected >= max(args.n_metric_samples, max(RECON_INDICES) + 1):
             break
     x_real = torch.cat(x_list, dim=0)[: args.n_metric_samples]
     y_real = torch.cat(y_list, dim=0)[: args.n_metric_samples].numpy()
@@ -1112,38 +1120,39 @@ def process_slot(
 
     print("  Computing metrics ...")
     metrics = {}
-    if is_3d:
-        mmd, cov = compute_mmd_cov_metric(gen_decoded, x_real_unnorm)
-        metrics["mmd"], metrics["cov"] = mmd, cov
-        metrics["voxel_acc"] = compute_reconstruction_loss(
-            bundle,
-            model_type,
-            bundle["val_dataset"],
-            args.n_recon_samples,
-            args.metric_batch_size,
-            device,
-        )
-    else:
-        metrics["fid"] = compute_fid_metric(gen_decoded, bundle["dataset_name"], device)
-        metrics["psnr"] = compute_reconstruction_loss(
-            bundle,
-            model_type,
-            bundle["val_dataset"],
-            args.n_recon_samples,
-            args.metric_batch_size,
-            device,
-        )
+    if True:
+        
+        if is_3d:
+            mmd, cov = compute_mmd_cov_metric(gen_decoded, x_real_unnorm)
+            metrics["mmd"], metrics["cov"] = mmd, cov
+            metrics["voxel_acc"] = compute_reconstruction_loss(
+                bundle,
+                model_type,
+                bundle["val_dataset"],
+                args.n_recon_samples,
+                args.metric_batch_size,
+                device,
+            )
+        else:
+            metrics["fid"] = compute_fid_metric(gen_decoded, bundle["dataset_name"], device)
+            metrics["psnr"] = compute_reconstruction_loss(
+                bundle,
+                model_type,
+                bundle["val_dataset"],
+                args.n_recon_samples,
+                args.metric_batch_size,
+                device,
+            )
     #metrics["elbo"] = compute_elbo(
         #bundle, model_type, bundle["val_dataset"], args.metric_batch_size, device
     #)
 
     grid_imgs = _to_display_list(gen_decoded[:64], bundle["channels"], is_3d)
-    plot_sample_grid(
-        grid_imgs,
-        is_3d,
-        bundle["channels"],
-        os.path.join(output_dir, f"sample_grid_{dim_tag}.png"),
-    )
+    grid_path = os.path.join(output_dir, f"sample_grid_{dim_tag}.png")
+    if not os.path.exists(grid_path):
+        plot_sample_grid(grid_imgs, is_3d, bundle["channels"], grid_path)
+    else:
+        print(f"  Skipping sample grid (already exists): {grid_path}")
 
     if not is_3d:
         n_pca = min(args.n_pca_samples, args.n_metric_samples)
@@ -1168,8 +1177,8 @@ def process_slot(
     else:
         gen_first4 = _to_display_list(gen_decoded[:4], bundle["channels"], True)
 
-    real_first4 = _to_display_list(x_real_unnorm[:4], bundle["channels"], is_3d)
-    recon_first4 = _to_display_list(recon_decoded[:4], bundle["channels"], is_3d)
+    real_first4  = _to_display_list(x_real_unnorm[RECON_INDICES],  bundle["channels"], is_3d)
+    recon_first4 = _to_display_list(recon_decoded[RECON_INDICES],  bundle["channels"], is_3d)
 
     return {
         "metrics": metrics,
