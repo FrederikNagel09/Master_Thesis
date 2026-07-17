@@ -292,3 +292,53 @@ class TransInr(nn.Module):
             pred = pred.permute(0, 3, 1, 2).contiguous()
 
         return pred, weight_flat
+
+    def forward_from_weights(
+        self,
+        weight_flat: torch.Tensor,
+        coord: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Reconstruct image(s) directly from flat modulated weight vectors,
+        bypassing the tokenizer and transformer entirely.
+
+        Args:
+            weight_flat : (B, D) flat weight tensor, as returned by forward_with_weights
+            coord       : optional (H, W, 2) or (B, H, W, 2) coordinate grid;
+                        falls back to shared_coord if None
+        Returns:
+            pred : (B, C_out, H, W) reconstructed image
+        """
+        B = weight_flat.shape[0]  # noqa: N806
+
+        # Unpack flat weights back into per-layer shaped params
+        params = {}
+        offset = 0
+        for name, shape in self.inr.param_shapes.items():
+            n_elements = shape[0] * shape[1]
+            params[name] = weight_flat[:, offset : offset + n_elements].reshape(
+                B, shape[0], shape[1]
+            )
+            offset += n_elements
+
+        self.inr.set_params(params)
+
+        # Expand coord to batch if needed
+        if coord is None:
+            coord = self.shared_coord  # (H, W, 2)
+
+        if coord.dim() == 3:  # (H, W, 2)
+            coord = einops.repeat(coord, "h w d -> b h w d", b=B)
+        elif coord.dim() == 4 and coord.shape[0] != B:
+            raise ValueError(
+                f"coord batch dim {coord.shape[0]} does not match weight_flat batch dim {B}"
+            )
+
+        pred = self.inr(coord)  # (B, H, W, C_out)
+
+        if pred.dim() == 4:  # (B, H, W, C) -> (B, C, H, W)
+            pred = pred.permute(0, 3, 1, 2).contiguous()
+        elif pred.dim() == 5:  # (B, D, H, W, C) -> (B, C, D, H, W)
+            pred = pred.permute(0, 4, 1, 2, 3).contiguous()
+
+        return pred

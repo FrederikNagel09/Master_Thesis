@@ -21,7 +21,7 @@ def _get_device() -> str:
         return "cuda"
     # if torch.backends.mps.is_available():
     # return "mps"
-    return "cpu"
+    return "mps"
 
 
 def _load_config(config_path: str) -> dict:
@@ -367,7 +367,7 @@ class SmoothedPlateauDetector:
         # Guard against ZeroDivisionError if patience is too small to split
         if mid == 0:
             return False
-            
+
         first_half_avg = sum(window[:mid]) / mid
         second_half_avg = sum(window[mid:]) / (len(window) - mid)
         improvement = first_half_avg - second_half_avg
